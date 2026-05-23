@@ -1,0 +1,27 @@
+{
+  "name": "race-analyzer-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "push-db": "node scripts/push_db.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.104.1",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "sql.js": "^1.13.0",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "tailwindcss": "^4.2.4",
+    "vite": "^8.0.10"
+  }
+}
