@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ChevronRight, Search, Target, TrendingUp, AlertTriangle,
   CheckCircle2, XCircle, MinusCircle, Sparkles, ArrowUpDown,
@@ -192,6 +192,42 @@ function MainApp({ session, onLogout }) {
   const [search, setSearch] = useState('')
 
   const selectedHorse = useMemo(() => horses.find((h) => h.id === selectedId), [horses, selectedId])
+
+  // ---------- 一覧/詳細の幅調整（ドラッグでリサイズ + localStorage保存） ----------
+  const LIST_WIDTH_KEY = 'race-analyzer:listWidthPct'
+  const [listWidthPct, setListWidthPct] = useState(() => {
+    const stored = Number(localStorage.getItem(LIST_WIDTH_KEY))
+    return stored >= 25 && stored <= 75 ? stored : 42
+  })
+  const listWidthRef = useRef(listWidthPct)
+  useEffect(() => { listWidthRef.current = listWidthPct }, [listWidthPct])
+  const splitContainerRef = useRef(null)
+  const startResize = (e) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startPct = listWidthRef.current
+    const containerWidth = splitContainerRef.current?.offsetWidth || 1200
+    const onMove = (ev) => {
+      const dx = ev.clientX - startX
+      const next = Math.max(25, Math.min(75, startPct + (dx / containerWidth) * 100))
+      setListWidthPct(next)
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      localStorage.setItem(LIST_WIDTH_KEY, String(Math.round(listWidthRef.current)))
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+  const resetWidth = () => {
+    setListWidthPct(42)
+    localStorage.setItem(LIST_WIDTH_KEY, '42')
+  }
 
   // レース選択 → 評価データロード → list タブへ
   const loadAsTarget = (raceKey) => {
@@ -458,9 +494,9 @@ function MainApp({ session, onLogout }) {
       )
     }
     return (
-      <div className="grid grid-cols-12 gap-6 items-start pb-12">
+      <div ref={splitContainerRef} className="flex items-start pb-12 relative">
         {/* 左ペイン */}
-        <div className="col-span-5 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+        <div style={{ width: `calc(${listWidthPct}% - 10px)` }} className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex-shrink-0">
           <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
             <h3 className="font-bold text-slate-800 flex items-center gap-2">
               出走馬一覧 <span className="text-xs font-normal text-slate-500">({displayHorses.length}頭)</span>
@@ -611,8 +647,17 @@ function MainApp({ session, onLogout }) {
           </div>
         </div>
 
+        {/* リサイザー（ドラッグで幅調整、ダブルクリックでリセット） */}
+        <div
+          onMouseDown={startResize}
+          onDoubleClick={resetWidth}
+          className="w-5 self-stretch flex items-center justify-center cursor-col-resize group flex-shrink-0"
+          title="ドラッグで幅調整 / ダブルクリックでリセット"
+        >
+          <div className="w-1 h-16 rounded-full bg-slate-200 group-hover:bg-[#4A90E2] transition-colors"></div>
+        </div>
         {/* 右ペイン: 詳細 */}
-        <div className="col-span-7 sticky top-24">
+        <div style={{ width: `calc(${100 - listWidthPct}% - 10px)` }} className="sticky top-24 flex-shrink-0">
           {selectedHorse ? (
             <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-120px)]">
               <div className="p-6 border-b border-slate-100 relative overflow-hidden bg-gradient-to-br from-white to-slate-50">
