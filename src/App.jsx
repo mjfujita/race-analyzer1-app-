@@ -460,7 +460,7 @@ function MainApp({ session, onLogout }) {
     return (
       <div className="grid grid-cols-12 gap-6 items-start pb-12">
         {/* 左ペイン */}
-        <div className="col-span-7 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+        <div className="col-span-5 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
             <h3 className="font-bold text-slate-800 flex items-center gap-2">
               出走馬一覧 <span className="text-xs font-normal text-slate-500">({displayHorses.length}頭)</span>
@@ -499,7 +499,6 @@ function MainApp({ session, onLogout }) {
                   <th className="py-3 px-2 font-semibold">馬名 / 騎手</th>
                   <th className="py-3 px-2 font-semibold text-center w-14">能力</th>
                   <th className="py-3 px-2 font-semibold text-center w-28">本気度</th>
-                  <th className="py-3 px-2 font-semibold">条件要約</th>
                   <th className="py-3 px-4 font-semibold w-32">今回一致度</th>
                   <th className="py-3 px-2 font-semibold text-center w-14">評価</th>
                   <th className="py-3 px-2 w-8"></th>
@@ -580,10 +579,6 @@ function MainApp({ session, onLogout }) {
                         </div>
                       ) : <span className="text-slate-300 text-xs">—</span>}
                     </td>
-                    <td className="py-3 px-2 max-w-[160px]">
-                      <div className="text-[11px] truncate text-slate-700 mb-0.5"><span className="font-bold text-[#0B2545]">勝:</span> {horse.winConditions?.distance || '-'} / {horse.winConditions?.position || '-'}</div>
-                      <div className="text-[11px] truncate text-slate-500"><span className="font-bold text-rose-400">負:</span> {horse.loseConditions?.distance || '-'} / {horse.loseConditions?.going || '-'}</div>
-                    </td>
                     <td className="py-3 px-4">
                       <div className="flex flex-col gap-1">
                         <div className="flex justify-between text-[10px] font-bold">
@@ -617,7 +612,7 @@ function MainApp({ session, onLogout }) {
         </div>
 
         {/* 右ペイン: 詳細 */}
-        <div className="col-span-5 sticky top-24">
+        <div className="col-span-7 sticky top-24">
           {selectedHorse ? (
             <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-120px)]">
               <div className="p-6 border-b border-slate-100 relative overflow-hidden bg-gradient-to-br from-white to-slate-50">
@@ -704,65 +699,88 @@ function MainApp({ session, onLogout }) {
                     <Clock className="w-3.5 h-3.5" /> 過去成績 (能力抽出元)
                   </h4>
                   <div className="border border-slate-200 rounded-lg overflow-hidden">
-                    <table className="w-full text-left text-[11px]">
-                      <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 text-[10px]">
                         <tr>
-                          <th className="py-1.5 px-2 font-medium">日付/レース</th>
-                          <th className="py-1.5 px-2 font-medium">距離/馬場</th>
-                          <th className="py-1.5 px-2 font-medium text-center">着順</th>
-                          <th className="py-1.5 px-2 font-medium text-right tabular-nums">タイム</th>
-                          <th className="py-1.5 px-2 font-medium text-right tabular-nums">上り3F</th>
-                          <th className="py-1.5 px-2 font-medium text-center">人気</th>
-                          <th className="py-1.5 px-2 font-medium text-right">馬体重</th>
-                          <th className="py-1.5 px-2 font-medium">騎手</th>
+                          <th className="py-2 pl-3 pr-2 font-semibold">日付 / クラス</th>
+                          <th className="py-2 px-2 font-semibold text-slate-400">条件</th>
+                          <th className="py-2 px-2 font-semibold text-center">着順</th>
+                          <th className="py-2 px-2 font-semibold text-right">タイム</th>
+                          <th className="py-2 px-2 font-semibold text-right">上り3F</th>
+                          <th className="py-2 px-2 font-semibold text-center text-slate-400">人気</th>
+                          <th className="py-2 px-2 font-semibold text-right text-slate-400">馬体重</th>
+                          <th className="py-2 pl-2 pr-3 font-semibold text-slate-400">騎手</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {(selectedHorse.pastRuns || []).map((run, i) => {
                           const delta = run.horse_weight_delta || 0
                           const deltaTxt = delta > 0 ? `+${delta}` : delta < 0 ? `${delta}` : '±0'
-                          const deltaColor = delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-rose-600' : 'text-slate-400'
+                          const deltaColor = delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-rose-600' : 'text-slate-300'
+                          // 着順カラーリング: 1着=濃紺/2-3着=青/4-5着=スレート/それ以下=薄
+                          const rankColor = run.rank === 1 ? 'text-[#0B2545]'
+                                          : run.rank <= 3 ? 'text-[#4A90E2]'
+                                          : run.rank <= 5 ? 'text-slate-700'
+                                          : 'text-slate-400'
+                          // 上り3F: 33.5以下=赤強調(優秀), 34.5以下=濃紺, 36.0以下=スレート, それ以上=薄
+                          const last3fColor = !run.last3f ? 'text-slate-300'
+                                            : run.last3f <= 33.5 ? 'font-bold text-rose-600'
+                                            : run.last3f <= 34.5 ? 'font-bold text-[#0B2545]'
+                                            : run.last3f <= 36.0 ? 'text-slate-700'
+                                            : 'text-slate-400'
                           return (
-                            <tr key={i} className="hover:bg-slate-50">
-                              <td className="py-1.5 px-2">
-                                <div className="text-[9px] text-slate-400">{run.date}</div>
-                                <div className="font-bold text-slate-800">{run.race || run.race_name || '-'}</div>
+                            <tr key={i} className="hover:bg-slate-50/70">
+                              {/* 日付 / クラス — 基本情報 */}
+                              <td className="py-2 pl-3 pr-2">
+                                <div className="text-[10px] text-slate-400 tabular-nums">{run.date}</div>
+                                <div className="text-[12px] font-semibold text-slate-800 leading-tight">{run.race || run.race_name || '-'}</div>
                               </td>
-                              <td className="py-1.5 px-2 text-slate-600">
-                                {run.dist || run.distance || '-'} <span className="text-slate-300">|</span> {run.going || run.surface || '-'}
+                              {/* 距離/馬場 — 副次（薄め） */}
+                              <td className="py-2 px-2 text-[11px] text-slate-500 whitespace-nowrap">
+                                {run.dist || run.distance || '-'}<br/>
+                                <span className="text-[10px] text-slate-400">{run.going || run.surface || '-'}</span>
                               </td>
-                              <td className="py-1.5 px-2 text-center">
-                                <span className={`font-bold ${run.rank === 1 ? 'text-[#0B2545]' : run.rank <= 3 ? 'text-[#4A90E2]' : 'text-slate-400'}`}>
-                                  {run.rank}着{run.field_size ? <span className="text-[9px] text-slate-400">/{run.field_size}</span> : null}
+                              {/* 着順 — 主要（大・色） */}
+                              <td className="py-2 px-2 text-center">
+                                <span className={`text-[16px] font-black tabular-nums ${rankColor}`}>
+                                  {run.rank}
+                                </span>
+                                {run.field_size ? <span className="text-[9px] text-slate-400">/{run.field_size}</span> : null}
+                              </td>
+                              {/* タイム — 主要 */}
+                              <td className="py-2 px-2 text-right text-[13px] font-semibold text-slate-800 tabular-nums whitespace-nowrap">{run.time || '-'}</td>
+                              {/* 上り3F — 主要・条件色 */}
+                              <td className="py-2 px-2 text-right tabular-nums">
+                                <span className={`text-[13px] ${last3fColor}`}>
+                                  {run.last3f ? run.last3f.toFixed(1) : '-'}
                                 </span>
                               </td>
-                              <td className="py-1.5 px-2 text-right text-slate-700 tabular-nums">{run.time || '-'}</td>
-                              <td className="py-1.5 px-2 text-right tabular-nums">
-                                {run.last3f ? (
-                                  <span className={run.last3f <= 34.5 ? 'font-bold text-[#0B2545]' : run.last3f <= 36.0 ? 'text-slate-700' : 'text-slate-400'}>
-                                    {run.last3f.toFixed(1)}
-                                  </span>
-                                ) : '-'}
-                              </td>
-                              <td className="py-1.5 px-2 text-center text-slate-500 tabular-nums">
+                              {/* 人気 — 副次（薄） */}
+                              <td className="py-2 px-2 text-center text-[11px] text-slate-500 tabular-nums">
                                 {run.popularity ? `${run.popularity}人` : '-'}
                               </td>
-                              <td className="py-1.5 px-2 text-right tabular-nums">
+                              {/* 馬体重 — 副次（薄） */}
+                              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
                                 {run.horse_weight ? (
-                                  <span className="text-slate-600">
-                                    {run.horse_weight}<span className={`text-[9px] ml-0.5 ${deltaColor}`}>{deltaTxt}</span>
-                                  </span>
-                                ) : '-'}
+                                  <>
+                                    <span className="text-[11px] text-slate-500">{run.horse_weight}</span>
+                                    <span className={`text-[9px] ml-0.5 ${deltaColor}`}>{deltaTxt}</span>
+                                  </>
+                                ) : <span className="text-slate-300 text-[11px]">-</span>}
                               </td>
-                              <td className="py-1.5 px-2 text-slate-600 truncate max-w-[80px]">{run.jockey || '-'}</td>
+                              {/* 騎手 — 副次（薄・短縮） */}
+                              <td className="py-2 pl-2 pr-3 text-[11px] text-slate-500 truncate max-w-[70px]">{run.jockey || '-'}</td>
                             </tr>
                           )
                         })}
                         {(!selectedHorse.pastRuns || selectedHorse.pastRuns.length === 0) && (
-                          <tr><td colSpan={8} className="py-3 text-center text-slate-400">過去走データなし</td></tr>
+                          <tr><td colSpan={8} className="py-3 text-center text-slate-400 text-xs">過去走データなし</td></tr>
                         )}
                       </tbody>
                     </table>
+                  </div>
+                  <div className="mt-1.5 text-[10px] text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span>※ 上り3F: <span className="text-rose-600 font-bold">≤33.5</span> 優秀 / <span className="text-[#0B2545] font-bold">≤34.5</span> 良 / 36.0+ は薄表示</span>
                   </div>
                 </div>
               </div>
