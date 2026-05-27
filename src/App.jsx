@@ -710,29 +710,56 @@ function MainApp({ session, onLogout }) {
                           <th className="py-1.5 px-2 font-medium">日付/レース</th>
                           <th className="py-1.5 px-2 font-medium">距離/馬場</th>
                           <th className="py-1.5 px-2 font-medium text-center">着順</th>
-                          <th className="py-1.5 px-2 font-medium text-right">通過</th>
+                          <th className="py-1.5 px-2 font-medium text-right tabular-nums">タイム</th>
+                          <th className="py-1.5 px-2 font-medium text-right tabular-nums">上り3F</th>
+                          <th className="py-1.5 px-2 font-medium text-center">人気</th>
+                          <th className="py-1.5 px-2 font-medium text-right">馬体重</th>
+                          <th className="py-1.5 px-2 font-medium">騎手</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {(selectedHorse.pastRuns || []).map((run, i) => (
-                          <tr key={i} className="hover:bg-slate-50">
-                            <td className="py-1.5 px-2">
-                              <div className="text-[9px] text-slate-400">{run.date}</div>
-                              <div className="font-bold text-slate-800">{run.race || run.race_name || '-'}</div>
-                            </td>
-                            <td className="py-1.5 px-2 text-slate-600">
-                              {run.dist || run.distance || '-'} <span className="text-slate-300">|</span> {run.going || run.surface || '-'}
-                            </td>
-                            <td className="py-1.5 px-2 text-center">
-                              <span className={`font-bold ${run.rank === 1 ? 'text-[#0B2545]' : run.rank <= 3 ? 'text-[#4A90E2]' : 'text-slate-400'}`}>
-                                {run.rank}着
-                              </span>
-                            </td>
-                            <td className="py-1.5 px-2 text-right text-slate-500 tabular-nums">{run.pass || '-'}</td>
-                          </tr>
-                        ))}
+                        {(selectedHorse.pastRuns || []).map((run, i) => {
+                          const delta = run.horse_weight_delta || 0
+                          const deltaTxt = delta > 0 ? `+${delta}` : delta < 0 ? `${delta}` : '±0'
+                          const deltaColor = delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-rose-600' : 'text-slate-400'
+                          return (
+                            <tr key={i} className="hover:bg-slate-50">
+                              <td className="py-1.5 px-2">
+                                <div className="text-[9px] text-slate-400">{run.date}</div>
+                                <div className="font-bold text-slate-800">{run.race || run.race_name || '-'}</div>
+                              </td>
+                              <td className="py-1.5 px-2 text-slate-600">
+                                {run.dist || run.distance || '-'} <span className="text-slate-300">|</span> {run.going || run.surface || '-'}
+                              </td>
+                              <td className="py-1.5 px-2 text-center">
+                                <span className={`font-bold ${run.rank === 1 ? 'text-[#0B2545]' : run.rank <= 3 ? 'text-[#4A90E2]' : 'text-slate-400'}`}>
+                                  {run.rank}着{run.field_size ? <span className="text-[9px] text-slate-400">/{run.field_size}</span> : null}
+                                </span>
+                              </td>
+                              <td className="py-1.5 px-2 text-right text-slate-700 tabular-nums">{run.time || '-'}</td>
+                              <td className="py-1.5 px-2 text-right tabular-nums">
+                                {run.last3f ? (
+                                  <span className={run.last3f <= 34.5 ? 'font-bold text-[#0B2545]' : run.last3f <= 36.0 ? 'text-slate-700' : 'text-slate-400'}>
+                                    {run.last3f.toFixed(1)}
+                                  </span>
+                                ) : '-'}
+                              </td>
+                              <td className="py-1.5 px-2 text-center text-slate-500 tabular-nums">
+                                {run.popularity ? `${run.popularity}人` : '-'}
+                              </td>
+                              <td className="py-1.5 px-2 text-right tabular-nums">
+                                {run.horse_weight ? (
+                                  <span className="text-slate-600">
+                                    {run.horse_weight}<span className={`text-[9px] ml-0.5 ${deltaColor}`}>{deltaTxt}</span>
+                                  </span>
+                                ) : '-'}
+                              </td>
+                              <td className="py-1.5 px-2 text-slate-600 truncate max-w-[80px]">{run.jockey || '-'}</td>
+                            </tr>
+                          )
+                        })}
                         {(!selectedHorse.pastRuns || selectedHorse.pastRuns.length === 0) && (
-                          <tr><td colSpan={4} className="py-3 text-center text-slate-400">過去走データなし</td></tr>
+                          <tr><td colSpan={8} className="py-3 text-center text-slate-400">過去走データなし</td></tr>
                         )}
                       </tbody>
                     </table>

@@ -52,6 +52,7 @@ UPLOAD_URL="$SUPABASE_PROJECT_URL/storage/v1/object/$RACE_DB_BUCKET/$RACE_DB_OBJ
 
 HTTP_CODE=$(curl -sS -o /tmp/push_db_resp.txt -w "%{http_code}" \
   -X PUT "$UPLOAD_URL" \
+  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
   -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
   -H "x-upsert: true" \
   -H "Content-Type: application/octet-stream" \
