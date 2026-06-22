@@ -7,6 +7,9 @@ const CACHE_META_KEY = 'race-db-cache-meta-v1'
 
 let dbPromise = null
 
+// 直近に読み込んだ race.db のメタ（バージョン表示用）
+export const dbMeta = { fetchedAt: null, fromCache: false, bytes: 0 }
+
 async function loadFromCache() {
   try {
     const cache = await caches.open(CACHE_KEY)
@@ -90,11 +93,17 @@ export async function loadDb({ forceRefresh = false, onProgress } = {}) {
       const cached = await loadFromCache()
       if (cached) {
         onProgress?.({ loaded: cached.buf.length, total: cached.buf.length, fromCache: true })
+        dbMeta.fetchedAt = cached.fetchedAt || null
+        dbMeta.fromCache = true
+        dbMeta.bytes = cached.buf.length
         return new SQL.Database(cached.buf)
       }
     }
     const { buf, etag } = await fetchRaceDb(onProgress)
     await saveToCache(buf, etag)
+    dbMeta.fetchedAt = new Date().toISOString()
+    dbMeta.fromCache = false
+    dbMeta.bytes = buf.length
     return new SQL.Database(buf)
   })()
   return dbPromise

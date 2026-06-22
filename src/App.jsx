@@ -6,7 +6,10 @@ import {
   Eye, Lightbulb, ListFilter, Gauge, Users, Wand2,
 } from 'lucide-react'
 import { supabase } from './supabase'
-import { loadDb, queryAll } from './lib/db'
+import { loadDb, queryAll, dbMeta } from './lib/db'
+
+const UI_VERSION = 'v0.2'
+const COMMIT_HASH = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'dev'
 
 // ================================================================
 //  Race Condition Analyzer v0.2 — 朝の判断支援コックピット
@@ -256,6 +259,21 @@ function MainApp({ session, onLogout }) {
   const [search, setSearch] = useState('')
 
   const selectedHorse = useMemo(() => horses.find((h) => h.id === selectedId), [horses, selectedId])
+
+  // ---- 診断情報（バージョン表示） ----
+  const diag = useMemo(() => {
+    if (!db) return null
+    const one = (sql) => { try { return queryAll(db, sql)[0] } catch { return null } }
+    const ev = one('SELECT evaluator_version AS v, COUNT(*) AS n, MAX(evaluated_at) AS at FROM race_evaluations GROUP BY evaluator_version ORDER BY n DESC LIMIT 1')
+    const sum = one('SELECT COUNT(*) AS n FROM race_summaries')
+    const latest = one('SELECT MAX(race_date) AS d FROM jrdb_races')
+    return {
+      evaluator: ev?.v || '—',
+      evaluatedAt: ev?.at || null,
+      summaries: sum?.n ?? '—',
+      latestDate: latest?.d || null,
+    }
+  }, [db])
 
   // 日付リスト初期化（最新日をデフォルト）
   useEffect(() => {
@@ -1119,11 +1137,27 @@ function MainApp({ session, onLogout }) {
           {tab === 'philosophy' && <TabPhilosophy />}
         </div>
       </main>
-      <footer className="fixed bottom-0 w-full bg-white border-t border-slate-200 px-8 py-2 text-[10px] text-slate-500 flex justify-between items-center z-40">
-        <div>朝の時点で注目レースを選定し、当日オッズは別アプリで最終確認。</div>
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" /></span>
-          条件整理エンジン稼働中
+      <footer className="fixed bottom-0 w-full bg-white border-t border-slate-200 px-8 py-2 text-[10px] text-slate-500 flex justify-between items-center z-40 gap-4">
+        <div className="truncate">朝の時点で注目レースを選定し、当日オッズは別アプリで最終確認。</div>
+        <div className="flex items-center gap-3 shrink-0 tabular-nums text-slate-400">
+          <span title="フロントUIバージョン / commit">UI {UI_VERSION} · {COMMIT_HASH}</span>
+          {diag && <>
+            <span className="text-slate-300">|</span>
+            <span title="評価ロジックのバージョン">evaluator {diag.evaluator}</span>
+            <span className="text-slate-300">|</span>
+            <span title="race.db の最新開催日">DB {diag.latestDate ? fmtDate(diag.latestDate).slice(0, 10) : '—'}</span>
+            <span className="text-slate-300">|</span>
+            <span title="race_summaries 件数">summaries {diag.summaries}</span>
+            <span className="text-slate-300">|</span>
+            <span title="ブラウザがrace.dbを取得した日時">
+              取得 {dbMeta.fetchedAt ? new Date(dbMeta.fetchedAt).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}{dbMeta.fromCache ? '(cache)' : ''}
+            </span>
+          </>}
+          <span className="text-slate-300">|</span>
+          <span className="flex items-center gap-1">
+            <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" /></span>
+            稼働中
+          </span>
         </div>
       </footer>
     </div>
