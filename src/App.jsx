@@ -1,17 +1,18 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ChevronRight, Search, Target, TrendingUp, AlertTriangle,
-  CheckCircle2, XCircle, MinusCircle, Sparkles, ArrowUpDown,
-  Activity, Info, Zap, Layers, GitCompare, Clock, LogOut,
+  CheckCircle2, Sparkles, ArrowUpDown, Star, Flame, Layers2,
+  Activity, Info, Zap, Layers, Clock, LogOut, MapPin, Flag,
+  Eye, Lightbulb, ListFilter, Gauge, Users, Wand2,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import { loadDb, queryAll } from './lib/db'
 
 // ================================================================
-//  Race Condition Analyzer — Vercel + Supabase 版
-//  ローカル版 (~/Documents/race-analyzer/src/App.jsx) の UI をそのまま移植。
-//  fetch(http://localhost:8000/...) は全部 sql.js + race_evaluations への
-//  読み込みに置き換え（API ラッパー dataApi.* 参照）。
+//  Race Condition Analyzer v0.2 — 朝の判断支援コックピット
+//  本日のレース一覧（妙味構造の俯瞰）＋ 各レース分析（役割・妙味）
+//  データは backend が race.db の race_evaluations / race_summaries に
+//  プレ計算した結果を sql.js でブラウザ内読込みして表示するだけ。
 // ================================================================
 
 const PLACE_NAMES = {
@@ -20,13 +21,48 @@ const PLACE_NAMES = {
 }
 const SURFACE_NAMES = { '1': '芝', '2': 'ダ', '3': '障' }
 
-const EVAL_COLORS = {
-  '◎': { text: 'text-[#0B2545]', bg: 'bg-[#0B2545]', border: 'border-[#0B2545]', lightBg: 'bg-[#0B2545]/10' },
-  '○': { text: 'text-[#4A90E2]', bg: 'bg-[#4A90E2]', border: 'border-[#4A90E2]', lightBg: 'bg-[#4A90E2]/10' },
-  '△': { text: 'text-slate-400', bg: 'bg-slate-400', border: 'border-slate-400', lightBg: 'bg-slate-100' },
-  '×': { text: 'text-rose-400', bg: 'bg-rose-400', border: 'border-rose-400', lightBg: 'bg-rose-50' },
+// ---- 優先度 ----
+const PRIORITY_STYLES = {
+  A: { label: 'A優先', cls: 'bg-rose-50 text-rose-700 border-rose-200' },
+  B: { label: 'B優先', cls: 'bg-[#4A90E2]/10 text-[#2B6CB0] border-[#4A90E2]/30' },
+  C: { label: 'C優先', cls: 'bg-slate-100 text-slate-600 border-slate-200' },
+  D: { label: '見送り', cls: 'bg-slate-50 text-slate-400 border-slate-200' },
 }
-const EVAL_LABELS = { '◎': '本命', '○': '対抗', '△': '押さえ', '×': '消し' }
+
+// ---- レース分類 / シナリオタグ ----
+const SCENARIO_TAG_STYLES = {
+  '人気落ち実力馬あり': 'bg-orange-50 text-orange-700 border-orange-200',
+  '妙味軸': 'bg-orange-50 text-orange-700 border-orange-200',
+  '2着妙味': 'bg-[#4A90E2]/10 text-[#2B6CB0] border-[#4A90E2]/30',
+  '頭固定・2着ズレ': 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  '人気馬不安': 'bg-rose-50 text-rose-700 border-rose-200',
+  '未勝利・初出走注意': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  '地方馬注意': 'bg-purple-50 text-purple-700 border-purple-200',
+  '除外対象': 'bg-slate-100 text-slate-500 border-slate-200',
+  '見送り候補': 'bg-slate-100 text-slate-500 border-slate-200',
+}
+const flowStyle = 'bg-slate-100 text-slate-600 border-slate-200'
+const tagStyle = (t) => {
+  if (SCENARIO_TAG_STYLES[t]) return SCENARIO_TAG_STYLES[t]
+  if (t && t.startsWith('流れ')) return flowStyle
+  if (t && t.startsWith('内枠')) return flowStyle
+  return 'bg-slate-100 text-slate-600 border-slate-200'
+}
+
+// ---- 役割タグ（馬単位） ----
+const ROLE_STYLES = {
+  '妙味軸': 'bg-orange-100 text-orange-800',
+  '2着妙味': 'bg-[#4A90E2]/15 text-[#2B6CB0]',
+  '3着穴': 'bg-emerald-50 text-emerald-700',
+  '危険人気': 'bg-rose-100 text-rose-700',
+  '地方注意': 'bg-purple-50 text-purple-700',
+  '未勝利注意': 'bg-sky-50 text-sky-700',
+  '初出走注意': 'bg-sky-50 text-sky-700',
+  '注意': 'bg-amber-50 text-amber-700',
+  '見送り': 'bg-slate-100 text-slate-500',
+}
+const roleStyle = (r) => ROLE_STYLES[r] || 'bg-slate-100 text-slate-600'
+
 const ABILITY_COLORS = {
   S: 'text-[#0B2545] font-black',
   'A+': 'text-[#0B2545] font-bold',
@@ -35,16 +71,26 @@ const ABILITY_COLORS = {
   B: 'text-slate-600',
   'C+': 'text-slate-400',
 }
-const MOTIVATION_COLORS = {
-  '仕上がり万全': 'bg-rose-50 text-rose-700 border-rose-200',
-  '標準的に良好': 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  '普通': 'bg-slate-100 text-slate-600 border-slate-200',
-  '物足りず': 'bg-sky-50 text-sky-700 border-sky-200',
-  '調教データなし': 'bg-slate-50 text-slate-400 border-slate-200',
+
+// ---- 直近5走 判定ラベルの色 ----
+const JUDGMENT_STYLES = {
+  '同級好走': 'bg-emerald-50 text-emerald-700',
+  '同級勝ち': 'bg-emerald-100 text-emerald-800',
+  '好走': 'bg-emerald-50 text-emerald-700',
+  '昇級根拠': 'bg-[#4A90E2]/10 text-[#2B6CB0]',
+  '人気上位大敗': 'bg-rose-50 text-rose-700',
+  '人気薄好走': 'bg-amber-50 text-amber-700',
+  '人気相応': 'bg-slate-100 text-slate-500',
+  '凡走': 'bg-slate-50 text-slate-400',
+  '地方実績参考': 'bg-purple-50 text-purple-600',
+  '比較不可': 'bg-slate-50 text-slate-400',
 }
+const judgmentStyle = (j) => JUDGMENT_STYLES[j] || 'bg-slate-100 text-slate-500'
+
+const fmtTime = (t) => (!t || t.length < 4 ? '' : `${t.slice(0, 2)}:${t.slice(2, 4)}`)
 
 // ================================================================
-// データアクセスラッパー (sql.js -> ローカル版 API レスポンスと同じ形に整える)
+// データアクセスラッパー (sql.js)
 // ================================================================
 const dataApi = {
   getStats(db) {
@@ -57,31 +103,42 @@ const dataApi = {
         (SELECT MAX(race_date) FROM jrdb_races) AS latest
     `)[0]
     return {
-      race_count: r.race_count,
-      horse_count: r.horse_count,
-      result_count: r.result_count,
+      race_count: r.race_count, horse_count: r.horse_count, result_count: r.result_count,
       date_range: { earliest: r.earliest, latest: r.latest },
     }
   },
   getDates(db) {
-    return queryAll(
-      db,
-      'SELECT race_date AS date, COUNT(*) AS race_count FROM jrdb_races GROUP BY race_date ORDER BY race_date DESC LIMIT 60',
-    )
+    return queryAll(db,
+      'SELECT race_date AS date, COUNT(*) AS race_count FROM jrdb_races GROUP BY race_date ORDER BY race_date DESC LIMIT 60')
+  },
+  // 本日注目レース画面用: jrdb_races と race_summaries を結合した軽量一覧
+  getDaySummaries(db, date) {
+    const hasSummary = queryAll(db,
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='race_summaries'").length > 0
+    const rows = queryAll(db, `
+      SELECT r.race_key, r.place_code, r.race_no, r.post_time, r.distance, r.surface_code,
+             r.grade, r.field_size, r.race_name${hasSummary ? ', s.summary_json' : ''}
+      FROM jrdb_races r
+      ${hasSummary ? 'LEFT JOIN race_summaries s ON r.race_key = s.race_key' : ''}
+      WHERE r.race_date = ?
+      ORDER BY r.place_code, r.race_no`, [date])
+    return rows.map((r) => {
+      let summary = null
+      if (r.summary_json) { try { summary = JSON.parse(r.summary_json) } catch { summary = null } }
+      return {
+        ...r,
+        place: PLACE_NAMES[r.place_code] || r.place_code,
+        surface: SURFACE_NAMES[r.surface_code] || r.surface_code,
+        summary,
+      }
+    })
   },
   getRacesOfDate(db, date) {
-    const rows = queryAll(
-      db,
-      `SELECT race_key, place_code, race_no, post_time, distance, surface_code,
-              grade, field_size, race_name
-       FROM jrdb_races WHERE race_date = ?
-       ORDER BY place_code, race_no`,
-      [date],
-    )
+    const rows = queryAll(db,
+      `SELECT race_key, place_code, race_no, post_time, distance, surface_code, grade, field_size, race_name
+       FROM jrdb_races WHERE race_date = ? ORDER BY place_code, race_no`, [date])
     return rows.map((r) => ({
-      ...r,
-      place: PLACE_NAMES[r.place_code] || r.place_code,
-      surface: SURFACE_NAMES[r.surface_code] || r.surface_code,
+      ...r, place: PLACE_NAMES[r.place_code] || r.place_code, surface: SURFACE_NAMES[r.surface_code] || r.surface_code,
     }))
   },
   getEvaluation(db, raceKey) {
@@ -101,16 +158,12 @@ function LoginPage({ onLogin }) {
   const [error, setError] = useState('')
 
   const submit = async (e) => {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
+    e.preventDefault(); setLoading(true); setError('')
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) throw error
       onLogin(data.session)
-    } catch (err) {
-      setError(err?.message || 'ログインに失敗しました')
-    }
+    } catch (err) { setError(err?.message || 'ログインに失敗しました') }
     setLoading(false)
   }
 
@@ -124,7 +177,7 @@ function LoginPage({ onLogin }) {
             </div>
             <div className="text-left">
               <p className="text-[#0B2545] font-black text-lg leading-none">Race Condition Analyzer</p>
-              <p className="text-[10px] font-medium text-slate-500 tracking-wider mt-1">PROTOTYPE v0.1 / 個人専用</p>
+              <p className="text-[10px] font-medium text-slate-500 tracking-wider mt-1">PROTOTYPE v0.2 / 個人専用</p>
             </div>
           </div>
         </div>
@@ -151,10 +204,23 @@ function LoginPage({ onLogin }) {
 }
 
 // ================================================================
+// 小物
+// ================================================================
+const Pill = ({ children, className = '' }) => (
+  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${className}`}>{children}</span>
+)
+const fmtDate = (yyyymmdd) => {
+  if (!yyyymmdd || yyyymmdd.length < 8) return ''
+  const w = ['日', '月', '火', '水', '木', '金', '土']
+  const d = new Date(`${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}T00:00:00`)
+  const wd = isNaN(d) ? '' : ` (${w[d.getDay()]})`
+  return `${yyyymmdd.slice(0, 4)}/${yyyymmdd.slice(4, 6)}/${yyyymmdd.slice(6, 8)}${wd}`
+}
+
+// ================================================================
 // メインアプリ
 // ================================================================
 function MainApp({ session, onLogout }) {
-  // ---------- DB 読み込み ----------
   const [db, setDb] = useState(null)
   const [dbProgress, setDbProgress] = useState({ loaded: 0, total: 0, fromCache: false })
   const [dbError, setDbError] = useState('')
@@ -168,118 +234,106 @@ function MainApp({ session, onLogout }) {
   }, [])
 
   const refreshDb = async () => {
-    setDb(null)
-    setDbError('')
-    setDbProgress({ loaded: 0, total: 0, fromCache: false })
-    try {
-      const d = await loadDb({ forceRefresh: true, onProgress: setDbProgress })
-      setDb(d)
-    } catch (err) {
-      setDbError(err?.message || 'DB再取得失敗')
-    }
+    setDb(null); setDbError(''); setDbProgress({ loaded: 0, total: 0, fromCache: false })
+    try { setDb(await loadDb({ forceRefresh: true, onProgress: setDbProgress })) }
+    catch (err) { setDbError(err?.message || 'DB再取得失敗') }
   }
 
-  // ---------- 評価結果 (1レース) ----------
+  // 選択中レース
   const [raceInfo, setRaceInfo] = useState(null)
   const [horses, setHorses] = useState([])
-  const [summary, setSummary] = useState({ total: 0, honmei: 0, taikou: 0, himo: 0, keshi: 0 })
+  const [summary, setSummary] = useState({})
   const [currentRaceKey, setCurrentRaceKey] = useState(null)
 
-  const [tab, setTab] = useState('jrdb')
+  // 本日の日付・一覧
+  const [selectedDate, setSelectedDate] = useState(null)
+  const [dates, setDates] = useState([])
+
+  const [tab, setTab] = useState('today')
   const [selectedId, setSelectedId] = useState(null)
-  const [sortKey, setSortKey] = useState('eval')
-  const [filter, setFilter] = useState('all')
+  const [sortKey, setSortKey] = useState('ability')
+  const [roleFilter, setRoleFilter] = useState('all')
   const [search, setSearch] = useState('')
 
   const selectedHorse = useMemo(() => horses.find((h) => h.id === selectedId), [horses, selectedId])
 
-  // ---------- 一覧/詳細の幅調整（ドラッグでリサイズ + localStorage保存） ----------
+  // 日付リスト初期化（最新日をデフォルト）
+  useEffect(() => {
+    if (!db) return
+    try {
+      const ds = dataApi.getDates(db)
+      setDates(ds)
+      if (ds.length > 0) setSelectedDate((cur) => cur || ds[0].date)
+    } catch (err) { console.error(err) }
+  }, [db])
+
+  // ---- リサイザー ----
   const LIST_WIDTH_KEY = 'race-analyzer:listWidthPct'
   const [listWidthPct, setListWidthPct] = useState(() => {
-    const stored = Number(localStorage.getItem(LIST_WIDTH_KEY))
-    return stored >= 25 && stored <= 75 ? stored : 42
+    const s = Number(localStorage.getItem(LIST_WIDTH_KEY))
+    return s >= 25 && s <= 75 ? s : 46
   })
   const listWidthRef = useRef(listWidthPct)
   useEffect(() => { listWidthRef.current = listWidthPct }, [listWidthPct])
   const splitContainerRef = useRef(null)
   const startResize = (e) => {
     e.preventDefault()
-    const startX = e.clientX
-    const startPct = listWidthRef.current
-    const containerWidth = splitContainerRef.current?.offsetWidth || 1200
-    const onMove = (ev) => {
-      const dx = ev.clientX - startX
-      const next = Math.max(25, Math.min(75, startPct + (dx / containerWidth) * 100))
-      setListWidthPct(next)
-    }
+    const startX = e.clientX, startPct = listWidthRef.current
+    const cw = splitContainerRef.current?.offsetWidth || 1200
+    const onMove = (ev) => setListWidthPct(Math.max(25, Math.min(75, startPct + ((ev.clientX - startX) / cw) * 100)))
     const onUp = () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''; document.body.style.userSelect = ''
       localStorage.setItem(LIST_WIDTH_KEY, String(Math.round(listWidthRef.current)))
     }
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
+    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp)
   }
-  const resetWidth = () => {
-    setListWidthPct(42)
-    localStorage.setItem(LIST_WIDTH_KEY, '42')
-  }
+  const resetWidth = () => { setListWidthPct(46); localStorage.setItem(LIST_WIDTH_KEY, '46') }
 
-  // レース選択 → 評価データロード → list タブへ
-  const loadAsTarget = (raceKey) => {
+  // レース選択 → 評価ロード → 出走馬分析へ
+  const loadAsTarget = (raceKey, goTab = 'analysis') => {
     if (!db) return
     try {
       const data = dataApi.getEvaluation(db, raceKey)
-      if (!data) {
-        alert('このレースには評価データがありません（evaluate_all.py の再実行が必要かも）')
-        return
-      }
-      setRaceInfo(data.race)
-      setHorses(data.horses)
-      setSummary(data.summary)
-      setCurrentRaceKey(raceKey)
-      setSelectedId(data.horses[0]?.id || null)
-      setTab('list')
-    } catch (err) {
-      console.error(err)
-      alert('評価データの読み込みに失敗: ' + err.message)
-    }
+      if (!data) { alert('このレースには評価データがありません（evaluate_all.py の再実行が必要かも）'); return }
+      setRaceInfo(data.race); setHorses(data.horses); setSummary(data.summary)
+      setCurrentRaceKey(raceKey); setSelectedId(data.horses[0]?.id || null)
+      setRoleFilter('all'); setSortKey('ability'); setTab(goTab)
+    } catch (err) { console.error(err); alert('評価データの読み込みに失敗: ' + err.message) }
   }
 
-  // ---------- 表示用ソート/フィルタ済み馬一覧 ----------
+  // ---- 出走馬一覧の表示用ソート/フィルタ ----
   const displayHorses = useMemo(() => {
     let list = [...horses]
-    if (filter !== 'all') list = list.filter((h) => h.eval === filter)
+    const matchRole = (h, f) => {
+      switch (f) {
+        case 'value': return h.primaryRole === '妙味軸' || (h.roleTags || []).includes('妙味軸')
+        case 'second': return h.primaryRole === '2着妙味' || (h.roleTags || []).includes('2着妙味')
+        case 'unpop': return (h.roleTags || []).includes('妙味軸') || h.popularityType === '人気上位凡走型' || h.recentStatusSummary === '前走大敗'
+        case 'maiden': return !!h.maidenCaution || (h.roleTags || []).some((t) => t === '未勝利注意' || t === '初出走注意')
+        case 'local': return !!(h.localHorseEvaluation && h.localHorseEvaluation.is_local)
+        default: return true
+      }
+    }
+    if (roleFilter !== 'all') list = list.filter((h) => matchRole(h, roleFilter))
     if (search) {
       const s = search.toLowerCase()
       list = list.filter((h) => (h.name || '').toLowerCase().includes(s) || (h.jockey || '').toLowerCase().includes(s))
     }
+    const roleOrder = { '妙味軸': 6, '2着妙味': 5, '3着穴': 4, '危険人気': 3, '注意': 2, '初出走注意': 1, '見送り': 0 }
+    const evalMap = { '◎': 4, '○': 3, '△': 2, '×': 1 }
     list.sort((a, b) => {
-      const evalMap = { '◎': 4, '○': 3, '△': 2, '×': 1 }
-      const phaseMap = { '上昇': 7, '安定': 6, '条件再設定': 5, 'ムラ': 4, '下降': 3, '休養明け': 2, '経験浅': 1 }
       switch (sortKey) {
         case 'no': return a.no - b.no
-        case 'eval': return (evalMap[b.eval] || 0) - (evalMap[a.eval] || 0)
         case 'ability': return (b.abilityScore || 0) - (a.abilityScore || 0)
-        case 'match': return (b.matchScore || 0) - (a.matchScore || 0)
-        case 'pop': return (a.expectedPop || 99) - (b.expectedPop || 99)
-        case 'phase': return (phaseMap[b.phase?.label] || 0) - (phaseMap[a.phase?.label] || 0)
-        case 'motivation': {
-          const aS = a.motivation?.score, bS = b.motivation?.score
-          if (aS == null && bS == null) return 0
-          if (aS == null) return 1
-          if (bS == null) return -1
-          return bS - aS
-        }
+        case 'role': return (roleOrder[b.primaryRole] || 0) - (roleOrder[a.primaryRole] || 0)
+        case 'eval': return (evalMap[b.eval] || 0) - (evalMap[a.eval] || 0)
         default: return 0
       }
     })
     return list
-  }, [filter, sortKey, search, horses])
+  }, [roleFilter, sortKey, search, horses])
 
   // ---------- DB ロード中 ----------
   if (!db) {
@@ -292,9 +346,7 @@ function MainApp({ session, onLogout }) {
             <>
               <AlertTriangle className="w-10 h-10 mx-auto text-rose-400 mb-3" />
               <p className="text-sm text-rose-600 mb-3">{dbError}</p>
-              <button onClick={refreshDb} className="text-xs bg-[#0B2545] text-white px-4 py-2 rounded font-bold">
-                再試行
-              </button>
+              <button onClick={refreshDb} className="text-xs bg-[#0B2545] text-white px-4 py-2 rounded font-bold">再試行</button>
             </>
           ) : (
             <>
@@ -307,8 +359,7 @@ function MainApp({ session, onLogout }) {
                 <div className="bg-[#4A90E2] h-full transition-all" style={{ width: dbProgress.total ? `${pct}%` : '10%' }} />
               </div>
               <p className="text-xs text-slate-500 tabular-nums">
-                {mb(dbProgress.loaded)} MB
-                {dbProgress.total ? ` / ${mb(dbProgress.total)} MB (${pct}%)` : ''}
+                {mb(dbProgress.loaded)} MB{dbProgress.total ? ` / ${mb(dbProgress.total)} MB (${pct}%)` : ''}
               </p>
             </>
           )}
@@ -317,70 +368,264 @@ function MainApp({ session, onLogout }) {
     )
   }
 
-  // ---------- 共通: 判定ロジック (簡易部分一致) ----------
-  const getMatchStatus = (winText, loseText, currentKeywords) => {
-    const isWin = currentKeywords.some((k) => (winText || '').includes(k))
-    const isLose = currentKeywords.some((k) => (loseText || '').includes(k))
-    if (isWin) return 'win'
-    if (isLose) return 'lose'
-    return 'neutral'
-  }
-
   // ================================================================
-  // タブ: JRDB 実データ閲覧
+  // タブ: 本日注目レース
   // ================================================================
-  const TabJrdb = () => {
-    const [dates, setDates] = useState([])
-    const [stats, setStats] = useState(null)
-    const [selectedDate, setSelectedDate] = useState(null)
-    const [races, setRaces] = useState([])
-    const [loadingKey, setLoadingKey] = useState(null)
-
-    useEffect(() => {
-      try {
-        const ds = dataApi.getDates(db)
-        setDates(ds)
-        if (ds.length > 0) setSelectedDate(ds[0].date)
-        setStats(dataApi.getStats(db))
-      } catch (err) {
-        console.error(err)
-      }
-    }, [])
+  const TabToday = () => {
+    const [daySummaries, setDaySummaries] = useState([])
+    const [dayFilter, setDayFilter] = useState('all')
 
     useEffect(() => {
       if (!selectedDate) return
-      try {
-        setRaces(dataApi.getRacesOfDate(db, selectedDate))
-      } catch (err) {
-        console.error(err)
-      }
+      try { setDaySummaries(dataApi.getDaySummaries(db, selectedDate)) } catch (e) { console.error(e) }
     }, [selectedDate])
 
-    const openRace = (raceKey) => {
-      setLoadingKey(raceKey)
-      try {
-        loadAsTarget(raceKey)
-      } finally {
-        setLoadingKey(null)
+    const prio = (r) => r.summary?.racePriority || 'C'
+    const prioRank = { A: 4, B: 3, C: 2, D: 1 }
+
+    // サマリーカード集計
+    const counts = useMemo(() => {
+      let notable = 0, valueAxis = 0, maiden = 0, local = 0
+      for (const r of daySummaries) {
+        const s = r.summary
+        if (!s) continue
+        if (s.racePriority === 'A' || s.racePriority === 'B') notable++
+        if ((s.counts?.valueAxis || 0) >= 1) valueAxis++
+        if ((s.raceScenarioTags || []).includes('未勝利・初出走注意')) maiden++
+        if ((s.counts?.localCaution || 0) >= 1) local++
       }
+      return { notable, valueAxis, maiden, local }
+    }, [daySummaries])
+
+    // まず見るべきレース（優先度＋注目数で上位）
+    const topRaces = useMemo(() => {
+      return [...daySummaries]
+        .filter((r) => r.summary && !r.summary.isShinba)
+        .sort((a, b) => {
+          const pr = prioRank[prio(b)] - prioRank[prio(a)]
+          if (pr) return pr
+          return (b.summary?.counts?.notable || 0) - (a.summary?.counts?.notable || 0)
+        }).slice(0, 5)
+    }, [daySummaries])
+
+    // フィルタ
+    const filtered = useMemo(() => {
+      let list = [...daySummaries]
+      switch (dayFilter) {
+        case 'notable': list = list.filter((r) => ['A', 'B'].includes(prio(r))); break
+        case 'value': list = list.filter((r) => (r.summary?.counts?.valueAxis || 0) >= 1); break
+        case 'maiden': list = list.filter((r) => (r.summary?.raceScenarioTags || []).includes('未勝利・初出走注意')); break
+        case 'local': list = list.filter((r) => (r.summary?.counts?.localCaution || 0) >= 1); break
+        case 'exclude': list = list.filter((r) => prio(r) !== 'D' && !r.summary?.isShinba); break
+        default: break
+      }
+      return list
+    }, [daySummaries, dayFilter])
+
+    // 会場別グループ
+    const groups = []
+    const idx = new Map()
+    for (const r of filtered) {
+      const key = r.place_code
+      if (!idx.has(key)) { idx.set(key, groups.length); groups.push({ place: r.place, place_code: key, items: [] }) }
+      groups[idx.get(key)].items.push(r)
     }
 
-    const fmtTime = (t) => {
-      if (!t || t.length < 4) return ''
-      return `${t.slice(0, 2)}:${t.slice(2, 4)}`
-    }
+    const SummaryCard = ({ icon: Icon, color, label, value }) => (
+      <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${color}`}><Icon className="w-5 h-5" /></div>
+        <div>
+          <div className="text-[11px] text-slate-500 font-medium">{label}</div>
+          <div className="text-2xl font-black tabular-nums text-[#0B2545] leading-none mt-0.5">{value}</div>
+        </div>
+      </div>
+    )
+
+    const DAY_FILTERS = [
+      ['all', 'すべて'], ['notable', '注目のみ'], ['value', '人気落ち実力馬あり'],
+      ['maiden', '未勝利注意'], ['local', '地方馬注意'], ['exclude', '見送り除外'],
+    ]
+
+    return (
+      <div className="space-y-6 pb-16">
+        {/* ヘッダ */}
+        <div className="flex items-end justify-between flex-wrap gap-3">
+          <div>
+            <div className="text-sm font-bold text-[#4A90E2] tracking-wide tabular-nums">{fmtDate(selectedDate)}</div>
+            <h1 className="text-3xl font-black text-[#0B2545] mt-1">本日のレース一覧</h1>
+            <p className="text-sm text-slate-500 mt-1">朝の時点で、見るべきレースを絞り込む</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-500">開催日</span>
+            <select value={selectedDate || ''} onChange={(e) => setSelectedDate(e.target.value)}
+              className="bg-white border border-slate-200 text-sm font-medium text-slate-800 py-1.5 px-3 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#4A90E2]">
+              {dates.map((d) => (
+                <option key={d.date} value={d.date}>{fmtDate(d.date)} ({d.race_count}R)</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* サマリーカード */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <SummaryCard icon={Star} color="bg-rose-50 text-rose-600" label="注目レース" value={counts.notable} />
+          <SummaryCard icon={Flame} color="bg-orange-50 text-orange-600" label="人気落ち実力馬あり" value={counts.valueAxis} />
+          <SummaryCard icon={AlertTriangle} color="bg-emerald-50 text-emerald-600" label="未勝利・初出走注意" value={counts.maiden} />
+          <SummaryCard icon={MapPin} color="bg-purple-50 text-purple-600" label="地方馬注意" value={counts.local} />
+        </div>
+
+        <div className="bg-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl px-4 py-2.5 text-xs text-[#2B6CB0] flex items-center gap-2">
+          <Info className="w-4 h-4 shrink-0" /> AIは買い目を断定せず、妙味が出そうな構造を整理します。当日オッズは別アプリで最終確認してください。
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
+          <div className="space-y-6">
+            {/* まず見るべきレース */}
+            <div>
+              <h2 className="text-lg font-bold text-[#0B2545] mb-3 flex items-center gap-2"><Eye className="w-5 h-5 text-[#4A90E2]" /> まず見るべきレース</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {topRaces.length === 0 && (
+                  <div className="col-span-full text-sm text-slate-400 bg-white border border-dashed border-slate-200 rounded-xl p-6 text-center">
+                    注目レースの評価がまだありません（evaluate_all.py の再計算が必要かも）。
+                  </div>
+                )}
+                {topRaces.map((r) => {
+                  const s = r.summary || {}
+                  const p = PRIORITY_STYLES[s.racePriority] || PRIORITY_STYLES.C
+                  const headTag = (s.raceScenarioTags || []).find((t) => SCENARIO_TAG_STYLES[t]) || (s.raceScenarioTags || [])[0]
+                  return (
+                    <button key={r.race_key} onClick={() => loadAsTarget(r.race_key)}
+                      className="text-left bg-white border border-slate-200/80 rounded-xl p-4 shadow-sm hover:border-[#4A90E2]/50 hover:shadow transition-all group">
+                      <div className="flex items-center gap-2 text-xs font-bold text-slate-500 mb-2">
+                        <span className="px-1.5 py-0.5 bg-slate-100 rounded text-slate-700">{r.place}</span>
+                        <span className="text-[#0B2545] tabular-nums">{r.race_no}R</span>
+                        <span className="text-slate-400 font-medium truncate">{s.classLabel || ''}</span>
+                        <ChevronRight className="w-4 h-4 text-slate-300 ml-auto group-hover:text-[#4A90E2]" />
+                      </div>
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        <Pill className={p.cls}>{p.label}</Pill>
+                        {headTag && <Pill className={tagStyle(headTag)}>{headTag}</Pill>}
+                      </div>
+                      <div className="text-sm font-bold text-slate-900 truncate">{r.race_name}</div>
+                      <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{s.raceScenarioComment || '—'}</p>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* フィルタ */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <ListFilter className="w-4 h-4 text-slate-400" />
+              {DAY_FILTERS.map(([k, label]) => (
+                <button key={k} onClick={() => setDayFilter(k)}
+                  className={`px-3 py-1 text-xs font-bold rounded-full border transition-all ${
+                    dayFilter === k ? 'bg-[#0B2545] text-white border-[#0B2545]' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
+                  {label}
+                </button>
+              ))}
+              <span className="ml-auto text-xs text-slate-400">並び順: 優先度順</span>
+            </div>
+
+            {/* 会場別レース一覧 */}
+            <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(groups.length, 1)}, minmax(0, 1fr))` }}>
+              {groups.map((g) => {
+                const items = [...g.items].sort((a, b) => a.race_no - b.race_no)
+                return (
+                  <div key={g.place_code} className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+                    <div className="px-4 py-2.5 bg-[#0B2545] text-white flex items-center justify-between">
+                      <span className="font-bold tracking-wide">{g.place}</span>
+                      <span className="text-xs font-medium text-slate-300">{items.length}R</span>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {items.map((r) => {
+                        const s = r.summary || {}
+                        const p = s.racePriority
+                        const isHot = p === 'A'
+                        const excluded = s.isShinba || p === 'D'
+                        const tags = (s.raceScenarioTags || []).filter((t) => SCENARIO_TAG_STYLES[t]).slice(0, 2)
+                        return (
+                          <button key={r.race_key} onClick={() => loadAsTarget(r.race_key)}
+                            className={`w-full text-left px-3 py-2.5 flex items-start gap-2.5 transition-colors ${
+                              isHot ? 'bg-rose-50/40 hover:bg-rose-50' : 'hover:bg-slate-50'}`}>
+                            <div className="shrink-0 w-9 text-center">
+                              <div className="text-sm font-bold text-[#0B2545] tabular-nums">{r.race_no}R</div>
+                              <div className="text-[10px] text-slate-400 tabular-nums">{fmtTime(r.post_time)}</div>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium text-slate-800 truncate flex items-center gap-1.5">
+                                {r.grade && <Pill className="bg-rose-50 text-rose-700 border-rose-100">{r.grade === '1' ? 'G1' : r.grade === '2' ? 'G2' : r.grade === '3' ? 'G3' : r.grade === '5' ? '特' : 'L'}</Pill>}
+                                <span className="truncate">{r.race_name}</span>
+                              </div>
+                              <div className="text-[11px] text-slate-500 tabular-nums mt-0.5">{r.surface}{r.distance}m ・ {r.field_size}頭</div>
+                              <div className="flex flex-wrap items-center gap-1 mt-1">
+                                {excluded ? (
+                                  <Pill className="bg-slate-100 text-slate-400 border-slate-200">{s.isShinba ? '除外対象' : '見送り'}</Pill>
+                                ) : tags.map((t) => <Pill key={t} className={tagStyle(t)}>{t}</Pill>)}
+                              </div>
+                              {s.raceScenarioComment && (
+                                <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{s.excludeReason || s.raceScenarioComment}</p>
+                              )}
+                            </div>
+                            <div className="shrink-0 self-center flex flex-col items-end gap-1">
+                              {p && <Pill className={(PRIORITY_STYLES[p] || PRIORITY_STYLES.C).cls}>{(PRIORITY_STYLES[p] || PRIORITY_STYLES.C).label}</Pill>}
+                              <ChevronRight className="w-4 h-4 text-slate-300" />
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+              {groups.length === 0 && (
+                <div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-400 text-sm">
+                  該当するレースがありません。
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 今日の見方 */}
+          <aside className="space-y-4">
+            <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm sticky top-24">
+              <h3 className="text-sm font-bold text-[#0B2545] mb-3 flex items-center gap-2"><Lightbulb className="w-4 h-4 text-amber-500" /> 今日の見方</h3>
+              <ul className="space-y-2.5 text-xs text-slate-600 leading-relaxed">
+                {[
+                  '能力順は入口。最終判断はクラス・人気履歴・着順で確認',
+                  '調教・騎手相性は補正材料',
+                  '新馬戦は基本除外、未勝利の初出走は要注意',
+                  '地方実績は中央換算の参考評価',
+                  '当日オッズは別アプリで最終確認',
+                ].map((t, i) => (
+                  <li key={i} className="flex gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#4A90E2] shrink-0 mt-0.5" /><span>{t}</span></li>
+                ))}
+              </ul>
+            </div>
+          </aside>
+        </div>
+      </div>
+    )
+  }
+
+  // ================================================================
+  // タブ: レース一覧（シンプルな全レース開閉）
+  // ================================================================
+  const TabRaces = () => {
+    const [races, setRaces] = useState([])
+    const [stats, setStats] = useState(null)
+    useEffect(() => {
+      if (!selectedDate) return
+      try { setRaces(dataApi.getRacesOfDate(db, selectedDate)); setStats(dataApi.getStats(db)) } catch (e) { console.error(e) }
+    }, [selectedDate])
 
     const groups = []
     const idx = new Map()
     for (const r of races) {
-      const key = r.place_code || r.place
-      if (!idx.has(key)) {
-        idx.set(key, groups.length)
-        groups.push({ place: r.place, place_code: key, items: [] })
-      }
+      const key = r.place_code
+      if (!idx.has(key)) { idx.set(key, groups.length); groups.push({ place: r.place, place_code: key, items: [] }) }
       groups[idx.get(key)].items.push(r)
     }
-
     return (
       <div className="space-y-6 pb-12">
         {stats && (
@@ -388,452 +633,149 @@ function MainApp({ session, onLogout }) {
             <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
               <span className="text-xs font-bold tracking-widest text-[#4A90E2] uppercase">JRDB 取り込みデータ</span>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-bold tracking-widest text-slate-500 uppercase">開催日</span>
+                <span className="text-xs font-bold text-slate-500">開催日</span>
                 <select value={selectedDate || ''} onChange={(e) => setSelectedDate(e.target.value)}
                   className="bg-white border border-slate-200 text-sm font-medium text-slate-800 py-1.5 px-3 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#4A90E2]">
-                  {dates.map((d) => (
-                    <option key={d.date} value={d.date}>
-                      {d.date.slice(0, 4)}/{d.date.slice(4, 6)}/{d.date.slice(6, 8)} ({d.race_count}R)
-                    </option>
-                  ))}
+                  {dates.map((d) => <option key={d.date} value={d.date}>{fmtDate(d.date)} ({d.race_count}R)</option>)}
                 </select>
               </div>
             </div>
             <div className="grid grid-cols-4 gap-4">
-              <div>
-                <div className="text-xs text-slate-500 font-medium mb-1">レース総数</div>
-                <div className="text-2xl font-bold tabular-nums text-[#0B2545]">{stats.race_count.toLocaleString()}</div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-500 font-medium mb-1">登録馬数</div>
-                <div className="text-2xl font-bold tabular-nums text-[#0B2545]">{stats.horse_count.toLocaleString()}</div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-500 font-medium mb-1">過去走レコード</div>
-                <div className="text-2xl font-bold tabular-nums text-[#0B2545]">{stats.result_count.toLocaleString()}</div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-500 font-medium mb-1">対象期間</div>
-                <div className="text-sm font-bold tabular-nums text-slate-700 mt-1">
-                  {stats.date_range.earliest} 〜 {stats.date_range.latest}
-                </div>
-              </div>
+              {[['レース総数', stats.race_count.toLocaleString()], ['登録馬数', stats.horse_count.toLocaleString()],
+                ['過去走レコード', stats.result_count.toLocaleString()]].map(([l, v]) => (
+                <div key={l}><div className="text-xs text-slate-500 font-medium mb-1">{l}</div><div className="text-2xl font-bold tabular-nums text-[#0B2545]">{v}</div></div>
+              ))}
+              <div><div className="text-xs text-slate-500 font-medium mb-1">対象期間</div>
+                <div className="text-sm font-bold tabular-nums text-slate-700 mt-1">{stats.date_range.earliest} 〜 {stats.date_range.latest}</div></div>
             </div>
           </div>
         )}
-
-        <div className="text-xs text-slate-500 px-1">
-          レースをクリックすると、そのレースの能力評価画面が開きます。
-        </div>
-
         <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(groups.length, 1)}, minmax(0, 1fr))` }}>
           {groups.map((g) => (
-            <div key={g.place_code} className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+            <div key={g.place_code} className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden">
               <div className="px-4 py-3 bg-[#0B2545] text-white flex items-center justify-between">
-                <span className="font-bold tracking-wide">{g.place}</span>
-                <span className="text-xs font-medium text-slate-300">{g.items.length}R</span>
+                <span className="font-bold tracking-wide">{g.place}</span><span className="text-xs text-slate-300">{g.items.length}R</span>
               </div>
               <div className="divide-y divide-slate-100">
-                {g.items.map((r) => {
-                  const isLoading = loadingKey === r.race_key
-                  return (
-                    <button key={r.race_key} onClick={() => openRace(r.race_key)} disabled={isLoading}
-                      className={`w-full text-left px-3 py-2.5 transition-colors flex items-start gap-2.5 ${
-                        isLoading ? 'bg-[#4A90E2]/10' : 'hover:bg-slate-50 active:bg-[#4A90E2]/5'
-                      }`}>
-                      <div className="shrink-0 w-9 text-center">
-                        <div className="text-sm font-bold text-[#0B2545] tabular-nums">{r.race_no}R</div>
-                        <div className="text-[10px] text-slate-400 tabular-nums">{fmtTime(r.post_time)}</div>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-slate-800 truncate flex items-center gap-1.5">
-                          {r.grade && (
-                            <span className="inline-flex items-center px-1.5 py-0 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-100">
-                              {r.grade}
-                            </span>
-                          )}
-                          <span className="truncate">{r.race_name}</span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 tabular-nums mt-0.5">
-                          {r.surface}{r.distance}m ・ {r.field_size}頭
-                        </div>
-                      </div>
-                      <div className="shrink-0 self-center">
-                        {isLoading ? (
-                          <span className="text-[10px] text-[#4A90E2] font-bold">読込中</span>
-                        ) : (
-                          <ChevronRight className="w-4 h-4 text-slate-300" />
-                        )}
-                      </div>
-                    </button>
-                  )
-                })}
+                {g.items.map((r) => (
+                  <button key={r.race_key} onClick={() => loadAsTarget(r.race_key)} className="w-full text-left px-3 py-2.5 hover:bg-slate-50 flex items-start gap-2.5">
+                    <div className="shrink-0 w-9 text-center">
+                      <div className="text-sm font-bold text-[#0B2545] tabular-nums">{r.race_no}R</div>
+                      <div className="text-[10px] text-slate-400 tabular-nums">{fmtTime(r.post_time)}</div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-slate-800 truncate">{r.race_name}</div>
+                      <div className="text-[11px] text-slate-500 tabular-nums mt-0.5">{r.surface}{r.distance}m ・ {r.field_size}頭</div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-300 self-center" />
+                  </button>
+                ))}
               </div>
             </div>
           ))}
         </div>
-
-        {groups.length === 0 && (
-          <div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-400 text-sm">
-            この開催日のレースデータがありません。
-          </div>
-        )}
       </div>
     )
   }
 
   // ================================================================
-  // タブ: 一覧 & 詳細
+  // タブ: 出走馬分析
   // ================================================================
-  const TabListDetail = () => {
+  const ROLE_FILTERS = [
+    ['all', 'すべて'], ['value', '妙味軸'], ['second', '2着妙味'],
+    ['unpop', '人気落ち'], ['maiden', '未勝利注意'], ['local', '地方注意'],
+  ]
+  const TabAnalysis = () => {
     if (!raceInfo || horses.length === 0) {
-      return (
-        <div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-400 text-sm">
-          上部の「レースを切替」または「JRDB実データ」タブからレースを選んでください。
-        </div>
-      )
+      return <EmptyRace />
     }
     return (
-      <div ref={splitContainerRef} className="flex items-start pb-12 relative">
-        {/* 左ペイン */}
+      <div ref={splitContainerRef} className="flex items-start pb-16 relative">
+        {/* 左: 出走馬一覧 */}
         <div style={{ width: `calc(${listWidthPct}% - 10px)` }} className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex-shrink-0">
-          <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-            <h3 className="font-bold text-slate-800 flex items-center gap-2">
-              出走馬一覧 <span className="text-xs font-normal text-slate-500">({displayHorses.length}頭)</span>
-            </h3>
-            <div className="flex gap-4">
-              <div className="flex bg-slate-200 p-0.5 rounded-full">
-                {['all', '◎', '○', '△', '×'].map((f) => (
-                  <button key={f} onClick={() => setFilter(f)}
-                    className={`px-3 py-1 text-xs font-bold rounded-full transition-all ${
-                      filter === f ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
-                    }`}>
-                    {f === 'all' ? '全て' : f}
-                  </button>
-                ))}
-              </div>
+          <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">出走馬一覧 <span className="text-xs font-normal text-slate-500">({displayHorses.length}頭)</span></h3>
               <div className="relative">
                 <select className="appearance-none bg-white border border-slate-200 text-xs font-bold text-slate-700 py-1.5 pl-3 pr-8 rounded-full focus:outline-none focus:ring-1 focus:ring-[#4A90E2]"
                   value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
-                  <option value="eval">評価順</option>
-                  <option value="no">馬番順</option>
                   <option value="ability">能力順</option>
-                  <option value="match">一致度順</option>
-                  <option value="phase">フェーズ順</option>
-                  <option value="motivation">本気度順</option>
+                  <option value="no">馬番順</option>
+                  <option value="role">役割順</option>
+                  <option value="eval">評価順</option>
                 </select>
                 <ArrowUpDown className="w-3 h-3 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
+              {ROLE_FILTERS.map(([k, label]) => (
+                <button key={k} onClick={() => setRoleFilter(k)}
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-full border transition-all ${
+                    roleFilter === k ? 'bg-[#0B2545] text-white border-[#0B2545]' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-500 text-xs border-b border-slate-200">
+              <thead className="bg-slate-50 text-slate-500 text-[11px] border-b border-slate-200">
                 <tr>
-                  <th className="py-3 px-4 font-semibold text-center w-12">馬番</th>
-                  <th className="py-3 px-2 font-semibold">馬名 / 騎手</th>
-                  <th className="py-3 px-2 font-semibold text-center w-14">能力</th>
-                  <th className="py-3 px-2 font-semibold text-center w-28">本気度</th>
-                  <th className="py-3 px-4 font-semibold w-32">今回一致度</th>
-                  <th className="py-3 px-2 font-semibold text-center w-14">評価</th>
-                  <th className="py-3 px-2 w-8"></th>
+                  <th className="py-2.5 px-3 font-semibold text-center w-10">馬番</th>
+                  <th className="py-2.5 px-2 font-semibold">馬名 / 騎手</th>
+                  <th className="py-2.5 px-2 font-semibold text-center w-10">能力</th>
+                  <th className="py-2.5 px-2 font-semibold w-24">クラス実績</th>
+                  <th className="py-2.5 px-2 font-semibold w-28">人気履歴</th>
+                  <th className="py-2.5 px-2 font-semibold w-16">直近</th>
+                  <th className="py-2.5 px-2 font-semibold text-center w-20">役割</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {displayHorses.map((horse) => (
-                  <tr key={horse.id} onClick={() => setSelectedId(horse.id)}
-                    className={`cursor-pointer transition-colors group ${
-                      selectedId === horse.id ? 'bg-[#4A90E2]/5' : 'hover:bg-slate-50'
-                    }`}>
-                    <td className="py-3 px-4 text-center">
-                      <div className={`w-7 h-7 mx-auto rounded flex items-center justify-center font-bold text-slate-700 ${
-                        selectedId === horse.id ? 'bg-white shadow-sm' : 'bg-slate-100'
-                      }`}>{horse.no}</div>
+                {displayHorses.map((h) => (
+                  <tr key={h.id} onClick={() => setSelectedId(h.id)}
+                    className={`cursor-pointer transition-colors ${selectedId === h.id ? 'bg-[#4A90E2]/5' : 'hover:bg-slate-50'}`}>
+                    <td className="py-2.5 px-3 text-center">
+                      <div className={`w-7 h-7 mx-auto rounded flex items-center justify-center font-bold text-slate-700 text-xs ${selectedId === h.id ? 'bg-white shadow-sm' : 'bg-slate-100'}`}>{h.no}</div>
                     </td>
-                    <td className="py-3 px-2">
-                      <div className="font-bold text-slate-900">{horse.name}</div>
-                      <div className="text-xs text-slate-500 flex flex-wrap items-center gap-1.5">
-                        <span>{horse.jockey || ''}</span>
-                        {horse.phase && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
-                            {horse.phase.icon} {horse.phase.label}
-                          </span>
-                        )}
-                        {horse.upgrade && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700" title={horse.upgrade.detail}>
-                            {horse.upgrade.icon} {horse.upgrade.label}
-                          </span>
-                        )}
-                        {horse.class_challenge && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 text-orange-700" title={horse.class_challenge.detail}>
-                            {horse.class_challenge.icon} {horse.class_challenge.label}
-                          </span>
-                        )}
-                        {horse.prize_chase && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-100 text-yellow-700" title={horse.prize_chase.detail}>
-                            {horse.prize_chase.icon} {horse.prize_chase.label}
-                          </span>
-                        )}
-                        {horse.crown && (
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            horse.crown.count >= 4 ? 'bg-rose-100 text-rose-800'
-                            : horse.crown.count === 3 ? 'bg-orange-100 text-orange-800'
-                            : 'bg-amber-100 text-amber-800'
-                          }`} title={`4指標(能力/本気度/追切/終いF)のうち ${horse.crown.count} 指標で1位`}>
-                            {horse.crown.label}
-                          </span>
-                        )}
-                        {horse.ability_rank_in_race === 1 && !horse.crown && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700" title="レース内能力スコア1位">🥇能力1位</span>
-                        )}
-                        {horse.motivation_rank_in_race === 1 && !horse.crown && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700" title="レース内本気度1位">🔥本気1位</span>
-                        )}
-                        {horse.oikiri_rank_in_race === 1 && !horse.crown && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700" title="レース内追切指数1位">💨追切1位</span>
-                        )}
-                        {horse.shimai_rank_in_race === 1 && !horse.crown && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-50 text-violet-700" title="レース内終いF指数1位">⚡終い1位</span>
-                        )}
-                      </div>
+                    <td className="py-2.5 px-2">
+                      <div className="font-bold text-slate-900 text-[13px] leading-tight">{h.name}</div>
+                      <div className="text-[11px] text-slate-500">{h.jockey || '—'}</div>
                     </td>
-                    <td className="py-3 px-2 text-center">
-                      <span className={`text-lg ${ABILITY_COLORS[horse.abilityRank] || 'text-slate-400'}`}>{horse.abilityRank}</span>
+                    <td className="py-2.5 px-2 text-center"><span className={`text-base ${ABILITY_COLORS[h.abilityRank] || 'text-slate-400'}`}>{h.abilityRank}</span></td>
+                    <td className="py-2.5 px-2">
+                      <div className="text-[11px] font-bold text-slate-700">{h.classSummary || '—'}</div>
+                      {h.classRecordSummary && <div className="text-[11px] text-slate-500 tabular-nums">{h.classRecordSummary}</div>}
                     </td>
-                    <td className="py-3 px-2 text-center">
-                      {horse.motivation ? (
-                        <div className="flex flex-col items-center gap-0.5">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${
-                            MOTIVATION_COLORS[horse.motivation.label] || MOTIVATION_COLORS['調教データなし']
-                          }`} title={horse.motivation.detail}>
-                            {horse.motivation.icon} {horse.motivation.label}
-                          </span>
-                          <span className="text-[10px] font-bold text-slate-500 tabular-nums">
-                            {horse.motivation.score >= 0 ? `+${horse.motivation.score}` : horse.motivation.score}
-                          </span>
-                        </div>
-                      ) : <span className="text-slate-300 text-xs">—</span>}
+                    <td className="py-2.5 px-2">
+                      <div className="text-[11px] text-slate-700 tabular-nums leading-tight">{h.popularityHistorySummary || '—'}</div>
+                      {h.popularityType && <div className="text-[10px] text-orange-600 font-bold mt-0.5">{h.popularityType}</div>}
                     </td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-col gap-1">
-                        <div className="flex justify-between text-[10px] font-bold">
-                          <span className="text-slate-500">一致度</span>
-                          <span className="text-slate-800 tabular-nums">{horse.matchScore}%</span>
-                        </div>
-                        <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full ${
-                            horse.matchScore >= 80 ? 'bg-[#0B2545]' :
-                            horse.matchScore >= 70 ? 'bg-[#4A90E2]' :
-                            horse.matchScore >= 60 ? 'bg-slate-400' : 'bg-rose-400'
-                          }`} style={{ width: `${horse.matchScore}%` }} />
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-2 text-center">
-                      <div className={`w-8 h-8 mx-auto rounded-full flex items-center justify-center font-bold text-lg ${(EVAL_COLORS[horse.eval] || EVAL_COLORS['×']).bg} text-white shadow-sm`}>
-                        {horse.eval}
-                      </div>
-                    </td>
-                    <td className="py-3 px-2 text-right">
-                      <ChevronRight className={`w-4 h-4 transition-colors ${
-                        selectedId === horse.id ? 'text-[#4A90E2]' : 'text-slate-300 group-hover:text-slate-500'
-                      }`} />
+                    <td className="py-2.5 px-2"><span className="text-[11px] text-slate-600">{h.recentStatusSummary || '—'}</span></td>
+                    <td className="py-2.5 px-2 text-center">
+                      {h.primaryRole ? <Pill className={`border-0 ${roleStyle(h.primaryRole)}`}>{h.primaryRole}</Pill> : <span className="text-slate-300 text-xs">—</span>}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <div className="px-4 py-2 text-[10px] text-slate-400 border-t border-slate-100">
+              {horses.length}頭中 {displayHorses.length}件表示 ・ 能力順は入口。クラス実績・人気履歴・役割で最終確認。
+            </div>
           </div>
         </div>
 
-        {/* リサイザー（ドラッグで幅調整、ダブルクリックでリセット） */}
-        <div
-          onMouseDown={startResize}
-          onDoubleClick={resetWidth}
-          className="w-5 self-stretch flex items-center justify-center cursor-col-resize group flex-shrink-0"
-          title="ドラッグで幅調整 / ダブルクリックでリセット"
-        >
-          <div className="w-1 h-16 rounded-full bg-slate-200 group-hover:bg-[#4A90E2] transition-colors"></div>
+        {/* リサイザー */}
+        <div onMouseDown={startResize} onDoubleClick={resetWidth}
+          className="w-5 self-stretch flex items-center justify-center cursor-col-resize group flex-shrink-0" title="ドラッグで幅調整 / ダブルクリックでリセット">
+          <div className="w-1 h-16 rounded-full bg-slate-200 group-hover:bg-[#4A90E2] transition-colors" />
         </div>
-        {/* 右ペイン: 詳細 */}
+
+        {/* 右: 馬詳細 */}
         <div style={{ width: `calc(${100 - listWidthPct}% - 10px)` }} className="sticky top-24 flex-shrink-0">
-          {selectedHorse ? (
-            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-120px)]">
-              <div className="p-6 border-b border-slate-100 relative overflow-hidden bg-gradient-to-br from-white to-slate-50">
-                <div className="flex justify-between items-start">
-                  <div className="flex items-start gap-4">
-                    <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-2xl ${(EVAL_COLORS[selectedHorse.eval] || EVAL_COLORS['×']).bg} text-white shadow-md z-10`}>
-                      {selectedHorse.eval}
-                    </div>
-                    <div className="z-10">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="bg-slate-200 text-slate-700 text-xs font-bold px-1.5 py-0.5 rounded">馬番 {selectedHorse.no}</span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${(EVAL_COLORS[selectedHorse.eval] || EVAL_COLORS['×']).border} ${(EVAL_COLORS[selectedHorse.eval] || EVAL_COLORS['×']).text}`}>
-                          {EVAL_LABELS[selectedHorse.eval] || '—'}
-                        </span>
-                      </div>
-                      <h2 className="text-2xl font-black text-slate-900 leading-none mb-2">{selectedHorse.name}</h2>
-                      <div className="text-sm font-medium text-slate-500">
-                        {selectedHorse.age || '?'}歳 | {selectedHorse.jockey || '—'} | {selectedHorse.expectedPop || '?'}番人気
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right z-10">
-                    <div className="text-[10px] font-bold text-slate-400 mb-[-4px]">能力ランク</div>
-                    <div className={`text-4xl tabular-nums ${ABILITY_COLORS[selectedHorse.abilityRank] || 'text-slate-400'}`}>{selectedHorse.abilityRank}</div>
-                    <div className="text-xs font-medium text-slate-500 tabular-nums">Score: {selectedHorse.abilityScore}</div>
-                  </div>
-                </div>
-                <div className="mt-4 flex gap-2 flex-wrap z-10 relative">
-                  {(selectedHorse.tags || []).map((tag) => (
-                    <span key={tag} className="px-2.5 py-1 bg-[#4A90E2]/10 text-[#2B6CB0] text-xs font-bold rounded-full">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="overflow-y-auto p-6 space-y-6">
-                <div className="bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl p-4">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <Sparkles className="w-4 h-4 text-[#4A90E2]" />
-                    <span className="text-xs font-bold text-[#0B2545]">AI短評 — 今回レースへの評価</span>
-                  </div>
-                  <p className="text-sm text-slate-800 leading-relaxed font-medium">{selectedHorse.comment || '—'}</p>
-                  <div className="mt-3 text-[10px] text-slate-400 flex items-start gap-1">
-                    <span>※</span><span>これは条件整理に基づく要約です。最終判断は人間が行います。</span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <h4 className="text-xs font-bold text-[#0B2545] mb-2 flex items-center gap-1 border-b border-slate-200 pb-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> 勝つ条件
-                    </h4>
-                    <dl className="text-xs space-y-1.5">
-                      {Object.entries(selectedHorse.winConditions || {}).map(([key, val]) => (
-                        <div key={key} className="flex justify-between border-b border-slate-50 pb-1">
-                          <dt className="text-slate-400 font-medium capitalize">
-                            {key === 'going' ? '馬場' : key === 'course' ? 'コース' : key === 'distance' ? '距離' : key === 'position' ? '位置' : 'クラス'}
-                          </dt>
-                          <dd className="font-bold text-slate-800 text-right pl-2">{val}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </div>
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                    <h4 className="text-xs font-bold text-rose-500 mb-2 flex items-center gap-1 border-b border-rose-100 pb-1">
-                      <XCircle className="w-3.5 h-3.5" /> 負ける条件
-                    </h4>
-                    <dl className="text-xs space-y-1.5">
-                      {Object.entries(selectedHorse.loseConditions || {}).map(([key, val]) => (
-                        <div key={key} className="flex justify-between border-b border-slate-100 pb-1">
-                          <dt className="text-slate-400 font-medium capitalize">
-                            {key === 'going' ? '馬場' : key === 'course' ? 'コース' : key === 'distance' ? '距離' : key === 'position' ? '位置' : 'クラス'}
-                          </dt>
-                          <dd className="font-bold text-slate-700 text-right pl-2">{val}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5" /> 過去成績 (能力抽出元)
-                  </h4>
-                  <div className="border border-slate-200 rounded-lg overflow-hidden">
-                    <table className="w-full text-left">
-                      <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 text-[10px]">
-                        <tr>
-                          <th className="py-2 pl-3 pr-2 font-semibold">日付 / クラス</th>
-                          <th className="py-2 px-2 font-semibold text-slate-400">条件</th>
-                          <th className="py-2 px-2 font-semibold text-center">着順</th>
-                          <th className="py-2 px-2 font-semibold text-right">タイム</th>
-                          <th className="py-2 px-2 font-semibold text-right">上り3F</th>
-                          <th className="py-2 px-2 font-semibold text-center text-slate-400">人気</th>
-                          <th className="py-2 px-2 font-semibold text-right text-slate-400">馬体重</th>
-                          <th className="py-2 pl-2 pr-3 font-semibold text-slate-400">騎手</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {(selectedHorse.pastRuns || []).map((run, i) => {
-                          const delta = run.horse_weight_delta || 0
-                          const deltaTxt = delta > 0 ? `+${delta}` : delta < 0 ? `${delta}` : '±0'
-                          const deltaColor = delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-rose-600' : 'text-slate-300'
-                          // 着順カラーリング: 1着=濃紺/2-3着=青/4-5着=スレート/それ以下=薄
-                          const rankColor = run.rank === 1 ? 'text-[#0B2545]'
-                                          : run.rank <= 3 ? 'text-[#4A90E2]'
-                                          : run.rank <= 5 ? 'text-slate-700'
-                                          : 'text-slate-400'
-                          // 上り3F: 33.5以下=赤強調(優秀), 34.5以下=濃紺, 36.0以下=スレート, それ以上=薄
-                          const last3fColor = !run.last3f ? 'text-slate-300'
-                                            : run.last3f <= 33.5 ? 'font-bold text-rose-600'
-                                            : run.last3f <= 34.5 ? 'font-bold text-[#0B2545]'
-                                            : run.last3f <= 36.0 ? 'text-slate-700'
-                                            : 'text-slate-400'
-                          return (
-                            <tr key={i} className="hover:bg-slate-50/70">
-                              {/* 日付 / クラス — 基本情報 */}
-                              <td className="py-2 pl-3 pr-2">
-                                <div className="text-[10px] text-slate-400 tabular-nums">{run.date}</div>
-                                <div className="text-[12px] font-semibold text-slate-800 leading-tight">{run.race || run.race_name || '-'}</div>
-                              </td>
-                              {/* 距離/馬場 — 副次（薄め） */}
-                              <td className="py-2 px-2 text-[11px] text-slate-500 whitespace-nowrap">
-                                {run.dist || run.distance || '-'}<br/>
-                                <span className="text-[10px] text-slate-400">{run.going || run.surface || '-'}</span>
-                              </td>
-                              {/* 着順 — 主要（大・色） */}
-                              <td className="py-2 px-2 text-center">
-                                <span className={`text-[16px] font-black tabular-nums ${rankColor}`}>
-                                  {run.rank}
-                                </span>
-                                {run.field_size ? <span className="text-[9px] text-slate-400">/{run.field_size}</span> : null}
-                              </td>
-                              {/* タイム — 主要 */}
-                              <td className="py-2 px-2 text-right text-[13px] font-semibold text-slate-800 tabular-nums whitespace-nowrap">{run.time || '-'}</td>
-                              {/* 上り3F — 主要・条件色 */}
-                              <td className="py-2 px-2 text-right tabular-nums">
-                                <span className={`text-[13px] ${last3fColor}`}>
-                                  {run.last3f ? run.last3f.toFixed(1) : '-'}
-                                </span>
-                              </td>
-                              {/* 人気 — 副次（薄） */}
-                              <td className="py-2 px-2 text-center text-[11px] text-slate-500 tabular-nums">
-                                {run.popularity ? `${run.popularity}人` : '-'}
-                              </td>
-                              {/* 馬体重 — 副次（薄） */}
-                              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
-                                {run.horse_weight ? (
-                                  <>
-                                    <span className="text-[11px] text-slate-500">{run.horse_weight}</span>
-                                    <span className={`text-[9px] ml-0.5 ${deltaColor}`}>{deltaTxt}</span>
-                                  </>
-                                ) : <span className="text-slate-300 text-[11px]">-</span>}
-                              </td>
-                              {/* 騎手 — 副次（薄・短縮） */}
-                              <td className="py-2 pl-2 pr-3 text-[11px] text-slate-500 truncate max-w-[70px]">{run.jockey || '-'}</td>
-                            </tr>
-                          )
-                        })}
-                        {(!selectedHorse.pastRuns || selectedHorse.pastRuns.length === 0) && (
-                          <tr><td colSpan={8} className="py-3 text-center text-slate-400 text-xs">過去走データなし</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="mt-1.5 text-[10px] text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
-                    <span>※ 上り3F: <span className="text-rose-600 font-bold">≤33.5</span> 優秀 / <span className="text-[#0B2545] font-bold">≤34.5</span> 良 / 36.0+ は薄表示</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
+          {selectedHorse ? <HorseDetail h={selectedHorse} /> : (
             <div className="h-64 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 bg-white">
-              <Search className="w-8 h-8 mb-2 opacity-50" />
-              <p className="text-sm font-medium">左の一覧から馬を選択してください</p>
+              <Search className="w-8 h-8 mb-2 opacity-50" /><p className="text-sm font-medium">左の一覧から馬を選択してください</p>
             </div>
           )}
         </div>
@@ -841,159 +783,227 @@ function MainApp({ session, onLogout }) {
     )
   }
 
-  // ================================================================
-  // タブ: 全体評価
-  // ================================================================
-  const TabOverview = () => {
-    if (!raceInfo || horses.length === 0) {
-      return (
-        <div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-400 text-sm">
-          レースを選択してください。
-        </div>
-      )
-    }
-    const evals = [
-      { id: '◎', title: '本命', color: EVAL_COLORS['◎'] },
-      { id: '○', title: '対抗', color: EVAL_COLORS['○'] },
-      { id: '△', title: '押さえ', color: EVAL_COLORS['△'] },
-      { id: '×', title: '消し', color: EVAL_COLORS['×'] },
-    ]
-    const topAbility = [...horses].sort((a, b) => (b.abilityScore || 0) - (a.abilityScore || 0)).slice(0, 3)
-    const topMatch = [...horses].sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0)).slice(0, 3)
-    const riskHorses = horses.filter((h) => (h.abilityScore || 0) >= 70 && (h.matchScore || 0) < 70)
-
+  // ---- 馬詳細パネル ----
+  const HorseDetail = ({ h }) => {
+    const today_level = null
     return (
-      <div className="space-y-8 pb-12">
-        <div className="grid grid-cols-4 gap-4">
-          {evals.map((ev) => {
-            const list = horses.filter((h) => h.eval === ev.id).slice(0, 3)
-            const count = horses.filter((h) => h.eval === ev.id).length
-            return (
-              <div key={ev.id} className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm">
-                <div className="flex justify-between items-start border-b border-slate-100 pb-3 mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-lg text-white ${ev.color.bg}`}>{ev.id}</span>
-                    <span className={`font-bold text-sm ${ev.color.text}`}>{ev.title}</span>
-                  </div>
-                  <div className={`text-3xl font-black tabular-nums ${ev.color.text} opacity-80`}>{count}</div>
-                </div>
-                <div className="space-y-2 text-sm">
-                  {list.length > 0 ? list.map((h) => (
-                    <div key={h.id} className="flex items-center gap-2">
-                      <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-mono">{h.no}</span>
-                      <span className="font-bold text-slate-800 truncate">{h.name}</span>
-                    </div>
-                  )) : <div className="text-slate-400 text-xs py-2">該当馬なし</div>}
-                </div>
-              </div>
-            )
-          })}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-120px)]">
+        {/* 上部情報 */}
+        <div className="p-5 border-b border-slate-100 bg-gradient-to-br from-white to-slate-50">
+          <div className="flex items-start gap-3">
+            <div className="w-11 h-11 rounded-lg bg-[#0B2545] text-white flex items-center justify-center font-black text-xl shrink-0">{h.no}</div>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-xl font-black text-slate-900 leading-tight">{h.name}
+                <span className="text-xs font-medium text-slate-500 ml-2">{h.sex}{h.age || '?'} {h.hairColor}</span>
+              </h2>
+              <div className="text-sm text-slate-600 mt-0.5">騎手: {h.jockey || '—'} <span className="text-slate-300 mx-1">|</span> 厩舎: {h.trainer || '—'}</div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="text-[10px] font-bold text-slate-400">能力</div>
+              <div className={`text-3xl tabular-nums leading-none ${ABILITY_COLORS[h.abilityRank] || 'text-slate-400'}`}>{h.abilityRank}</div>
+              <div className="text-[10px] text-slate-400 tabular-nums">Score {h.abilityScore}</div>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-1.5 flex-wrap">
+            {h.primaryRole && <Pill className={`border-0 ${roleStyle(h.primaryRole)}`}>{h.primaryRole}</Pill>}
+            {h.classSummary && <Pill className="bg-slate-100 text-slate-600 border-slate-200">{h.classSummary}</Pill>}
+            {h.popularityType && <Pill className="bg-orange-50 text-orange-700 border-orange-200">{h.popularityType}</Pill>}
+            {h.localHorseEvaluation?.is_local && <Pill className="bg-purple-50 text-purple-700 border-purple-200">地方注意</Pill>}
+            {h.maidenCaution && <Pill className="bg-sky-50 text-sky-700 border-sky-200">{h.maidenCaution.label}</Pill>}
+          </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-6">
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-            <div className="bg-[#0B2545] p-3 text-white flex items-center gap-2">
-              <TrendingUp className="w-4 h-4" /> <span className="font-bold text-sm">能力上位馬</span>
+        <div className="overflow-y-auto p-5 space-y-5">
+          {/* AI状況コメント */}
+          <div className="bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl p-4">
+            <div className="flex items-center gap-1.5 mb-2"><Sparkles className="w-4 h-4 text-[#4A90E2]" /><span className="text-xs font-bold text-[#0B2545]">AI状況コメント</span></div>
+            <p className="text-[13px] text-slate-800 leading-relaxed">{h.aiSituationComment || h.comment || '判定不可'}</p>
+            <div className="mt-2 text-[10px] text-slate-400">※ 条件整理に基づく仮説です。買い目は断定しません。最終判断は人間が行います。</div>
+          </div>
+
+          {/* 3カード */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* クラス×人気×着順 */}
+            <div className="border border-slate-200 rounded-xl p-3">
+              <div className="text-[11px] font-bold text-[#0B2545] mb-2 flex items-center gap-1"><Layers2 className="w-3.5 h-3.5" /> クラス×人気×着順</div>
+              <dl className="space-y-1.5 text-[11px]">
+                <Row k="クラス" v={h.classLabel ? `${h.classLabel}${h.classSummary === '同級' ? '（同級）' : ''}` : '—'} />
+                <Row k="同級実績" v={h.classRecordSummary || '—'} />
+                <Row k="得意条件" v={h.favoriteCondition || '—'} />
+                <Row k="傾向メモ" v={h.popularityHistorySummary || '—'} />
+              </dl>
             </div>
-            <div className="p-2">
-              {topAbility.map((h, i) => (
-                <div key={h.id} className="flex justify-between items-center p-2 border-b border-slate-50 last:border-0">
-                  <div className="flex items-center gap-3">
-                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${i === 0 ? 'bg-[#0B2545]' : i === 1 ? 'bg-[#2B6CB0]' : 'bg-[#4A90E2]'}`}>{i + 1}</span>
-                    <div>
-                      <div className="font-bold text-slate-900 text-sm">{h.name}</div>
-                      <div className="text-[10px] text-slate-500">{h.jockey || '—'}</div>
-                    </div>
-                  </div>
-                  <div className="text-lg font-black text-[#0B2545] tabular-nums">{h.abilityScore}</div>
+            {/* 今回補正 */}
+            <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/40">
+              <div className="text-[11px] font-bold text-[#0B2545] mb-2 flex items-center gap-1"><Gauge className="w-3.5 h-3.5" /> 今回補正</div>
+              <dl className="space-y-1.5 text-[11px]">
+                <Row k="調教" v={h.trainingCorrection || '判定不可'} up={h.trainingCorrection === '立て直し気配' || h.trainingCorrection === '高水準仕上げ'} />
+                <Row k="陣営本気度" v={h.stableMotivation || '判定不可'} up={h.stableMotivation === '勝負気配'} />
+                <Row k="騎手相性" v={h.jockeyCompatibility || '判定不可'} up={h.jockeyCompatibility === '好走騎手戻り'} />
+                <Row k="乗り替わり" v={h.jockeyChange || '判定不可'} />
+              </dl>
+            </div>
+            {/* 高配当シナリオ */}
+            <div className="border border-[#4A90E2]/30 rounded-xl p-3 bg-[#4A90E2]/5">
+              <div className="text-[11px] font-bold text-[#2B6CB0] mb-2 flex items-center gap-1"><Wand2 className="w-3.5 h-3.5" /> 高配当シナリオ</div>
+              {h.highPayoutScenario ? (
+                <div className="space-y-1 text-[11px] text-slate-700 leading-relaxed">
+                  {(h.highPayoutScenario.lines || []).map((l, i) => <p key={i}>{l}</p>)}
+                  {h.highPayoutScenario.tag && h.highPayoutScenario.tag !== '—' && (
+                    <div className="pt-1"><Pill className="bg-white text-[#2B6CB0] border-[#4A90E2]/30">{h.highPayoutScenario.tag}</Pill></div>
+                  )}
                 </div>
-              ))}
+              ) : <p className="text-[11px] text-slate-400">判定不可</p>}
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-            <div className="bg-[#4A90E2] p-3 text-white flex items-center gap-2">
-              <Target className="w-4 h-4" /> <span className="font-bold text-sm">条件一致度上位馬</span>
+          {/* 直近5走成績 */}
+          <div>
+            <h4 className="text-[11px] font-bold text-slate-700 mb-2 flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> 直近5走成績</h4>
+            <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 text-[10px]">
+                  <tr>
+                    <th className="py-2 pl-3 pr-2 font-semibold">日付</th>
+                    <th className="py-2 px-2 font-semibold">クラス</th>
+                    <th className="py-2 px-2 font-semibold">条件</th>
+                    <th className="py-2 px-2 font-semibold text-center">人気</th>
+                    <th className="py-2 px-2 font-semibold text-center">着順</th>
+                    <th className="py-2 px-2 font-semibold">判定</th>
+                    <th className="py-2 pl-2 pr-3 font-semibold">騎手</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(h.pastRuns || []).map((run, i) => {
+                    const rankColor = run.rank === 1 ? 'text-[#0B2545]' : run.rank <= 3 && run.rank > 0 ? 'text-[#4A90E2]' : run.rank <= 5 && run.rank > 0 ? 'text-slate-700' : 'text-slate-400'
+                    return (
+                      <tr key={i} className="hover:bg-slate-50/70">
+                        <td className="py-2 pl-3 pr-2 text-[10px] text-slate-400 tabular-nums">{run.date}</td>
+                        <td className="py-2 px-2 text-[11px] font-semibold text-slate-800">{run.race || '—'}</td>
+                        <td className="py-2 px-2 text-[10px] text-slate-500 whitespace-nowrap">{run.dist || '—'}<br />{run.going || ''}</td>
+                        <td className="py-2 px-2 text-center text-[11px] text-slate-500 tabular-nums">{run.popularity ? `${run.popularity}人` : '-'}</td>
+                        <td className="py-2 px-2 text-center"><span className={`text-[15px] font-black tabular-nums ${rankColor}`}>{run.rank > 0 ? run.rank : '-'}</span>{run.field_size ? <span className="text-[9px] text-slate-400">/{run.field_size}</span> : null}</td>
+                        <td className="py-2 px-2">{run.judgment ? <Pill className={`border-0 ${judgmentStyle(run.judgment)}`}>{run.judgment}</Pill> : <span className="text-slate-300 text-[10px]">—</span>}</td>
+                        <td className="py-2 pl-2 pr-3 text-[10px] text-slate-500 truncate max-w-[70px]">{run.jockey || '-'}</td>
+                      </tr>
+                    )
+                  })}
+                  {(!h.pastRuns || h.pastRuns.length === 0) && <tr><td colSpan={7} className="py-3 text-center text-slate-400 text-xs">過去走データなし（初出走・比較不可）</td></tr>}
+                </tbody>
+              </table>
             </div>
-            <div className="p-2">
-              {topMatch.map((h, i) => (
-                <div key={h.id} className="flex justify-between items-center p-2 border-b border-slate-50 last:border-0">
-                  <div className="flex items-center gap-3">
-                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${i === 0 ? 'bg-[#4A90E2]' : 'bg-[#4A90E2]/60'}`}>{i + 1}</span>
-                    <div>
-                      <div className="font-bold text-slate-900 text-sm">{h.name}</div>
-                      <div className="text-[10px] text-slate-500">{h.jockey || '—'}</div>
-                    </div>
-                  </div>
-                  <div className="text-lg font-black text-[#4A90E2] tabular-nums">{h.matchScore}%</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-            <div className="bg-rose-400 p-3 text-white flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4" /> <span className="font-bold text-sm">リスク馬 (能力高・一致度低)</span>
-            </div>
-            <div className="p-2">
-              {riskHorses.length > 0 ? riskHorses.map((h) => (
-                <div key={h.id} className="flex justify-between items-center p-2 border-b border-slate-50 last:border-0">
-                  <div className="flex items-center gap-3">
-                    <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white bg-rose-300">!</span>
-                    <div>
-                      <div className="font-bold text-slate-900 text-sm">{h.name} <span className="text-[10px] font-normal text-rose-500">({h.expectedPop || '?'}人気)</span></div>
-                      <div className="text-[10px] text-slate-500">能力: {h.abilityScore}</div>
-                    </div>
-                  </div>
-                  <div className="text-lg font-black text-rose-500 tabular-nums">{h.matchScore}%</div>
-                </div>
-              )) : <div className="p-4 text-center text-sm text-slate-400">該当馬なし</div>}
-            </div>
+            <div className="mt-1.5 text-[10px] text-slate-400">※ 成績・オッズは主催者発表・JRDBデータをもとに作成。当日オッズは別アプリで確認。</div>
           </div>
         </div>
       </div>
     )
   }
 
+  const Row = ({ k, v, up }) => (
+    <div className="flex justify-between items-center border-b border-slate-100 last:border-0 pb-1">
+      <dt className="text-slate-400 font-medium">{k}</dt>
+      <dd className={`font-bold text-right pl-2 flex items-center gap-1 ${up ? 'text-emerald-600' : 'text-slate-800'}`}>
+        {v}{up && <TrendingUp className="w-3 h-3" />}
+      </dd>
+    </div>
+  )
+
+  // ================================================================
+  // タブ: レースシナリオ
+  // ================================================================
+  const TabScenario = () => {
+    if (!raceInfo || horses.length === 0) return <EmptyRace />
+    const byRole = (role) => horses.filter((h) => h.primaryRole === role)
+    const roleGroups = [
+      ['妙味軸', '妙味軸候補'], ['2着妙味', '2着妙味'], ['3着穴', '3着穴候補'],
+      ['危険人気', '危険人気'], ['初出走注意', '初出走・経験浅'],
+    ]
+    return (
+      <div className="space-y-6 pb-16">
+        {/* シナリオ概要 */}
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <Pill className={(PRIORITY_STYLES[raceInfo.racePriority] || PRIORITY_STYLES.C).cls}>{(PRIORITY_STYLES[raceInfo.racePriority] || PRIORITY_STYLES.C).label}</Pill>
+            <span className="text-xs font-bold text-slate-500">シナリオ想定</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(raceInfo.raceScenarioTags || []).map((t) => <Pill key={t} className={tagStyle(t)}>{t}</Pill>)}
+            {(!raceInfo.raceScenarioTags || raceInfo.raceScenarioTags.length === 0) && <span className="text-xs text-slate-400">シナリオタグなし</span>}
+          </div>
+          <p className="text-sm text-slate-700 leading-relaxed">{raceInfo.raceScenarioComment || '—'}</p>
+          {raceInfo.excludeReason && <p className="text-xs text-slate-400 mt-2">※ {raceInfo.excludeReason}</p>}
+          {raceInfo.raceType && (
+            <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2">
+              <Pill className="bg-amber-50 text-amber-700 border-amber-200">{raceInfo.raceType.icon} {raceInfo.raceType.label}</Pill>
+              <span className="text-xs text-slate-600">{raceInfo.raceType.detail}</span>
+              {raceInfo.raceType.advice && <span className="text-xs text-slate-400 italic">≫ {raceInfo.raceType.advice}</span>}
+            </div>
+          )}
+        </div>
+
+        {/* 役割別 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {roleGroups.map(([role, title]) => {
+            const list = byRole(role)
+            return (
+              <div key={role} className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
+                  <span className={`text-sm font-bold ${role === '妙味軸' ? 'text-orange-700' : role === '危険人気' ? 'text-rose-600' : 'text-[#0B2545]'}`}>{title}</span>
+                  <span className="text-xs text-slate-400 tabular-nums">{list.length}頭</span>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {list.length > 0 ? list.map((h) => (
+                    <button key={h.id} onClick={() => { setSelectedId(h.id); setTab('analysis') }} className="w-full text-left px-4 py-2.5 hover:bg-slate-50 flex items-center gap-2">
+                      <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">{h.no}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-slate-900 text-sm truncate">{h.name}</div>
+                        <div className="text-[10px] text-slate-500 truncate">{h.classSummary} {h.classRecordSummary || ''} ・ {h.recentStatusSummary}</div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-300" />
+                    </button>
+                  )) : <div className="px-4 py-3 text-xs text-slate-400">該当馬なし</div>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  const EmptyRace = () => (
+    <div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-400 text-sm">
+      上部の「本日注目レース」または「レース一覧」からレースを選んでください。
+    </div>
+  )
+
   // ================================================================
   // タブ: AI の位置づけ
   // ================================================================
   const TabPhilosophy = () => (
-    <div className="grid grid-cols-2 gap-8 pb-12 items-stretch">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pb-12 items-stretch">
       <div className="bg-gradient-to-br from-[#0B2545] to-[#1a365d] rounded-2xl p-8 text-white shadow-md relative overflow-hidden">
         <Zap className="absolute -right-8 -bottom-8 w-48 h-48 text-white/5" />
         <h2 className="text-2xl font-black mb-4 relative z-10">AIは予想者ではない</h2>
         <p className="text-slate-300 text-sm leading-relaxed mb-8 relative z-10">
-          当システムは「当たるAI」を目指していません。競馬における不確実性をAIで断定することは危険であると考え、あくまで膨大なデータ処理とパターン抽出の「アシスタント」として機能します。
+          当システムは「当たるAI」を目指していません。買い目は断定せず、当日オッズも取り込みません。
+          クラス実績・過去人気・着順・直近状態・調教・騎手相性を整理し、朝の時点で見るべきレースと妙味が出そうな馬を抽出する判断支援コックピットです。
         </p>
         <div className="space-y-4 relative z-10">
-          {[
-            'AIは勝ち馬を断定しない',
-            'AIは条件整理 / 要約 / 比較を担当する',
-            '評価軸は「今回能力を出せるか」に寄せる',
-            '最終判断は常に人間が行う',
-          ].map((text, i) => (
+          {['能力順は入口。最終判断はクラス・人気履歴・着順で確認', '調教・騎手相性は補正材料', '新馬戦は基本除外、未勝利の初出走は要注意', '当日オッズは別アプリで人間が最終判断'].map((t, i) => (
             <div key={i} className="flex items-center gap-3 bg-white/10 p-3 rounded-lg border border-white/5">
-              <CheckCircle2 className="w-5 h-5 text-[#4A90E2] shrink-0" />
-              <span className="font-medium text-sm">{text}</span>
+              <CheckCircle2 className="w-5 h-5 text-[#4A90E2] shrink-0" /><span className="font-medium text-sm">{t}</span>
             </div>
           ))}
         </div>
       </div>
       <div className="bg-white rounded-2xl p-8 border border-slate-200/80 shadow-sm">
-        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
-          <Activity className="w-5 h-5 text-[#4A90E2]" /> 拡張機能 (Coming Soon)
-        </h2>
+        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2"><Activity className="w-5 h-5 text-[#4A90E2]" /> 拡張機能 (Coming Soon)</h2>
         <div className="grid grid-cols-2 gap-4">
-          {[
-            '当日オッズ連携', '馬体重変化追跡', '天候連動シミュレート',
-            'EV(期待値)計算', '買い目(フォーメーション)提案', '当日トラックバイアス補正',
-          ].map((text, i) => (
-            <div key={i} className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between h-24 bg-slate-50/50 hover:bg-slate-50 transition-colors">
-              <span className="font-bold text-slate-700 text-sm">{text}</span>
-              <div className="text-right">
-                <span className="text-[9px] font-black tracking-wider text-slate-400 bg-slate-200 px-2 py-0.5 rounded-sm">SOON</span>
-              </div>
+          {['当日オッズ連携', '馬体重変化追跡', '天候連動シミュレート', 'EV(期待値)計算', '買い目(フォーメーション)提案', '当日トラックバイアス補正'].map((t, i) => (
+            <div key={i} className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between h-24 bg-slate-50/50">
+              <span className="font-bold text-slate-700 text-sm">{t}</span>
+              <div className="text-right"><span className="text-[9px] font-black tracking-wider text-slate-400 bg-slate-200 px-2 py-0.5 rounded-sm">SOON</span></div>
             </div>
           ))}
         </div>
@@ -1002,104 +1012,67 @@ function MainApp({ session, onLogout }) {
   )
 
   // ================================================================
-  // ヘッダ・タブナビ
+  // ヘッダ・レース概要・タブナビ
   // ================================================================
   const GlobalHeader = () => (
     <header className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm px-8 py-3 flex justify-between items-center">
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#0B2545] to-[#4A90E2] flex items-center justify-center">
-          <Target className="w-5 h-5 text-white" />
-        </div>
-        <div>
-          <h1 className="text-lg font-bold text-[#0B2545] leading-tight">Race Condition Analyzer</h1>
-          <p className="text-[10px] font-medium text-slate-500 tracking-wider">PROTOTYPE v0.1</p>
-        </div>
+        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#0B2545] to-[#4A90E2] flex items-center justify-center"><Target className="w-5 h-5 text-white" /></div>
+        <div><h1 className="text-lg font-bold text-[#0B2545] leading-tight">Race Condition Analyzer</h1><p className="text-[10px] font-medium text-slate-500 tracking-wider">PROTOTYPE v0.2</p></div>
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input type="text" placeholder="馬名・騎手で検索..."
-            className="pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-full text-sm w-64 focus:outline-none focus:ring-2 focus:ring-[#4A90E2]/30"
+          <input type="text" placeholder="馬名・騎手で検索..." className="pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-full text-sm w-56 focus:outline-none focus:ring-2 focus:ring-[#4A90E2]/30"
             value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <button onClick={() => setTab('jrdb')}
-          className="text-sm font-medium text-slate-600 px-4 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50 transition-colors">
-          レースを切替
-        </button>
-        <button onClick={refreshDb} title="race.db を Supabase から再取得"
-          className="text-xs font-medium text-slate-500 px-3 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50">
-          DB再取得
-        </button>
-        <button onClick={onLogout} title="ログアウト"
-          className="text-xs font-medium text-slate-500 px-3 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50 flex items-center gap-1">
-          <LogOut className="w-3 h-3" /> {session.user?.email?.split('@')[0]}
-        </button>
+        <button onClick={() => setTab('today')} className="text-sm font-medium text-slate-600 px-4 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50">本日のレース</button>
+        <button onClick={refreshDb} title="race.db を Supabase から再取得" className="text-xs font-medium text-slate-500 px-3 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50">DB再取得</button>
+        <button onClick={onLogout} title="ログアウト" className="text-xs font-medium text-slate-500 px-3 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50 flex items-center gap-1"><LogOut className="w-3 h-3" /> {session.user?.email?.split('@')[0]}</button>
       </div>
     </header>
+  )
+
+  const KpiCard = ({ icon: Icon, label, value, role }) => (
+    <button onClick={() => { setRoleFilter(role); setTab('analysis') }}
+      className="bg-white border border-slate-200/80 rounded-xl px-4 py-3 shadow-sm text-left hover:border-[#4A90E2]/50 transition-all min-w-[120px]">
+      <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><Icon className="w-3.5 h-3.5" /> {label}</div>
+      <div className="text-2xl font-black tabular-nums text-[#0B2545] mt-1">{value ?? 0}</div>
+      <div className="text-[10px] text-[#4A90E2] font-bold mt-0.5">該当馬を見る →</div>
+    </button>
   )
 
   const RaceInfoHeader = () => {
     if (!raceInfo) return null
     return (
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm mb-6 flex justify-between items-center">
-        <div className="space-y-2">
-          <div className="text-sm font-bold text-[#4A90E2] tracking-wide">{raceInfo.date}</div>
-          <div className="flex items-center gap-3">
-            {raceInfo.class && raceInfo.class !== '—' && (
-              <span className="bg-[#0B2545] text-white text-xs font-bold px-2 py-0.5 rounded">{raceInfo.class}</span>
-            )}
-            <h2 className="text-3xl font-black text-slate-900">{raceInfo.name || '—'}</h2>
-          </div>
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
-            <span>{raceInfo.course}</span><span className="text-slate-300">•</span>
-            <span>{raceInfo.distance}</span><span className="text-slate-300">•</span>
-            <span>{raceInfo.going || '—'}</span><span className="text-slate-300">•</span>
-            <span>{raceInfo.fieldSize}頭</span>
-          </div>
-          {raceInfo.features && raceInfo.features.length > 0 && (
-            <div className="flex gap-2 pt-1">
-              {raceInfo.features.map((f, i) => (
-                <span key={i} className="text-[11px] bg-slate-100 text-slate-600 px-2 py-1 rounded-md border border-slate-200">{f}</span>
-              ))}
-              {raceInfo.bias && raceInfo.bias !== '—' && (
-                <span className="text-[11px] bg-[#4A90E2]/10 text-[#4A90E2] font-bold px-2 py-1 rounded-md border border-[#4A90E2]/20">⚑ {raceInfo.bias}</span>
-              )}
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm mb-6">
+        <div className="flex justify-between items-start gap-4 flex-wrap">
+          <div className="space-y-2">
+            <div className="text-sm font-bold text-[#4A90E2] tracking-wide tabular-nums">{fmtDate(raceInfo.raceDate)}</div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="w-8 h-8 rounded bg-[#0B2545] text-white flex items-center justify-center font-black tabular-nums">{raceInfo.raceNo}</span>
+              <h2 className="text-2xl font-black text-slate-900">{raceInfo.name || '—'}</h2>
+              {raceInfo.grade && <Pill className="bg-rose-50 text-rose-700 border-rose-200">{raceInfo.classLabel}</Pill>}
             </div>
-          )}
-          {raceInfo.raceType && (
-            <div className="flex items-center gap-2 pt-2 border-t border-slate-100 mt-2">
-              <span className="text-[11px] bg-amber-50 text-amber-700 font-bold px-2 py-1 rounded-md border border-amber-200">
-                {raceInfo.raceType.icon} {raceInfo.raceType.label}
-              </span>
-              <span className="text-[11px] text-slate-600">{raceInfo.raceType.detail}</span>
-              {raceInfo.raceType.advice && (
-                <span className="text-[11px] text-slate-500 italic">≫ {raceInfo.raceType.advice}</span>
-              )}
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-600 flex-wrap">
+              <span>{raceInfo.course}</span><span className="text-slate-300">•</span>
+              <span>{raceInfo.distance}</span>{raceInfo.lr && <><span className="text-slate-300">•</span><span>{raceInfo.lr}</span></>}
+              <span className="text-slate-300">•</span><span>{raceInfo.weather} ・ {raceInfo.going}</span>
+              <span className="text-slate-300">•</span><span>{raceInfo.fieldSize}頭</span>
             </div>
-          )}
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <KpiCard icon={Star} label="注目馬" value={summary.notable} role="value" />
+            <KpiCard icon={Flame} label="妙味軸候補" value={summary.valueAxis} role="value" />
+            <KpiCard icon={Layers2} label="2着妙味" value={summary.secondValue} role="second" />
+            <KpiCard icon={AlertTriangle} label="注意馬" value={summary.caution} role="all" />
+          </div>
         </div>
-        <div className="flex flex-col items-end gap-4">
-          <div className="flex items-center gap-6">
-            <div className="text-center">
-              <div className="text-xs text-slate-500 font-medium mb-1">評価対象</div>
-              <div className="text-2xl font-bold tabular-nums text-slate-800">{summary.total}</div>
-            </div>
-            <div className="w-px h-10 bg-slate-200"></div>
-            <div className="text-center">
-              <div className="text-xs text-[#0B2545] font-bold mb-1">◎候補</div>
-              <div className="text-2xl font-bold tabular-nums text-[#0B2545]">{summary.honmei}</div>
-            </div>
-            <div className="w-px h-10 bg-slate-200"></div>
-            <div className="text-center">
-              <div className="text-xs text-[#4A90E2] font-bold mb-1">○候補</div>
-              <div className="text-2xl font-bold tabular-nums text-[#4A90E2]">{summary.taikou}</div>
-            </div>
-            <div className="w-px h-10 bg-slate-200"></div>
-            <div className="text-center">
-              <div className="text-xs text-rose-500 font-bold mb-1">注意馬</div>
-              <div className="text-2xl font-bold tabular-nums text-rose-500">{summary.keshi}</div>
-            </div>
-          </div>
+        {/* シナリオバッジ */}
+        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2 flex-wrap">
+          <Pill className={(PRIORITY_STYLES[raceInfo.racePriority] || PRIORITY_STYLES.C).cls}>{(PRIORITY_STYLES[raceInfo.racePriority] || PRIORITY_STYLES.C).label}</Pill>
+          {(raceInfo.raceScenarioTags || []).map((t) => <Pill key={t} className={tagStyle(t)}>{t}</Pill>)}
+          <span className="text-xs text-slate-500 ml-1">{raceInfo.raceScenarioComment}</span>
         </div>
       </div>
     )
@@ -1107,21 +1080,20 @@ function MainApp({ session, onLogout }) {
 
   const TabNav = () => {
     const tabs = [
-      { id: 'jrdb', label: 'JRDB実データ', icon: Activity },
-      { id: 'list', label: '一覧 & 詳細', icon: Layers },
-      { id: 'overview', label: '全体評価', icon: Activity },
+      { id: 'today', label: '本日注目レース', icon: Star },
+      { id: 'races', label: 'レース一覧', icon: Layers },
+      { id: 'analysis', label: '出走馬分析', icon: Users },
+      { id: 'scenario', label: 'レースシナリオ', icon: Flag },
       { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
     ]
     return (
-      <div className="flex gap-8 border-b border-slate-200 mb-6">
+      <div className="flex gap-6 border-b border-slate-200 mb-6 overflow-x-auto">
         {tabs.map((t) => {
-          const Icon = t.icon
-          const isActive = tab === t.id
+          const Icon = t.icon, isActive = tab === t.id
           return (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 pb-3 px-1 border-b-2 font-bold transition-colors text-sm ${
-                isActive ? 'border-[#0B2545] text-[#0B2545]' : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}>
+              className={`flex items-center gap-2 pb-3 px-1 border-b-2 font-bold transition-colors text-sm whitespace-nowrap ${
+                isActive ? 'border-[#0B2545] text-[#0B2545]' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
               <Icon className="w-4 h-4" /> {t.label}
             </button>
           )
@@ -1130,27 +1102,27 @@ function MainApp({ session, onLogout }) {
     )
   }
 
+  const showRaceHeader = (tab === 'analysis' || tab === 'scenario') && raceInfo
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-8"
       style={{ fontFamily: "'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" }}>
       <GlobalHeader />
-      <main className="max-w-[1440px] mx-auto px-8 pt-8">
-        {raceInfo && <RaceInfoHeader />}
+      <main className="max-w-[1480px] mx-auto px-8 pt-8">
+        {showRaceHeader && <RaceInfoHeader />}
         <TabNav />
         <div>
-          {tab === 'jrdb' && <TabJrdb />}
-          {tab === 'list' && <TabListDetail />}
-          {tab === 'overview' && <TabOverview />}
+          {tab === 'today' && <TabToday />}
+          {tab === 'races' && <TabRaces />}
+          {tab === 'analysis' && <TabAnalysis />}
+          {tab === 'scenario' && <TabScenario />}
           {tab === 'philosophy' && <TabPhilosophy />}
         </div>
       </main>
-      <footer className="fixed bottom-0 w-full bg-white border-t border-slate-200 px-8 py-2 text-[10px] text-slate-500 flex justify-between items-center z-50">
-        <div>Race Condition Analyzer — 前日までの情報に基づく能力評価</div>
+      <footer className="fixed bottom-0 w-full bg-white border-t border-slate-200 px-8 py-2 text-[10px] text-slate-500 flex justify-between items-center z-40">
+        <div>朝の時点で注目レースを選定し、当日オッズは別アプリで最終確認。</div>
         <div className="flex items-center gap-2">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
+          <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" /></span>
           条件整理エンジン稼働中
         </div>
       </footer>
@@ -1164,30 +1136,12 @@ function MainApp({ session, onLogout }) {
 export default function App() {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
-
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
-      setLoading(false)
-    })
+    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoading(false) })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
     return () => subscription.unsubscribe()
   }, [])
-
-  const logout = async () => {
-    await supabase.auth.signOut()
-    setSession(null)
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-[#4A90E2] border-t-transparent rounded-full animate-spin" />
-      </div>
-    )
-  }
-
-  return session
-    ? <MainApp session={session} onLogout={logout} />
-    : <LoginPage onLogin={setSession} />
+  const logout = async () => { await supabase.auth.signOut(); setSession(null) }
+  if (loading) return <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center"><div className="w-10 h-10 border-4 border-[#4A90E2] border-t-transparent rounded-full animate-spin" /></div>
+  return session ? <MainApp session={session} onLogout={logout} /> : <LoginPage onLogin={setSession} />
 }
