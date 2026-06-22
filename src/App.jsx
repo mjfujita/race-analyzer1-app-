@@ -58,13 +58,31 @@ const ROLE_STYLES = {
   '2着妙味': 'bg-[#4A90E2]/15 text-[#2B6CB0]',
   '3着穴': 'bg-emerald-50 text-emerald-700',
   '危険人気': 'bg-rose-100 text-rose-700',
+  // 昇級組（オレンジ系で統一）
+  '昇級妙味': 'bg-orange-100 text-orange-800',
+  '昇級確認': 'bg-orange-50 text-orange-700',
+  '昇級後通用': 'bg-amber-100 text-amber-800',
+  '昇級注意': 'bg-orange-50 text-orange-600',
   '地方注意': 'bg-purple-50 text-purple-700',
   '未勝利注意': 'bg-sky-50 text-sky-700',
   '初出走注意': 'bg-sky-50 text-sky-700',
+  'データ不足': 'bg-slate-100 text-slate-400',
   '注意': 'bg-amber-50 text-amber-700',
   '見送り': 'bg-slate-100 text-slate-500',
 }
 const roleStyle = (r) => ROLE_STYLES[r] || 'bg-slate-100 text-slate-600'
+const UPGRADE_ROLES = new Set(['昇級妙味', '昇級確認', '昇級後通用', '昇級注意'])
+const isUpgradeCategory = (t) => t && (t.startsWith('昇級') || t === '昇級初戦')
+
+// 本日一覧: バッジ/シナリオタグ → フィルタキーの対応
+const tagToDayFilter = (t) => {
+  if (!t) return null
+  if (t === '人気落ち実力馬あり' || t === '妙味軸') return 'value'
+  if (t === '未勝利・初出走注意' || t === '未勝利注意' || t === '初出走注意') return 'maiden'
+  if (t === '地方馬注意' || t === '地方注意') return 'local'
+  if (t === 'A優先' || t === 'B優先') return 'notable'
+  return null
+}
 
 const ABILITY_COLORS = {
   S: 'text-[#0B2545] font-black',
@@ -339,13 +357,32 @@ function MainApp({ session, onLogout }) {
       const s = search.toLowerCase()
       list = list.filter((h) => (h.name || '').toLowerCase().includes(s) || (h.jockey || '').toLowerCase().includes(s))
     }
-    const roleOrder = { '妙味軸': 6, '2着妙味': 5, '3着穴': 4, '危険人気': 3, '注意': 2, '初出走注意': 1, '見送り': 0 }
+    const roleOrder = {
+      '妙味軸': 9, '昇級妙味': 8, '昇級後通用': 8, '2着妙味': 7, '昇級確認': 6, '3着穴': 5,
+      '危険人気': 4, '昇級注意': 3, '注意': 2, '初出走注意': 1, '地方注意': 1, 'データ不足': 0, '見送り': 0,
+    }
+    const popOrder = { '人気薄好走型': 3, '人気上位凡走型': 2, '人気先行注意': 2 }
+    const recentOrder = {
+      '昇級後初好走': 7, '調教上向き': 6, '同級好走': 5, '昇級初戦': 5, '同級安定': 4,
+      '昇級後凡走': 3, '前走大敗': 2, '地方実績': 2, '比較難': 1, '初出走': 0,
+    }
+    const upgradeOrder = { '昇級後通用': 5, '昇級妙味': 4, '昇級確認': 3, '昇級2戦目': 2, '昇級初戦': 2, '昇級苦戦': 1 }
+    const classScore = (h) => {
+      const m = (h.classRecordSummary || '').match(/^(\d+)-(\d+)-(\d+)-(\d+)$/)
+      if (!m) return 0
+      return Number(m[1]) * 4 + Number(m[2]) * 2 + Number(m[3])
+    }
+    const upScore = (h) => (h.upgradeProfile ? (upgradeOrder[h.upgradeProfile.category] || 1) : -1)
     const evalMap = { '◎': 4, '○': 3, '△': 2, '×': 1 }
     list.sort((a, b) => {
       switch (sortKey) {
         case 'no': return a.no - b.no
         case 'ability': return (b.abilityScore || 0) - (a.abilityScore || 0)
+        case 'class': return classScore(b) - classScore(a) || (b.abilityScore || 0) - (a.abilityScore || 0)
+        case 'pop': return (popOrder[b.popularityType] || 0) - (popOrder[a.popularityType] || 0) || (b.abilityScore || 0) - (a.abilityScore || 0)
+        case 'recent': return (recentOrder[b.recentStatusSummary] || 0) - (recentOrder[a.recentStatusSummary] || 0)
         case 'role': return (roleOrder[b.primaryRole] || 0) - (roleOrder[a.primaryRole] || 0)
+        case 'upgrade': return upScore(b) - upScore(a) || (b.abilityScore || 0) - (a.abilityScore || 0)
         case 'eval': return (evalMap[b.eval] || 0) - (evalMap[a.eval] || 0)
         default: return 0
       }
@@ -415,18 +452,7 @@ function MainApp({ session, onLogout }) {
       return { notable, valueAxis, maiden, local }
     }, [daySummaries])
 
-    // まず見るべきレース（優先度＋注目数で上位）
-    const topRaces = useMemo(() => {
-      return [...daySummaries]
-        .filter((r) => r.summary && !r.summary.isShinba)
-        .sort((a, b) => {
-          const pr = prioRank[prio(b)] - prioRank[prio(a)]
-          if (pr) return pr
-          return (b.summary?.counts?.notable || 0) - (a.summary?.counts?.notable || 0)
-        }).slice(0, 5)
-    }, [daySummaries])
-
-    // フィルタ
+    // フィルタ（会場別・まず見るべき 共通で連動）
     const filtered = useMemo(() => {
       let list = [...daySummaries]
       switch (dayFilter) {
@@ -440,6 +466,17 @@ function MainApp({ session, onLogout }) {
       return list
     }, [daySummaries, dayFilter])
 
+    // まず見るべきレース（フィルタ連動・優先度＋注目数で上位）
+    const topRaces = useMemo(() => {
+      return [...filtered]
+        .filter((r) => r.summary && !r.summary.isShinba && prio(r) !== 'D')
+        .sort((a, b) => {
+          const pr = prioRank[prio(b)] - prioRank[prio(a)]
+          if (pr) return pr
+          return (b.summary?.counts?.notable || 0) - (a.summary?.counts?.notable || 0)
+        }).slice(0, 6)
+    }, [filtered])
+
     // 会場別グループ
     const groups = []
     const idx = new Map()
@@ -449,15 +486,36 @@ function MainApp({ session, onLogout }) {
       groups[idx.get(key)].items.push(r)
     }
 
-    const SummaryCard = ({ icon: Icon, color, label, value }) => (
-      <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-sm flex items-center gap-3">
-        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${color}`}><Icon className="w-5 h-5" /></div>
-        <div>
-          <div className="text-[11px] text-slate-500 font-medium">{label}</div>
-          <div className="text-2xl font-black tabular-nums text-[#0B2545] leading-none mt-0.5">{value}</div>
-        </div>
-      </div>
-    )
+    // KPIカード → フィルタ連動（クリックで該当条件に絞り込み）
+    const SummaryCard = ({ icon: Icon, color, label, value, filterKey }) => {
+      const active = dayFilter === filterKey
+      return (
+        <button onClick={() => setDayFilter(active ? 'all' : filterKey)}
+          className={`bg-white border rounded-2xl p-4 shadow-sm flex items-center gap-3 text-left transition-all hover:shadow ${
+            active ? 'border-[#0B2545] ring-1 ring-[#0B2545]/20' : 'border-slate-200/80 hover:border-[#4A90E2]/50'}`}>
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${color}`}><Icon className="w-5 h-5" /></div>
+          <div className="min-w-0">
+            <div className="text-[11px] text-slate-500 font-medium truncate">{label}</div>
+            <div className="text-2xl font-black tabular-nums text-[#0B2545] leading-none mt-0.5">{value}</div>
+          </div>
+        </button>
+      )
+    }
+
+    // 行/カード内のバッジ → クリックでフィルタ（行クリックの遷移とは分離）
+    // 親が <button> のため span(role=button) を使い、ボタンのネストを避ける
+    const FilterPill = ({ tag, className }) => {
+      const fk = tagToDayFilter(tag)
+      if (!fk) return <Pill className={className}>{tag}</Pill>
+      const onClick = (e) => { e.stopPropagation(); setDayFilter(dayFilter === fk ? 'all' : fk) }
+      return (
+        <span role="button" tabIndex={0} onClick={onClick}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick(e) }}
+          className="hover:brightness-95 transition cursor-pointer" title={`${tag}で絞り込み`}>
+          <Pill className={className}>{tag}</Pill>
+        </span>
+      )
+    }
 
     const DAY_FILTERS = [
       ['all', 'すべて'], ['notable', '注目のみ'], ['value', '人気落ち実力馬あり'],
@@ -484,12 +542,12 @@ function MainApp({ session, onLogout }) {
           </div>
         </div>
 
-        {/* サマリーカード */}
+        {/* サマリーカード（クリックで絞り込み） */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <SummaryCard icon={Star} color="bg-rose-50 text-rose-600" label="注目レース" value={counts.notable} />
-          <SummaryCard icon={Flame} color="bg-orange-50 text-orange-600" label="人気落ち実力馬あり" value={counts.valueAxis} />
-          <SummaryCard icon={AlertTriangle} color="bg-emerald-50 text-emerald-600" label="未勝利・初出走注意" value={counts.maiden} />
-          <SummaryCard icon={MapPin} color="bg-purple-50 text-purple-600" label="地方馬注意" value={counts.local} />
+          <SummaryCard icon={Star} color="bg-rose-50 text-rose-600" label="注目レース" value={counts.notable} filterKey="notable" />
+          <SummaryCard icon={Flame} color="bg-orange-50 text-orange-600" label="人気落ち実力馬あり" value={counts.valueAxis} filterKey="value" />
+          <SummaryCard icon={AlertTriangle} color="bg-emerald-50 text-emerald-600" label="未勝利・初出走注意" value={counts.maiden} filterKey="maiden" />
+          <SummaryCard icon={MapPin} color="bg-purple-50 text-purple-600" label="地方馬注意" value={counts.local} filterKey="local" />
         </div>
 
         <div className="bg-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl px-4 py-2.5 text-xs text-[#2B6CB0] flex items-center gap-2">
@@ -521,8 +579,8 @@ function MainApp({ session, onLogout }) {
                         <ChevronRight className="w-4 h-4 text-slate-300 ml-auto group-hover:text-[#4A90E2]" />
                       </div>
                       <div className="flex flex-wrap gap-1 mb-2">
-                        <Pill className={p.cls}>{p.label}</Pill>
-                        {headTag && <Pill className={tagStyle(headTag)}>{headTag}</Pill>}
+                        <FilterPill tag={p.label} className={p.cls} />
+                        {headTag && <FilterPill tag={headTag} className={tagStyle(headTag)} />}
                       </div>
                       <div className="text-sm font-bold text-slate-900 truncate">{r.race_name}</div>
                       <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{s.raceScenarioComment || '—'}</p>
@@ -579,14 +637,14 @@ function MainApp({ session, onLogout }) {
                               <div className="flex flex-wrap items-center gap-1 mt-1">
                                 {excluded ? (
                                   <Pill className="bg-slate-100 text-slate-400 border-slate-200">{s.isShinba ? '除外対象' : '見送り'}</Pill>
-                                ) : tags.map((t) => <Pill key={t} className={tagStyle(t)}>{t}</Pill>)}
+                                ) : tags.map((t) => <FilterPill key={t} tag={t} className={tagStyle(t)} />)}
                               </div>
                               {s.raceScenarioComment && (
                                 <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{s.excludeReason || s.raceScenarioComment}</p>
                               )}
                             </div>
                             <div className="shrink-0 self-center flex flex-col items-end gap-1">
-                              {p && <Pill className={(PRIORITY_STYLES[p] || PRIORITY_STYLES.C).cls}>{(PRIORITY_STYLES[p] || PRIORITY_STYLES.C).label}</Pill>}
+                              {p && <FilterPill tag={(PRIORITY_STYLES[p] || PRIORITY_STYLES.C).label} className={(PRIORITY_STYLES[p] || PRIORITY_STYLES.C).cls} />}
                               <ChevronRight className="w-4 h-4 text-slate-300" />
                             </div>
                           </button>
@@ -718,9 +776,12 @@ function MainApp({ session, onLogout }) {
                 <select className="appearance-none bg-white border border-slate-200 text-xs font-bold text-slate-700 py-1.5 pl-3 pr-8 rounded-full focus:outline-none focus:ring-1 focus:ring-[#4A90E2]"
                   value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
                   <option value="ability">能力順</option>
-                  <option value="no">馬番順</option>
+                  <option value="class">クラス実績順</option>
+                  <option value="pop">人気履歴順</option>
+                  <option value="recent">直近状況順</option>
                   <option value="role">役割順</option>
-                  <option value="eval">評価順</option>
+                  <option value="upgrade">昇級評価順</option>
+                  <option value="no">馬番順</option>
                 </select>
                 <ArrowUpDown className="w-3 h-3 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -762,14 +823,29 @@ function MainApp({ session, onLogout }) {
                     </td>
                     <td className="py-2.5 px-2 text-center"><span className={`text-base ${ABILITY_COLORS[h.abilityRank] || 'text-slate-400'}`}>{h.abilityRank}</span></td>
                     <td className="py-2.5 px-2">
-                      <div className="text-[11px] font-bold text-slate-700">{h.classSummary || '—'}</div>
-                      {h.classRecordSummary && <div className="text-[11px] text-slate-500 tabular-nums">{h.classRecordSummary}</div>}
+                      {h.upgradeProfile ? (
+                        <>
+                          <Pill className="bg-orange-100 text-orange-800 border-orange-200">{h.upgradeProfile.category}</Pill>
+                          <div className="text-[10px] text-orange-700 mt-0.5">{h.upgradeProfile.prevWinSummary} → 昇級</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-[11px] font-bold text-slate-700">{h.classSummary || '—'}</div>
+                          {h.classRecordSummary && <div className="text-[11px] text-slate-500 tabular-nums">{h.classRecordSummary}</div>}
+                        </>
+                      )}
                     </td>
                     <td className="py-2.5 px-2">
-                      <div className="text-[11px] text-slate-700 tabular-nums leading-tight">{h.popularityHistorySummary || '—'}</div>
-                      {h.popularityType && <div className="text-[10px] text-orange-600 font-bold mt-0.5">{h.popularityType}</div>}
+                      {h.upgradeProfile ? (
+                        <div className="text-[11px] text-orange-700 leading-tight">{h.upgradeProfile.prevWinSummary}<br /><span className="text-[10px] text-slate-500">{h.upgradeProfile.gachiNaiyou}</span></div>
+                      ) : (
+                        <>
+                          <div className="text-[11px] text-slate-700 tabular-nums leading-tight">{h.popularityHistorySummary || '—'}</div>
+                          {h.popularityType && <div className="text-[10px] text-orange-600 font-bold mt-0.5">{h.popularityType}</div>}
+                        </>
+                      )}
                     </td>
-                    <td className="py-2.5 px-2"><span className="text-[11px] text-slate-600">{h.recentStatusSummary || '—'}</span></td>
+                    <td className="py-2.5 px-2"><span className={`text-[11px] ${h.upgradeProfile ? 'text-orange-700 font-bold' : 'text-slate-600'}`}>{h.recentStatusSummary || '—'}</span></td>
                     <td className="py-2.5 px-2 text-center">
                       {h.primaryRole ? <Pill className={`border-0 ${roleStyle(h.primaryRole)}`}>{h.primaryRole}</Pill> : <span className="text-slate-300 text-xs">—</span>}
                     </td>
@@ -838,6 +914,32 @@ function MainApp({ session, onLogout }) {
             <p className="text-[13px] text-slate-800 leading-relaxed">{h.aiSituationComment || h.comment || '判定不可'}</p>
             <div className="mt-2 text-[10px] text-slate-400">※ 条件整理に基づく仮説です。買い目は断定しません。最終判断は人間が行います。</div>
           </div>
+
+          {/* 昇級評価カード（昇級組のみ） */}
+          {h.upgradeProfile && (
+            <div className="border border-orange-200 rounded-xl overflow-hidden">
+              <div className="bg-orange-50 px-4 py-2 flex items-center gap-1.5">
+                <TrendingUp className="w-4 h-4 text-orange-600" />
+                <span className="text-xs font-bold text-orange-800">昇級評価カード</span>
+                <Pill className="bg-orange-100 text-orange-800 border-orange-200 ml-auto">{h.upgradeProfile.category}</Pill>
+              </div>
+              <dl className="divide-y divide-orange-50 text-[12px]">
+                {[
+                  ['昇級区分', h.upgradeProfile.category],
+                  ['昇級前', h.upgradeProfile.prevClass],
+                  ['勝ち上がり', h.upgradeProfile.prevWinSummary],
+                  ['内容', `${h.upgradeProfile.prevCondition}・${h.upgradeProfile.gachiNaiyou}`],
+                  ['今回評価', h.upgradeProfile.todayEval],
+                  ['見方', h.upgradeProfile.note],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex gap-3 px-4 py-1.5">
+                    <dt className="text-orange-700/70 font-medium w-20 shrink-0">{k}</dt>
+                    <dd className="text-slate-800 font-medium">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          )}
 
           {/* 3カード */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
