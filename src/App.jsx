@@ -228,6 +228,190 @@ const MiniScoreCell = ({ score, tone = 'navy', sortHighlight = false }) => {
 const fmtTime = (t) => (!t || t.length < 4 ? '' : `${t.slice(0, 2)}:${t.slice(2, 4)}`)
 
 // ================================================================
+// AI 候補抽出（自然文 → 構造化検索）
+// ================================================================
+const AI_QUESTION_CHIPS = [
+  { label: 'Gクラス出走経験', q: 'GⅠ・GⅡ・GⅢに出走経験がある馬は？' },
+  { label: '前走人気を裏切った馬', q: '前走で人気を裏切った馬は？' },
+  { label: '巻き返し候補', q: '巻き返し候補は？' },
+  { label: '人気落ち妙味', q: '人気落ち妙味がある馬は？' },
+  { label: '2着軸候補', q: '2着軸に向く馬は？' },
+  { label: '3着穴候補', q: '3着穴で拾うならどれ？' },
+  { label: '人気以上に走る馬', q: '人気以上に走るタイプは？' },
+  { label: '軽視したい人気馬', q: '軽視してよさそうな馬は？' },
+  { label: '過去に上位人気経験', q: '過去5走で1〜3人気になったことがある馬は？' },
+]
+
+// クラス文字列から G/L 判定
+const detectGradeFromRaceName = (raceName) => {
+  if (!raceName) return null
+  const r = String(raceName)
+  if (/G[ⅠⅰI１1](?![ⅡⅢⅰⅱⅲI2 3])/i.test(r) || /GI(?!I)/.test(r)) return 'GⅠ'
+  if (/G[ⅡⅱII２2]/.test(r)) return 'GⅡ'
+  if (/G[ⅢⅲIII３3]/.test(r)) return 'GⅢ'
+  if (/^L$|Lクラス|^L\s|リステッド/i.test(r)) return 'L'
+  if (/重賞|オープン/.test(r)) return 'OP'
+  return null
+}
+
+// 質問を分類する
+const classifyAiQuery = (q) => {
+  if (!q || !q.trim()) return { type: 'empty' }
+  // G クラス / 重賞 系
+  if (/[GgＧ][ⅠⅡⅢⅰⅱⅲIii123１２３]|重賞|Gクラス|gクラス|G1|G2|G3|GI|GII|GIII/.test(q)) {
+    return { type: 'gclass', label: 'Gクラス・L出走経験' }
+  }
+  // 前走人気を裏切った
+  if (/前走.*裏切|前走.*負|前走.*凡走|前走大敗.*人気/.test(q)) {
+    return { type: 'betray_last', label: '前走で人気を裏切った馬' }
+  }
+  // 過去5走で上位人気
+  if (/過去.*1[〜~\-－]?3人気|上位人気.*経験|過去.*上位人気/.test(q)) {
+    return { type: 'past_top_pop', label: '過去5走で 1〜3 人気の経験あり' }
+  }
+  if (/巻き返し|巻返し/.test(q)) {
+    return { type: 'comeback', label: '巻き返し候補' }
+  }
+  if (/人気落ち.*妙味|妙味/.test(q)) {
+    return { type: 'value_drop', label: '人気落ち妙味のある馬' }
+  }
+  if (/2着軸|２着軸|2着.*軸/.test(q)) {
+    return { type: 'axis2', label: '2着軸に向く馬' }
+  }
+  if (/3着穴|３着穴|3着.*穴|穴で拾|3着.*軸/.test(q)) {
+    return { type: 'axis3', label: '3着穴に向く馬' }
+  }
+  if (/人気以上|穴を開け|人気薄.*好走/.test(q)) {
+    return { type: 'over_perform', label: '人気以上に走るタイプ' }
+  }
+  if (/軽視|消し|過信注意/.test(q)) {
+    return { type: 'avoid', label: '軽視したい馬' }
+  }
+  return { type: 'unknown', label: '該当する条件を判定できず' }
+}
+
+// カテゴリ別の馬券アドバイス
+const BETTING_ADVICE_BY_CATEGORY = {
+  '巻き返し軸': '勝ち切り固定よりも、2着軸・3着軸での巻き返し狙いが有効。',
+  '人気落ち妙味': '人気が落ちるなら相手候補。人気化するなら過信注意。',
+  '穴候補': 'ワイド・三連複の3列目に置く穴候補。',
+  '人気安定型': '人気想定通りの走りで、馬連・三連複の軸として整理。',
+  '人気以上走る型': '相手・2着固定で狙いたい。',
+  '人気裏切り型': '軸固定は避け、買い目からは外す方向。',
+  '前走過剰人気': '今回も人気なら過信注意、人気落ちなら押さえ程度。',
+  '判断保留': '他指標と合わせて補完判断したい。',
+}
+
+// 各 horse に対し reason 文字列を生成して並べる
+const runAiQuery = (q, horses) => {
+  const cls = classifyAiQuery(q)
+  if (cls.type === 'empty') {
+    return { type: 'empty', label: '入力してください', matches: [] }
+  }
+  if (cls.type === 'unknown') {
+    return {
+      type: 'unknown',
+      label: cls.label,
+      note: '対応できる質問は左上のサンプルチップを参考にしてください。',
+      matches: [],
+    }
+  }
+
+  const matches = []
+  for (const h of horses) {
+    const past = h.pastRuns || []
+    const gap = h.popularityGap || {}
+    let reason = null
+
+    switch (cls.type) {
+      case 'gclass': {
+        const grades = new Set()
+        for (const run of past) {
+          const g = detectGradeFromRaceName(run.race)
+          if (g) grades.add(g)
+        }
+        if (grades.size > 0) {
+          const order = ['GⅠ', 'GⅡ', 'GⅢ', 'L', 'OP']
+          const found = order.filter((g) => grades.has(g))
+          reason = `過去走に ${found.join('・')} 出走あり`
+        }
+        break
+      }
+      case 'betray_last': {
+        const lp = gap.last_pop, lr = gap.last_rank, lg = gap.last_gap
+        if (lp != null && lr != null && lp <= 4 && lg != null && lg <= -3) {
+          reason = `前走 ${lp}人気${lr}着（ギャップ ${lg}）と人気を裏切った`
+        }
+        break
+      }
+      case 'past_top_pop': {
+        const tops = (gap.pop_trend || []).filter((p) => p && p <= 3)
+        if (tops.length > 0) {
+          // 上位人気時の着順を見せる
+          const detail = []
+          ;(gap.pop_trend || []).forEach((p, i) => {
+            if (p && p <= 3) detail.push(`${p}人${gap.rank_trend[i]}着`)
+          })
+          reason = `過去5走で上位人気が ${tops.length} 回（${detail.join(' / ')}）`
+        }
+        break
+      }
+      case 'comeback': {
+        if ((gap.comeback_index || 0) >= 45 || h.gapCategory === '巻き返し軸') {
+          reason = `巻き返し指数 ${gap.comeback_index || 0}（前走 ${gap.last_pop}人${gap.last_rank}着、過去の市場評価は高い）`
+        }
+        break
+      }
+      case 'value_drop': {
+        if ((gap.value_drop_score || 0) >= 35 || h.gapCategory === '人気落ち妙味') {
+          reason = `人気落ち妙味度 ${gap.value_drop_score || 0}（過去に上位人気で好走の実績あり）`
+        }
+        break
+      }
+      case 'axis2': {
+        if ((gap.axis2_score || 0) >= 40 || h.betRole === '2着軸') {
+          reason = `2着軸適性 ${gap.axis2_score || 0}（過去走で2-3着が多い／上位人気での複勝圏入り経験）`
+        }
+        break
+      }
+      case 'axis3': {
+        if ((gap.axis3_score || 0) >= 30 || h.betRole === '3着軸' || h.gapCategory === '穴候補') {
+          reason = `3着穴適性 ${gap.axis3_score || 0}（3着または人気薄で複勝圏に入った経験あり）`
+        }
+        break
+      }
+      case 'over_perform': {
+        if ((gap.over_perform_score || 0) >= 35 || h.gapCategory === '人気以上走る型') {
+          reason = `人気以上好走度 ${gap.over_perform_score || 0}（過去走で人気以上の好走が続いている）`
+        }
+        break
+      }
+      case 'avoid': {
+        if (h.betRole === '軽視' || h.gapCategory === '人気裏切り型' || h.gapCategory === '前走過剰人気') {
+          reason = `${h.gapCategory}・${h.betRole}（軸固定は避ける）`
+        }
+        break
+      }
+      default: break
+    }
+
+    if (reason) {
+      matches.push({ horse: h, reason })
+    }
+  }
+
+  // 並び順: 該当馬の総合予想スコア降順（同じ場合は馬番）
+  const CAT_PRIO = { '巻き返し軸': 90, '人気落ち妙味': 80, '人気以上走る型': 75, '人気安定型': 72, '穴候補': 55, '判断保留': 32, '前走過剰人気': 18, '人気裏切り型': 10 }
+  matches.sort((a, b) => {
+    const sa = (CAT_PRIO[a.horse.gapCategory] || 30) + (a.horse.abilityScore || 0) * 0.3
+    const sb = (CAT_PRIO[b.horse.gapCategory] || 30) + (b.horse.abilityScore || 0) * 0.3
+    return sb - sa
+  })
+
+  return { type: cls.type, label: cls.label, matches }
+}
+
+// ================================================================
 // データアクセスラッパー (sql.js)
 // ================================================================
 const dataApi = {
@@ -392,6 +576,9 @@ function MainApp({ session, onLogout }) {
   const [sortKey, setSortKey] = useState('ability')
   const [roleFilter, setRoleFilter] = useState('all')
   const [search, setSearch] = useState('')
+  // AI 候補抽出（自然文 → 構造化検索 + 説明文生成）
+  const [aiQuery, setAiQuery] = useState('')
+  const [aiResult, setAiResult] = useState(null)
 
   const selectedHorse = useMemo(() => horses.find((h) => h.id === selectedId), [horses, selectedId])
 
@@ -911,10 +1098,65 @@ function MainApp({ session, onLogout }) {
     if (!raceInfo || horses.length === 0) {
       return <EmptyRace />
     }
+    const onAiSubmit = (q) => {
+      const text = (q ?? aiQuery).trim()
+      if (!text) return
+      setAiQuery(text)
+      setAiResult(runAiQuery(text, horses))
+    }
     return (
       <div ref={splitContainerRef} className="flex items-start pb-16 relative">
-        {/* 左: 出走馬一覧 */}
-        <div style={{ width: `calc(${listWidthPct}% - 10px)` }} className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex-shrink-0">
+        {/* 左: AI候補抽出 + 出走馬一覧 */}
+        <div style={{ width: `calc(${listWidthPct}% - 10px)` }} className="flex-shrink-0 space-y-4">
+        {/* AI 候補抽出パネル */}
+        <div className="bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-2xl p-4 shadow-sm">
+          <div className="flex items-center gap-1.5 mb-2">
+            <Sparkles className="w-4 h-4 text-[#4A90E2]" />
+            <span className="text-sm font-bold text-[#0B2545]">AI候補抽出</span>
+            <span className="text-[10px] text-slate-400 ml-auto">構造化データから条件に合う馬を抽出</span>
+          </div>
+          {/* 入力欄 */}
+          <div className="flex gap-2 mb-2">
+            <input
+              type="text"
+              value={aiQuery}
+              onChange={(e) => setAiQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onAiSubmit() }}
+              placeholder="例）GⅢ以上に出走経験がある馬を教えて"
+              className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#4A90E2] focus:border-[#4A90E2]"
+            />
+            <button
+              onClick={() => onAiSubmit()}
+              className="px-4 py-1.5 bg-[#0B2545] hover:bg-[#0B2545]/90 text-white rounded-lg text-sm font-bold shrink-0"
+            >
+              候補抽出
+            </button>
+            {aiResult && (
+              <button
+                onClick={() => { setAiQuery(''); setAiResult(null) }}
+                className="px-3 py-1.5 bg-white border border-slate-200 text-slate-500 rounded-lg text-xs font-bold shrink-0 hover:bg-slate-50"
+              >
+                クリア
+              </button>
+            )}
+          </div>
+          {/* サンプルチップ */}
+          <div className="flex gap-1.5 flex-wrap">
+            {AI_QUESTION_CHIPS.map((c) => (
+              <button
+                key={c.label}
+                onClick={() => { setAiQuery(c.q); onAiSubmit(c.q) }}
+                className="px-2.5 py-1 text-[11px] font-bold rounded-full border border-slate-200 bg-white text-slate-600 hover:border-[#4A90E2] hover:text-[#0B2545] transition-colors"
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+          {/* 結果カード */}
+          {aiResult && <AiResultCard result={aiResult} onSelect={(id) => setSelectedId(id)} selectedId={selectedId} />}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-slate-100 bg-slate-50/50">
             <div className="flex justify-between items-center mb-3">
               <h3 className="font-bold text-slate-800 flex items-center gap-2">出走馬一覧 <span className="text-xs font-normal text-slate-500">({displayHorses.length}頭)</span></h3>
@@ -1030,6 +1272,7 @@ function MainApp({ session, onLogout }) {
               {horses.length}頭中 {displayHorses.length}件表示 ・ 総合予想順 = 予想カテゴリ・軸タイプ・好走レンジ・能力・勝ち切り度・巻き返し指数 を加重平均
             </div>
           </div>
+        </div>
         </div>
 
         {/* リサイザー */}
@@ -1228,6 +1471,72 @@ function MainApp({ session, onLogout }) {
             ) : <p className="text-[11px] text-slate-400">判定不可</p>}
             <div className="mt-2 text-[10px] text-slate-400">※ 条件整理に基づく仮説です。買い目は断定しません。最終判断は人間が行います。</div>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  const AiResultCard = ({ result, onSelect, selectedId }) => {
+    if (!result) return null
+    if (result.type === 'empty') return null
+    if (result.type === 'unknown') {
+      return (
+        <div className="mt-3 bg-white border border-amber-200 rounded-xl p-3">
+          <div className="text-[12px] font-bold text-amber-700 mb-1">条件を判定できませんでした</div>
+          <div className="text-[11px] text-slate-600">{result.note}</div>
+        </div>
+      )
+    }
+    return (
+      <div className="mt-3 bg-white border border-[#4A90E2]/30 rounded-xl overflow-hidden">
+        <div className="px-3 py-2 bg-[#4A90E2]/10 border-b border-[#4A90E2]/20 flex items-center justify-between">
+          <div className="text-[12px] font-bold text-[#0B2545]">
+            条件：{result.label}
+          </div>
+          <div className="text-[11px] font-bold text-slate-600">
+            該当 <span className="text-[#0B2545]">{result.matches.length}</span> 頭
+          </div>
+        </div>
+        {result.matches.length === 0 ? (
+          <div className="p-4 text-[12px] text-slate-500 text-center">該当馬なし</div>
+        ) : (
+          <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+            {result.matches.map(({ horse, reason }) => (
+              <li
+                key={horse.id}
+                onClick={() => onSelect(horse.id)}
+                className={`px-3 py-2.5 cursor-pointer hover:bg-slate-50 ${selectedId === horse.id ? 'bg-[#4A90E2]/5' : ''}`}
+              >
+                <div className="flex items-start gap-2">
+                  <div className="w-6 h-6 rounded bg-[#0B2545] text-white flex items-center justify-center text-[11px] font-bold shrink-0">
+                    {horse.no}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-[13px] text-slate-900">{horse.name}</span>
+                      {horse.gapCategory && (
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${gapCategoryStyle(horse.gapCategory)}`}>{horse.gapCategory}</span>
+                      )}
+                      {horse.gapFinishRange && <span className="text-[10px] text-slate-500">{horse.gapFinishRange}</span>}
+                      {horse.betRole && (
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${betRoleStyle(horse.betRole)}`}>{horse.betRole}</span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-700 mt-1 leading-snug">
+                      <span className="font-bold text-[#0B2545]">該当理由：</span>{reason}
+                    </div>
+                    <div className="text-[11px] text-slate-600 mt-0.5 leading-snug">
+                      <span className="font-bold text-emerald-700">馬券上の扱い：</span>
+                      {BETTING_ADVICE_BY_CATEGORY[horse.gapCategory] || '他指標と合わせて検討。'}
+                    </div>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="px-3 py-2 bg-slate-50 border-t border-slate-100 text-[10px] text-slate-400">
+          ※ 構造化データに基づく抽出です。未来の結果を保証するものではありません。検討材料としてご活用ください。
         </div>
       </div>
     )
