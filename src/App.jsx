@@ -153,6 +153,21 @@ const ScoreBar = ({ label, score, tone = 'navy', inverted = false }) => {
   )
 }
 
+// ---- 一覧用ミニスコアセル（テーブル内、勝ち切り度・馬券内度） ----
+const MiniScoreCell = ({ score, tone = 'navy', sortHighlight = false }) => {
+  const s = Math.max(0, Math.min(100, Number(score) || 0))
+  const barColor = tone === 'navy' ? 'bg-[#0B2545]' : tone === 'blue' ? 'bg-[#4A90E2]' : 'bg-slate-400'
+  const numColor = s >= 70 ? 'text-[#0B2545]' : s >= 45 ? 'text-slate-700' : 'text-slate-400'
+  return (
+    <td className={`py-2.5 px-2 text-center ${sortHighlight ? 'bg-slate-50/60' : ''}`}>
+      <div className={`text-[14px] font-black tabular-nums leading-none ${numColor}`}>{s || '—'}</div>
+      <div className="mt-1 mx-auto w-12 h-1 bg-slate-100 rounded-full overflow-hidden">
+        <div className={`h-full ${barColor}`} style={{ width: `${s}%` }} />
+      </div>
+    </td>
+  )
+}
+
 const fmtTime = (t) => (!t || t.length < 4 ? '' : `${t.slice(0, 2)}:${t.slice(2, 4)}`)
 
 // ================================================================
@@ -423,6 +438,8 @@ function MainApp({ session, onLogout }) {
       switch (sortKey) {
         case 'no': return a.no - b.no
         case 'ability': return (b.abilityScore || 0) - (a.abilityScore || 0)
+        case 'winScore': return (b.winScore || 0) - (a.winScore || 0) || (b.abilityScore || 0) - (a.abilityScore || 0)
+        case 'placeScore': return (b.placeScore || 0) - (a.placeScore || 0) || (b.abilityScore || 0) - (a.abilityScore || 0)
         case 'class': return classScore(b) - classScore(a) || (b.abilityScore || 0) - (a.abilityScore || 0)
         case 'pop': return (popOrder[b.popularityType] || 0) - (popOrder[a.popularityType] || 0) || (b.abilityScore || 0) - (a.abilityScore || 0)
         case 'recent': return (recentOrder[b.recentStatusSummary] || 0) - (recentOrder[a.recentStatusSummary] || 0)
@@ -821,8 +838,9 @@ function MainApp({ session, onLogout }) {
                 <select className="appearance-none bg-white border border-slate-200 text-xs font-bold text-slate-700 py-1.5 pl-3 pr-8 rounded-full focus:outline-none focus:ring-1 focus:ring-[#4A90E2]"
                   value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
                   <option value="ability">能力順</option>
+                  <option value="winScore">勝ち切り度順</option>
+                  <option value="placeScore">馬券内度順</option>
                   <option value="class">クラス実績順</option>
-                  <option value="pop">人気履歴順</option>
                   <option value="recent">直近状況順</option>
                   <option value="role">役割順</option>
                   <option value="upgrade">昇級評価順</option>
@@ -850,7 +868,8 @@ function MainApp({ session, onLogout }) {
                   <th className="py-2.5 px-2 font-semibold">馬名 / 騎手</th>
                   <th className="py-2.5 px-2 font-semibold text-center w-10">能力</th>
                   <th className="py-2.5 px-2 font-semibold w-24">クラス実績</th>
-                  <th className="py-2.5 px-2 font-semibold w-28">人気履歴</th>
+                  <th className="py-2.5 px-2 font-semibold text-center w-16">勝ち切り度</th>
+                  <th className="py-2.5 px-2 font-semibold text-center w-16">馬券内度</th>
                   <th className="py-2.5 px-2 font-semibold w-16">直近</th>
                   <th className="py-2.5 px-2 font-semibold text-center w-20">役割</th>
                 </tr>
@@ -880,16 +899,8 @@ function MainApp({ session, onLogout }) {
                         </>
                       )}
                     </td>
-                    <td className="py-2.5 px-2">
-                      {h.upgradeProfile ? (
-                        <div className="text-[11px] text-orange-700 leading-tight">{h.upgradeProfile.prevWinSummary}<br /><span className="text-[10px] text-slate-500">{h.upgradeProfile.gachiNaiyou}</span></div>
-                      ) : (
-                        <>
-                          <div className="text-[11px] text-slate-700 tabular-nums leading-tight">{h.popularityHistorySummary || '—'}</div>
-                          {h.popularityType && <div className="text-[10px] text-orange-600 font-bold mt-0.5">{h.popularityType}</div>}
-                        </>
-                      )}
-                    </td>
+                    <MiniScoreCell score={h.winScore} tone="navy" sortHighlight={sortKey === 'winScore'} />
+                    <MiniScoreCell score={h.placeScore} tone="blue" sortHighlight={sortKey === 'placeScore'} />
                     <td className="py-2.5 px-2"><span className={`text-[11px] ${h.upgradeProfile ? 'text-orange-700 font-bold' : 'text-slate-600'}`}>{h.recentStatusSummary || '—'}</span></td>
                     <td className="py-2.5 px-2 text-center">
                       {h.primaryRole ? <Pill className={`border-0 ${roleStyle(h.primaryRole)}`}>{h.primaryRole}</Pill> : <span className="text-slate-300 text-xs">—</span>}
