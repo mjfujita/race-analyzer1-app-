@@ -1128,34 +1128,39 @@ function MainApp({ session, onLogout }) {
             </div>
           </div>
 
-          {/* ② 人気×着順の流れ（独立セクション） */}
-          {h.popularityGap && h.popRankSummary && h.popRankSummary !== '—' && (
-            <div className="border border-slate-200 rounded-xl p-3.5 bg-gradient-to-r from-amber-50/40 to-white">
+          {/* ② 好材料 / 不安材料（前回までの評価サマリ） */}
+          {h.structuredComment && (
+            <div className="border border-slate-200 rounded-xl p-3.5 bg-white">
               <div className="text-[11px] font-bold text-slate-700 mb-2 flex items-center gap-1">
-                <TrendingUp className="w-3.5 h-3.5" /> 人気×着順の流れ
+                <CheckCircle2 className="w-3.5 h-3.5" /> 前回までの評価
               </div>
-              <div className="text-[13px] font-bold text-slate-900 mb-2 leading-relaxed">
-                {h.popRankSummary}
-              </div>
-              {/* 5走推移ストリップ（古い順） */}
-              <div className="mb-2">
-                <GapTrendStrip
-                  pops={h.popularityGap.pop_trend || []}
-                  ranks={h.popularityGap.rank_trend || []}
-                  gaps={h.popularityGap.gap_trend || []}
-                />
-              </div>
-              {/* 前走ハイライト */}
-              {h.popularityGap.last_pop && h.popularityGap.last_rank && (
-                <div className="text-[11px] text-slate-600">
-                  前走 <span className="font-bold">{h.popularityGap.last_pop}人気 → {h.popularityGap.last_rank}着</span>
-                  {h.popularityGap.last_gap != null && (
-                    <span className={`ml-2 font-bold tabular-nums ${gapColor(h.popularityGap.last_gap)}`}>
-                      (ギャップ {h.popularityGap.last_gap > 0 ? `+${h.popularityGap.last_gap}` : h.popularityGap.last_gap})
-                    </span>
-                  )}
-                </div>
+              {/* 評価理由（一行サマリ） */}
+              {h.structuredComment.reason && (
+                <div className="mb-3 text-[12px] text-slate-700 leading-relaxed">{h.structuredComment.reason}</div>
               )}
+              {/* 好材料 / 不安材料 を 2 列で並べる */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-emerald-50/70 border border-emerald-100 rounded-lg p-2.5">
+                  <div className="text-[10px] font-bold text-emerald-700 mb-1.5 flex items-center gap-1">◎ 好材料</div>
+                  <ul className="text-[11px] space-y-1">
+                    {(h.structuredComment.positives || []).length > 0
+                      ? h.structuredComment.positives.map((p, i) => (
+                        <li key={i} className="text-slate-700 leading-snug">・{p}</li>
+                      ))
+                      : <li className="text-slate-400 leading-snug">特筆すべき好材料は乏しい</li>}
+                  </ul>
+                </div>
+                <div className="bg-rose-50/70 border border-rose-100 rounded-lg p-2.5">
+                  <div className="text-[10px] font-bold text-rose-700 mb-1.5 flex items-center gap-1">▲ 不安材料</div>
+                  <ul className="text-[11px] space-y-1">
+                    {(h.structuredComment.concerns || []).length > 0
+                      ? h.structuredComment.concerns.map((c, i) => (
+                        <li key={i} className="text-slate-700 leading-snug">・{c}</li>
+                      ))
+                      : <li className="text-slate-400 leading-snug">明確な不安材料は確認できず</li>}
+                  </ul>
+                </div>
+              </div>
             </div>
           )}
 
