@@ -228,6 +228,119 @@ const MiniScoreCell = ({ score, tone = 'navy', sortHighlight = false }) => {
 const fmtTime = (t) => (!t || t.length < 4 ? '' : `${t.slice(0, 2)}:${t.slice(2, 4)}`)
 
 // ================================================================
+// AI おすすめ順（レースシナリオ判定 + 重み付き総合スコア）
+// ================================================================
+// レース全体の傾向を一つに分類
+const detectRaceScenario = (horses) => {
+  if (!horses || horses.length === 0) return { type: 'normal', label: '標準' }
+  const n = horses.length
+  let stable = 0, valueDrop = 0, hole = 0, comebackHigh = 0,
+      upgrades = 0, betrayHigh = 0, popUnstable = 0
+  for (const h of horses) {
+    if (h.upgradeProfile) upgrades++
+    const c = h.gapCategory
+    const pg = h.popularityGap || {}
+    if (c === '人気安定型') stable++
+    if (c === '人気落ち妙味') valueDrop++
+    if (c === '穴候補') hole++
+    if ((pg.comeback_index || 0) >= 50) comebackHigh++
+    if ((pg.betray_score || 0) >= 40) betrayHigh++
+    if (c === '人気裏切り型' || c === '前走過剰人気') popUnstable++
+  }
+  const upgRatio = upgrades / n
+  if (upgRatio >= 0.30) return { type: 'upgrade', label: '昇級馬が多い' }
+  if (popUnstable / n >= 0.20 || (betrayHigh / n >= 0.30 && comebackHigh / n >= 0.20))
+    return { type: 'unstable_pop', label: '人気馬に不安' }
+  if ((valueDrop + hole) / n >= 0.40 || comebackHigh / n >= 0.40)
+    return { type: 'rough', label: '荒れそう' }
+  if (stable / n >= 0.40) return { type: 'stable', label: '堅そう' }
+  return { type: 'normal', label: '標準' }
+}
+
+// シナリオ別 重みセット（合計はおよそ 1.0 になるよう調整）
+const SCENARIO_WEIGHTS = {
+  normal:       { ability: 0.20, classRecord: 0.15, win: 0.10, comeback: 0.18, valueDrop: 0.15, axis2: 0.12, axis3: 0.08, overPerform: 0.07, stable: 0.05 },
+  stable:       { ability: 0.28, classRecord: 0.20, win: 0.15, comeback: 0.05, valueDrop: 0.05, axis2: 0.08, axis3: 0.04, overPerform: 0.05, stable: 0.20 },
+  rough:        { ability: 0.10, classRecord: 0.10, win: 0.08, comeback: 0.22, valueDrop: 0.20, axis2: 0.10, axis3: 0.15, overPerform: 0.13, stable: 0.02 },
+  unstable_pop: { ability: 0.12, classRecord: 0.10, win: 0.08, comeback: 0.20, valueDrop: 0.18, axis2: 0.18, axis3: 0.10, overPerform: 0.10, stable: 0.02 },
+  upgrade:      { ability: 0.18, classRecord: 0.25, win: 0.12, comeback: 0.12, valueDrop: 0.10, axis2: 0.10, axis3: 0.08, overPerform: 0.10, stable: 0.05 },
+}
+
+// 予想カテゴリ・軸タイプの補正
+const AI_CAT_BONUS = { '巻き返し軸': 8, '人気落ち妙味': 6, '人気以上走る型': 4, '人気安定型': 5, '穴候補': 3, '判断保留': 0, '前走過剰人気': -3, '人気裏切り型': -5 }
+const AI_ROLE_BONUS = { '1着軸': 10, '2着軸': 8, '相手軸': 7, '3着軸': 4, '押さえ': 1, '軽視': -5 }
+const AI_RANGE_BONUS = { '1〜3着候補': 6, '2〜5着候補': 4, '3〜7着候補': 2, '5〜10着候補': -1, '8着以下想定': -4 }
+
+// シナリオ別に補正を上乗せ
+const scenarioBonusFor = (scenario, cat, role) => {
+  switch (scenario) {
+    case 'stable':
+      return (cat === '人気安定型' ? 6 : 0) + (role === '1着軸' ? 4 : 0)
+    case 'rough':
+      return (cat === '巻き返し軸' ? 5 : 0) + (cat === '穴候補' ? 4 : 0)
+    case 'unstable_pop':
+      return (cat === '巻き返し軸' ? 5 : 0) + (role === '2着軸' || role === '相手軸' ? 5 : 0)
+    case 'upgrade':
+      // クラス実績重視は重みで対応済み。軸候補は微加点
+      return role === '1着軸' || role === '2着軸' ? 2 : 0
+    default:
+      return 0
+  }
+}
+
+// classRecordSummary "0-0-1-2" 形式 → 0-100 のスコア
+const classScoreFromSummary = (summary) => {
+  if (!summary) return 0
+  const m = String(summary).match(/^(\d+)-(\d+)-(\d+)-(\d+)$/)
+  if (!m) return 0
+  const w = Number(m[1]), p = Number(m[2]), s = Number(m[3]), o = Number(m[4])
+  const total = w + p + s + o
+  if (total === 0) return 0
+  // 勝率と複勝率を加味
+  return Math.min(100, (w / total) * 70 + ((w + p + s) / total) * 30)
+}
+
+// 馬 1 頭の ai_recommend_score を返す
+const aiRecommendScore = (h, scenario, weights) => {
+  const pg = h.popularityGap || {}
+  const ability = h.abilityScore || 0
+  const classRecord = classScoreFromSummary(h.classRecordSummary)
+  const win = h.winScore || 0
+  const cb = pg.comeback_index || 0
+  const vd = pg.value_drop_score || 0
+  const a2 = pg.axis2_score || 0
+  const a3 = pg.axis3_score || 0
+  const op = pg.over_perform_score || 0
+  const stable = pg.stable_pop_score || 0
+
+  const base =
+    ability * weights.ability +
+    classRecord * weights.classRecord +
+    win * weights.win +
+    cb * weights.comeback +
+    vd * weights.valueDrop +
+    a2 * weights.axis2 +
+    a3 * weights.axis3 +
+    op * weights.overPerform +
+    stable * weights.stable
+
+  return base
+    + (AI_CAT_BONUS[h.gapCategory] || 0)
+    + (AI_ROLE_BONUS[h.betRole] || 0)
+    + (AI_RANGE_BONUS[h.gapFinishRange] || 0)
+    + scenarioBonusFor(scenario, h.gapCategory, h.betRole)
+}
+
+// シナリオ別の説明文（一覧上部に表示）
+const SCENARIO_NARRATIVE = {
+  normal:       'バランスの取れたレース。能力と人気×着順ギャップを総合的に見て、軸候補→相手→穴の順で並べています。',
+  stable:       '堅そうなレース。能力上位・人気安定型を中心に並べています。軸候補から順に確認するのがおすすめです。',
+  rough:        '荒れそうなレース。巻き返し候補・人気落ち妙味・穴候補を重視して並べています。3着まで広く拾う構成がおすすめです。',
+  unstable_pop: '人気上位に前走凡走馬が多く、巻き返し候補と相手軸を重視して並べています。まずは2着軸・相手軸候補を確認し、その後に穴候補を拾う構成がおすすめです。',
+  upgrade:      '昇級馬が多いレース。クラス実績と昇級評価を重視して並べています。前走勝ち上がり内容を詳細パネルで確認してください。',
+}
+
+// ================================================================
 // AI 候補抽出（自然文 → 構造化検索）
 // ================================================================
 const AI_QUESTION_CHIPS = [
@@ -576,8 +689,10 @@ function MainApp({ session, onLogout }) {
   const [sortKey, setSortKey] = useState('ability')
   const [roleFilter, setRoleFilter] = useState('all')
   const [search, setSearch] = useState('')
-  // AI 候補抽出（自然文 → 構造化検索 + 説明文生成）
-  const [aiQuery, setAiQuery] = useState('')
+  // AI 候補抽出
+  // input は uncontrolled（ref 経由）にすることで、親の再レンダリングで input が
+  // unmount → remount されてフォーカスが外れる問題を回避する。値の同期は ref で行う。
+  const aiInputRef = useRef(null)
   const [aiResult, setAiResult] = useState(null)
 
   const selectedHorse = useMemo(() => horses.find((h) => h.id === selectedId), [horses, selectedId])
@@ -639,7 +754,7 @@ function MainApp({ session, onLogout }) {
       if (!data) { alert('このレースには評価データがありません（evaluate_all.py の再実行が必要かも）'); return }
       setRaceInfo(data.race); setHorses(data.horses); setSummary(data.summary)
       setCurrentRaceKey(raceKey); setSelectedId(data.horses[0]?.id || null)
-      setRoleFilter('all'); setSortKey('overall'); setTab(goTab)
+      setRoleFilter('all'); setSortKey('aiRecommend'); setTab(goTab)
     } catch (err) { console.error(err); alert('評価データの読み込みに失敗: ' + err.message) }
   }
 
@@ -682,36 +797,25 @@ function MainApp({ session, onLogout }) {
     const upScore = (h) => (h.upgradeProfile ? (upgradeOrder[h.upgradeProfile.category] || 1) : -1)
     const evalMap = { '◎': 4, '○': 3, '△': 2, '×': 1 }
     const gap = (h, key) => (h.popularityGap && h.popularityGap[key]) || 0
-    // 各種優先度マップ（評価が高い順）
-    const CAT_PRIO = { '巻き返し軸': 90, '人気落ち妙味': 80, '人気以上走る型': 75, '人気安定型': 72, '穴候補': 55, '判断保留': 32, '前走過剰人気': 18, '人気裏切り型': 10 }
-    const BETROLE_PRIO = { '1着軸': 95, '2着軸': 80, '相手軸': 70, '3着軸': 52, '押さえ': 30, '軽視': 8 }
-    const RANGE_PRIO = { '1〜3着候補': 90, '2〜5着候補': 72, '3〜7着候補': 52, '5〜10着候補': 28, '8着以下想定': 8 }
-    // 総合予想スコア: カテゴリ・軸タイプ・好走レンジ・能力・勝ち切り度・巻き返し指数 を加重平均
-    const overallScore = (h) => (
-      (CAT_PRIO[h.gapCategory] || 30) * 0.28 +
-      (BETROLE_PRIO[h.betRole] || 30) * 0.20 +
-      (RANGE_PRIO[h.gapFinishRange] || 30) * 0.15 +
-      (h.abilityScore || 0) * 0.12 +
-      (h.winScore || 0) * 0.15 +
-      gap(h, 'comeback_index') * 0.10
-    )
-    // ティブレーカー: 同点時に総合予想を二次基準にする
-    const tieBreak = (a, b) => overallScore(b) - overallScore(a)
+    // AIおすすめ順: シナリオを判定 → 重みを変えて ai_recommend_score を算出
+    const scenario = detectRaceScenario(horses)
+    const weights = SCENARIO_WEIGHTS[scenario.type] || SCENARIO_WEIGHTS.normal
+    const aiScore = (h) => aiRecommendScore(h, scenario.type, weights)
+    // 同点時の二次基準 = AIおすすめスコア
+    const tieBreak = (a, b) => aiScore(b) - aiScore(a)
     list.sort((a, b) => {
       switch (sortKey) {
         case 'no':       return a.no - b.no
         case 'ability':  return (b.abilityScore || 0) - (a.abilityScore || 0) || tieBreak(a, b)
         case 'winScore': return (b.winScore || 0) - (a.winScore || 0) || tieBreak(a, b)
+        case 'class':    return classScore(b) - classScore(a) || (b.abilityScore || 0) - (a.abilityScore || 0)
         case 'comeback': return gap(b, 'comeback_index') - gap(a, 'comeback_index') || tieBreak(a, b)
         case 'axis2':    return gap(b, 'axis2_score') - gap(a, 'axis2_score') || tieBreak(a, b)
         case 'axis3':    return gap(b, 'axis3_score') - gap(a, 'axis3_score') || tieBreak(a, b)
-        case 'category': return (CAT_PRIO[b.gapCategory] || 0) - (CAT_PRIO[a.gapCategory] || 0) || tieBreak(a, b)
-        case 'betRole':  return (BETROLE_PRIO[b.betRole] || 0) - (BETROLE_PRIO[a.betRole] || 0) || tieBreak(a, b)
-        case 'range':    return (RANGE_PRIO[b.gapFinishRange] || 0) - (RANGE_PRIO[a.gapFinishRange] || 0) || tieBreak(a, b)
-        case 'valueDrop':return gap(b, 'value_drop_score') - gap(a, 'value_drop_score') || tieBreak(a, b)
-        case 'overall':
+        case 'aiRecommend':
+        case 'overall':  // 旧キー互換
         default:
-          return overallScore(b) - overallScore(a)
+          return aiScore(b) - aiScore(a)
       }
     })
     return list
@@ -1098,12 +1202,38 @@ function MainApp({ session, onLogout }) {
     if (!raceInfo || horses.length === 0) {
       return <EmptyRace />
     }
+    // uncontrolled input: ref 経由で値を読み書きする
     const onAiSubmit = (q) => {
-      const text = (q ?? aiQuery).trim()
+      const text = (q ?? aiInputRef.current?.value ?? '').trim()
       if (!text) return
-      setAiQuery(text)
+      if (aiInputRef.current && aiInputRef.current.value !== text) {
+        aiInputRef.current.value = text
+      }
       setAiResult(runAiQuery(text, horses))
     }
+    const onAiClear = () => {
+      if (aiInputRef.current) aiInputRef.current.value = ''
+      setAiResult(null)
+    }
+    // 日本語IME変換確定の Enter を送信扱いしないようガード
+    const onAiKeyDown = (e) => {
+      if (e.key !== 'Enter') return
+      if (e.nativeEvent && e.nativeEvent.isComposing) return  // IME変換中は無視
+      if (e.keyCode === 229) return                            // 古い IE/IME 互換
+      e.preventDefault()
+      onAiSubmit()
+    }
+    // AIおすすめ順用: シナリオ判定 + 上位3頭の馬IDを取得
+    const raceScenario = useMemo(() => detectRaceScenario(horses), [horses])
+    const aiTopIds = useMemo(() => {
+      if (sortKey !== 'aiRecommend') return new Map()
+      const w = SCENARIO_WEIGHTS[raceScenario.type] || SCENARIO_WEIGHTS.normal
+      const scored = horses.map((h) => ({ id: h.id, s: aiRecommendScore(h, raceScenario.type, w) }))
+      scored.sort((a, b) => b.s - a.s)
+      const m = new Map()
+      scored.slice(0, 3).forEach((x, i) => m.set(x.id, i + 1))
+      return m
+    }, [sortKey, horses, raceScenario])
     return (
       <div ref={splitContainerRef} className="flex items-start pb-16 relative">
         {/* 左: AI候補抽出 + 出走馬一覧 */}
@@ -1118,10 +1248,10 @@ function MainApp({ session, onLogout }) {
           {/* 入力欄 */}
           <div className="flex gap-2 mb-2">
             <input
+              ref={aiInputRef}
               type="text"
-              value={aiQuery}
-              onChange={(e) => setAiQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') onAiSubmit() }}
+              defaultValue=""
+              onKeyDown={onAiKeyDown}
               placeholder="例）GⅢ以上に出走経験がある馬を教えて"
               className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#4A90E2] focus:border-[#4A90E2]"
             />
@@ -1133,7 +1263,7 @@ function MainApp({ session, onLogout }) {
             </button>
             {aiResult && (
               <button
-                onClick={() => { setAiQuery(''); setAiResult(null) }}
+                onClick={onAiClear}
                 className="px-3 py-1.5 bg-white border border-slate-200 text-slate-500 rounded-lg text-xs font-bold shrink-0 hover:bg-slate-50"
               >
                 クリア
@@ -1145,7 +1275,10 @@ function MainApp({ session, onLogout }) {
             {AI_QUESTION_CHIPS.map((c) => (
               <button
                 key={c.label}
-                onClick={() => { setAiQuery(c.q); onAiSubmit(c.q) }}
+                onClick={() => {
+                  if (aiInputRef.current) aiInputRef.current.value = c.q
+                  onAiSubmit(c.q)
+                }}
                 className="px-2.5 py-1 text-[11px] font-bold rounded-full border border-slate-200 bg-white text-slate-600 hover:border-[#4A90E2] hover:text-[#0B2545] transition-colors"
               >
                 {c.label}
@@ -1163,23 +1296,13 @@ function MainApp({ session, onLogout }) {
               <div className="relative">
                 <select className="appearance-none bg-white border border-slate-200 text-xs font-bold text-slate-700 py-1.5 pl-3 pr-8 rounded-full focus:outline-none focus:ring-1 focus:ring-[#4A90E2]"
                   value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
-                  <option value="overall">総合予想順（おすすめ）</option>
-                  <optgroup label="── 予想分類で並べる ──">
-                    <option value="betRole">軸タイプ順（1着軸→軽視）</option>
-                    <option value="category">予想カテゴリ順</option>
-                    <option value="range">好走レンジ順（上位→下位）</option>
-                  </optgroup>
-                  <optgroup label="── 指数で並べる ──">
-                    <option value="ability">能力順</option>
-                    <option value="winScore">勝ち切り度順</option>
-                    <option value="comeback">巻き返し指数順</option>
-                    <option value="valueDrop">人気落ち妙味順</option>
-                    <option value="axis2">2着軸適性順</option>
-                    <option value="axis3">3着穴適性順</option>
-                  </optgroup>
-                  <optgroup label="── その他 ──">
-                    <option value="no">馬番順</option>
-                  </optgroup>
+                  <option value="aiRecommend">AIおすすめ順</option>
+                  <option value="ability">能力順</option>
+                  <option value="class">クラス実績順</option>
+                  <option value="winScore">勝ち切り度順</option>
+                  <option value="comeback">巻き返し指数順</option>
+                  <option value="axis2">2着軸適性順</option>
+                  <option value="axis3">3着穴適性順</option>
                 </select>
                 <ArrowUpDown className="w-3 h-3 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -1193,6 +1316,24 @@ function MainApp({ session, onLogout }) {
                 </button>
               ))}
             </div>
+            {/* AIおすすめ順を選択時のみ、シナリオ説明文を表示 */}
+            {sortKey === 'aiRecommend' && (
+              <div className="mt-3 p-3 bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-lg">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Sparkles className="w-3.5 h-3.5 text-[#4A90E2]" />
+                  <span className="text-[11px] font-bold text-[#0B2545]">AIおすすめ順</span>
+                  <span className="text-[10px] font-bold text-slate-600 bg-white border border-slate-200 rounded-full px-1.5 py-0.5">
+                    レース傾向：{raceScenario.label}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-700 leading-relaxed">
+                  {SCENARIO_NARRATIVE[raceScenario.type]}
+                </p>
+                <p className="mt-1 text-[10px] text-slate-400">
+                  ※ 着順予想ではなく、検討すべき馬の優先順位です。
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="overflow-x-auto">
@@ -1217,9 +1358,20 @@ function MainApp({ session, onLogout }) {
                     <td className="py-3 px-2 text-center">
                       <div className={`w-7 h-7 mx-auto rounded flex items-center justify-center font-bold text-slate-700 text-xs ${selectedId === h.id ? 'bg-white shadow-sm' : 'bg-slate-100'}`}>{h.no}</div>
                     </td>
-                    {/* 馬名 / 騎手 */}
+                    {/* 馬名 / 騎手 ＋ AIおすすめ順時のみ AI注目1/2/3 バッジ */}
                     <td className="py-3 px-2">
-                      <div className="font-bold text-slate-900 text-[13px] leading-tight truncate">{h.name}</div>
+                      <div className="flex items-center gap-1.5">
+                        {aiTopIds.has(h.id) && (
+                          <span className={`inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] font-black tracking-wide shrink-0 ${
+                            aiTopIds.get(h.id) === 1 ? 'bg-amber-100 text-amber-800 border border-amber-300' :
+                            aiTopIds.get(h.id) === 2 ? 'bg-slate-100 text-slate-700 border border-slate-300' :
+                            'bg-orange-50 text-orange-700 border border-orange-200'
+                          }`} title="AIが優先確認をおすすめする順位（着順予想ではありません）">
+                            AI注目{aiTopIds.get(h.id)}
+                          </span>
+                        )}
+                        <div className="font-bold text-slate-900 text-[13px] leading-tight truncate">{h.name}</div>
+                      </div>
                       <div className="text-[11px] text-slate-500 truncate">{h.jockey || '—'}</div>
                     </td>
                     {/* 能力 */}
@@ -1269,7 +1421,7 @@ function MainApp({ session, onLogout }) {
               </tbody>
             </table>
             <div className="px-4 py-2 text-[10px] text-slate-400 border-t border-slate-100">
-              {horses.length}頭中 {displayHorses.length}件表示 ・ 総合予想順 = 予想カテゴリ・軸タイプ・好走レンジ・能力・勝ち切り度・巻き返し指数 を加重平均
+              {horses.length}頭中 {displayHorses.length}件表示 ・ AIおすすめ順 = 能力・クラス実績・勝ち切り度・巻き返し指数・人気落ち妙味度・2着軸/3着穴適性等をレース傾向で重み付け
             </div>
           </div>
         </div>
