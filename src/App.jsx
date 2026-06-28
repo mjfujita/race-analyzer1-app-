@@ -110,7 +110,7 @@ const JUDGMENT_STYLES = {
 }
 const judgmentStyle = (j) => JUDGMENT_STYLES[j] || 'bg-slate-100 text-slate-500'
 
-// ---- 予想カテゴリ（馬券判断直結の6分類） ----
+// ---- 旧予想カテゴリ（v2.2・後方互換） ----
 const CATEGORY_STYLES = {
   '軸候補':   'bg-[#0B2545] text-white',
   '相手本線': 'bg-[#4A90E2] text-white',
@@ -120,6 +120,40 @@ const CATEGORY_STYLES = {
   '見送り':   'bg-slate-100 text-slate-500',
 }
 const categoryStyle = (c) => CATEGORY_STYLES[c] || 'bg-slate-100 text-slate-600'
+
+// ---- 人気×着順ギャップ視点の予想カテゴリ（v2.3 メイン） ----
+const GAP_CATEGORY_STYLES = {
+  '巻き返し軸':   'bg-[#0B2545] text-white',
+  '人気落ち妙味': 'bg-orange-500 text-white',
+  '穴候補':       'bg-amber-500 text-white',
+  '人気安定型':   'bg-[#4A90E2] text-white',
+  '人気以上走る型': 'bg-emerald-500 text-white',
+  '人気裏切り型': 'bg-rose-300 text-rose-900',
+  '前走過剰人気': 'bg-rose-200 text-rose-800',
+  '判断保留':     'bg-slate-200 text-slate-600',
+}
+const gapCategoryStyle = (c) => GAP_CATEGORY_STYLES[c] || 'bg-slate-100 text-slate-600'
+
+// ---- 軸タイプ（馬券上の扱い 6分類） ----
+const BET_ROLE_STYLES = {
+  '1着軸': 'bg-[#0B2545] text-white border-[#0B2545]',
+  '2着軸': 'bg-[#4A90E2] text-white border-[#4A90E2]',
+  '3着軸': 'bg-amber-500 text-white border-amber-500',
+  '相手軸': 'bg-emerald-500 text-white border-emerald-500',
+  '押さえ': 'bg-slate-200 text-slate-700 border-slate-300',
+  '軽視':   'bg-rose-100 text-rose-700 border-rose-200',
+}
+const betRoleStyle = (r) => BET_ROLE_STYLES[r] || 'bg-slate-100 text-slate-500 border-slate-200'
+
+// ---- 人気×着順ギャップ値の色（正=好走 / 負=裏切り） ----
+const gapColor = (g) => {
+  if (g == null) return 'text-slate-300'
+  if (g >= 4) return 'text-emerald-600 font-bold'
+  if (g >= 1) return 'text-emerald-500'
+  if (g <= -4) return 'text-rose-600 font-bold'
+  if (g <= -1) return 'text-rose-500'
+  return 'text-slate-500'
+}
 
 // ---- スコアバー（win/place/risk 用、0-100） ----
 const ScoreBar = ({ label, score, tone = 'navy', inverted = false }) => {
@@ -153,7 +187,30 @@ const ScoreBar = ({ label, score, tone = 'navy', inverted = false }) => {
   )
 }
 
-// ---- 一覧用ミニスコアセル（テーブル内、勝ち切り度・馬券内度） ----
+// ---- 直近5走の 人気→着順 トレンドストリップ（古い順） ----
+const GapTrendStrip = ({ pops = [], ranks = [], gaps = [] }) => {
+  if (!pops.length) return <span className="text-slate-300 text-xs">—</span>
+  // 直近順で入ってくるので、表示は古い順に並べる
+  const items = pops.map((p, i) => ({ p, r: ranks[i], g: gaps[i] })).reverse()
+  return (
+    <div className="flex gap-0.5 items-center justify-start">
+      {items.map((it, i) => {
+        const bg = it.g >= 4 ? 'bg-emerald-100 text-emerald-800'
+                 : it.g >= 1 ? 'bg-emerald-50 text-emerald-700'
+                 : it.g <= -4 ? 'bg-rose-100 text-rose-800'
+                 : it.g <= -1 ? 'bg-rose-50 text-rose-700'
+                 : 'bg-slate-100 text-slate-600'
+        return (
+          <div key={i} className={`px-1 py-0.5 rounded text-[9px] font-bold tabular-nums leading-tight ${bg}`} title={`${it.p}人気 → ${it.r}着 (gap ${it.g > 0 ? '+' : ''}${it.g})`}>
+            {it.p}/{it.r}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ---- 一覧用ミニスコアセル（後方互換、勝ち切り度・馬券内度） ----
 const MiniScoreCell = ({ score, tone = 'navy', sortHighlight = false }) => {
   const s = Math.max(0, Math.min(100, Number(score) || 0))
   const barColor = tone === 'navy' ? 'bg-[#0B2545]' : tone === 'blue' ? 'bg-[#4A90E2]' : 'bg-slate-400'
@@ -395,7 +452,7 @@ function MainApp({ session, onLogout }) {
       if (!data) { alert('このレースには評価データがありません（evaluate_all.py の再実行が必要かも）'); return }
       setRaceInfo(data.race); setHorses(data.horses); setSummary(data.summary)
       setCurrentRaceKey(raceKey); setSelectedId(data.horses[0]?.id || null)
-      setRoleFilter('all'); setSortKey('ability'); setTab(goTab)
+      setRoleFilter('all'); setSortKey('comeback'); setTab(goTab)
     } catch (err) { console.error(err); alert('評価データの読み込みに失敗: ' + err.message) }
   }
 
@@ -434,19 +491,24 @@ function MainApp({ session, onLogout }) {
     }
     const upScore = (h) => (h.upgradeProfile ? (upgradeOrder[h.upgradeProfile.category] || 1) : -1)
     const evalMap = { '◎': 4, '○': 3, '△': 2, '×': 1 }
+    const gap = (h, key) => (h.popularityGap && h.popularityGap[key]) || 0
     list.sort((a, b) => {
       switch (sortKey) {
         case 'no': return a.no - b.no
         case 'ability': return (b.abilityScore || 0) - (a.abilityScore || 0)
-        case 'winScore': return (b.winScore || 0) - (a.winScore || 0) || (b.abilityScore || 0) - (a.abilityScore || 0)
-        case 'placeScore': return (b.placeScore || 0) - (a.placeScore || 0) || (b.abilityScore || 0) - (a.abilityScore || 0)
+        case 'comeback': return gap(b, 'comeback_index') - gap(a, 'comeback_index') || gap(b, 'axis2_score') - gap(a, 'axis2_score')
+        case 'valueDrop': return gap(b, 'value_drop_score') - gap(a, 'value_drop_score') || gap(b, 'comeback_index') - gap(a, 'comeback_index')
+        case 'betray': return gap(b, 'betray_score') - gap(a, 'betray_score')
+        case 'overPerform': return gap(b, 'over_perform_score') - gap(a, 'over_perform_score')
+        case 'axis2': return gap(b, 'axis2_score') - gap(a, 'axis2_score')
+        case 'axis3': return gap(b, 'axis3_score') - gap(a, 'axis3_score')
+        // 互換維持: 旧キーが localStorage 等に残った場合のフォールバック
+        case 'winScore': return (b.winScore || 0) - (a.winScore || 0)
+        case 'placeScore': return (b.placeScore || 0) - (a.placeScore || 0)
         case 'class': return classScore(b) - classScore(a) || (b.abilityScore || 0) - (a.abilityScore || 0)
-        case 'pop': return (popOrder[b.popularityType] || 0) - (popOrder[a.popularityType] || 0) || (b.abilityScore || 0) - (a.abilityScore || 0)
-        case 'recent': return (recentOrder[b.recentStatusSummary] || 0) - (recentOrder[a.recentStatusSummary] || 0)
         case 'role': return (roleOrder[b.primaryRole] || 0) - (roleOrder[a.primaryRole] || 0)
         case 'upgrade': return upScore(b) - upScore(a) || (b.abilityScore || 0) - (a.abilityScore || 0)
-        case 'eval': return (evalMap[b.eval] || 0) - (evalMap[a.eval] || 0)
-        default: return 0
+        default: return gap(b, 'comeback_index') - gap(a, 'comeback_index')
       }
     })
     return list
@@ -837,14 +899,14 @@ function MainApp({ session, onLogout }) {
               <div className="relative">
                 <select className="appearance-none bg-white border border-slate-200 text-xs font-bold text-slate-700 py-1.5 pl-3 pr-8 rounded-full focus:outline-none focus:ring-1 focus:ring-[#4A90E2]"
                   value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
-                  <option value="ability">能力順</option>
-                  <option value="winScore">勝ち切り度順</option>
-                  <option value="placeScore">馬券内度順</option>
-                  <option value="class">クラス実績順</option>
-                  <option value="recent">直近状況順</option>
-                  <option value="role">役割順</option>
-                  <option value="upgrade">昇級評価順</option>
+                  <option value="comeback">巻き返し指数順</option>
+                  <option value="valueDrop">人気落ち妙味順</option>
+                  <option value="betray">前走人気裏切り順</option>
+                  <option value="overPerform">人気以上好走順</option>
+                  <option value="axis2">2着軸適性順</option>
+                  <option value="axis3">3着穴適性順</option>
                   <option value="no">馬番順</option>
+                  <option value="ability">能力順（参考）</option>
                 </select>
                 <ArrowUpDown className="w-3 h-3 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -864,53 +926,86 @@ function MainApp({ session, onLogout }) {
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-slate-500 text-[11px] border-b border-slate-200">
                 <tr>
-                  <th className="py-2.5 px-3 font-semibold text-center w-10">馬番</th>
+                  <th className="py-2.5 px-2 font-semibold text-center w-10">馬番</th>
                   <th className="py-2.5 px-2 font-semibold">馬名 / 騎手</th>
-                  <th className="py-2.5 px-2 font-semibold text-center w-10">能力</th>
-                  <th className="py-2.5 px-2 font-semibold w-24">クラス実績</th>
-                  <th className="py-2.5 px-2 font-semibold text-center w-16">勝ち切り度</th>
-                  <th className="py-2.5 px-2 font-semibold text-center w-16">馬券内度</th>
-                  <th className="py-2.5 px-2 font-semibold w-16">直近</th>
-                  <th className="py-2.5 px-2 font-semibold text-center w-20">役割</th>
+                  <th className="py-2.5 px-2 font-semibold text-center w-20">前走<br/>(人気→着)</th>
+                  <th className="py-2.5 px-2 font-semibold text-center w-12">ギャップ</th>
+                  <th className="py-2.5 px-2 font-semibold w-32">直近5走の推移</th>
+                  <th className="py-2.5 px-2 font-semibold text-center w-14">巻き返し<br/>指数</th>
+                  <th className="py-2.5 px-2 font-semibold text-center w-20">予想カテゴリ<br/>/ 好走レンジ</th>
+                  <th className="py-2.5 px-2 font-semibold text-center w-14">軸タイプ</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {displayHorses.map((h) => (
-                  <tr key={h.id} onClick={() => setSelectedId(h.id)}
-                    className={`cursor-pointer transition-colors ${selectedId === h.id ? 'bg-[#4A90E2]/5' : 'hover:bg-slate-50'}`}>
-                    <td className="py-2.5 px-3 text-center">
-                      <div className={`w-7 h-7 mx-auto rounded flex items-center justify-center font-bold text-slate-700 text-xs ${selectedId === h.id ? 'bg-white shadow-sm' : 'bg-slate-100'}`}>{h.no}</div>
-                    </td>
-                    <td className="py-2.5 px-2">
-                      <div className="font-bold text-slate-900 text-[13px] leading-tight">{h.name}</div>
-                      <div className="text-[11px] text-slate-500">{h.jockey || '—'}</div>
-                    </td>
-                    <td className="py-2.5 px-2 text-center"><span className={`text-base ${ABILITY_COLORS[h.abilityRank] || 'text-slate-400'}`}>{h.abilityRank}</span></td>
-                    <td className="py-2.5 px-2">
-                      {h.upgradeProfile ? (
-                        <>
-                          <Pill className="bg-orange-100 text-orange-800 border-orange-200">{h.upgradeProfile.category}</Pill>
-                          <div className="text-[10px] text-orange-700 mt-0.5">{h.upgradeProfile.prevWinSummary} → 昇級</div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="text-[11px] font-bold text-slate-700">{h.classSummary || '—'}</div>
-                          {h.classRecordSummary && <div className="text-[11px] text-slate-500 tabular-nums">{h.classRecordSummary}</div>}
-                        </>
-                      )}
-                    </td>
-                    <MiniScoreCell score={h.winScore} tone="navy" sortHighlight={sortKey === 'winScore'} />
-                    <MiniScoreCell score={h.placeScore} tone="blue" sortHighlight={sortKey === 'placeScore'} />
-                    <td className="py-2.5 px-2"><span className={`text-[11px] ${h.upgradeProfile ? 'text-orange-700 font-bold' : 'text-slate-600'}`}>{h.recentStatusSummary || '—'}</span></td>
-                    <td className="py-2.5 px-2 text-center">
-                      {h.primaryRole ? <Pill className={`border-0 ${roleStyle(h.primaryRole)}`}>{h.primaryRole}</Pill> : <span className="text-slate-300 text-xs">—</span>}
-                    </td>
-                  </tr>
-                ))}
+                {displayHorses.map((h) => {
+                  const pg = h.popularityGap || {}
+                  const lastPop = pg.last_pop
+                  const lastRank = pg.last_rank
+                  const lastGap = pg.last_gap
+                  const cb = pg.comeback_index || 0
+                  return (
+                    <tr key={h.id} onClick={() => setSelectedId(h.id)}
+                      className={`cursor-pointer transition-colors ${selectedId === h.id ? 'bg-[#4A90E2]/5' : 'hover:bg-slate-50'}`}>
+                      {/* 馬番 */}
+                      <td className="py-2.5 px-2 text-center">
+                        <div className={`w-7 h-7 mx-auto rounded flex items-center justify-center font-bold text-slate-700 text-xs ${selectedId === h.id ? 'bg-white shadow-sm' : 'bg-slate-100'}`}>{h.no}</div>
+                      </td>
+                      {/* 馬名 / 騎手 */}
+                      <td className="py-2.5 px-2">
+                        <div className="font-bold text-slate-900 text-[13px] leading-tight truncate">{h.name}</div>
+                        <div className="text-[11px] text-slate-500">{h.jockey || '—'}</div>
+                      </td>
+                      {/* 前走人気→着順 */}
+                      <td className="py-2.5 px-2 text-center">
+                        {lastPop && lastRank ? (
+                          <div className="text-[12px] font-bold text-slate-800 tabular-nums leading-tight">
+                            <span className={lastPop <= 3 ? 'text-rose-700' : 'text-slate-700'}>{lastPop}人</span>
+                            <span className="text-slate-300 mx-0.5">→</span>
+                            <span className={lastRank <= 3 ? 'text-[#0B2545]' : lastRank <= 5 ? 'text-slate-700' : 'text-slate-400'}>{lastRank}着</span>
+                          </div>
+                        ) : <span className="text-slate-300 text-xs">—</span>}
+                      </td>
+                      {/* 人気着順ギャップ */}
+                      <td className="py-2.5 px-2 text-center">
+                        {lastGap != null ? (
+                          <span className={`text-[14px] font-black tabular-nums ${gapColor(lastGap)}`}>
+                            {lastGap > 0 ? `+${lastGap}` : lastGap}
+                          </span>
+                        ) : <span className="text-slate-300 text-xs">—</span>}
+                      </td>
+                      {/* 5走推移（人気→着順、古い順） */}
+                      <td className="py-2.5 px-2">
+                        <GapTrendStrip pops={pg.pop_trend || []} ranks={pg.rank_trend || []} gaps={pg.gap_trend || []} />
+                      </td>
+                      {/* 巻き返し指数 */}
+                      <td className="py-2.5 px-2 text-center">
+                        <div className={`text-[14px] font-black tabular-nums ${cb >= 60 ? 'text-[#0B2545]' : cb >= 35 ? 'text-slate-700' : 'text-slate-400'}`}>{cb || '—'}</div>
+                        <div className="mt-0.5 mx-auto w-10 h-1 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-[#0B2545]" style={{ width: `${cb}%` }} />
+                        </div>
+                      </td>
+                      {/* 予想カテゴリ + 好走レンジ */}
+                      <td className="py-2.5 px-2 text-center">
+                        {h.gapCategory ? (
+                          <>
+                            <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${gapCategoryStyle(h.gapCategory)}`}>{h.gapCategory}</span>
+                            {h.gapFinishRange && <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">{h.gapFinishRange}</div>}
+                          </>
+                        ) : <span className="text-slate-300 text-xs">—</span>}
+                      </td>
+                      {/* 軸タイプ */}
+                      <td className="py-2.5 px-2 text-center">
+                        {h.betRole ? (
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-bold border ${betRoleStyle(h.betRole)}`}>{h.betRole}</span>
+                        ) : <span className="text-slate-300 text-xs">—</span>}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
             <div className="px-4 py-2 text-[10px] text-slate-400 border-t border-slate-100">
-              {horses.length}頭中 {displayHorses.length}件表示 ・ 能力順は入口。クラス実績・人気履歴・役割で最終確認。
+              {horses.length}頭中 {displayHorses.length}件表示 ・ 巻き返し指数順 = 前走で人気を裏切ったが過去評価が高い順
             </div>
           </div>
         </div>
@@ -949,146 +1044,27 @@ function MainApp({ session, onLogout }) {
               <div className="text-sm text-slate-600 mt-0.5">騎手: {h.jockey || '—'} <span className="text-slate-300 mx-1">|</span> 厩舎: {h.trainer || '—'}</div>
             </div>
             <div className="text-right shrink-0">
-              <div className="text-[10px] font-bold text-slate-400">能力</div>
-              <div className={`text-3xl tabular-nums leading-none ${ABILITY_COLORS[h.abilityRank] || 'text-slate-400'}`}>{h.abilityRank}</div>
-              <div className="text-[10px] text-slate-400 tabular-nums">Score {h.abilityScore}</div>
+              <div className="text-[9px] text-slate-400">参考</div>
+              <div className={`text-lg tabular-nums leading-none ${ABILITY_COLORS[h.abilityRank] || 'text-slate-400'}`}>能力 {h.abilityRank}</div>
+              <div className="text-[9px] text-slate-400 tabular-nums">Score {h.abilityScore}</div>
             </div>
           </div>
-          <div className="mt-3 flex gap-1.5 flex-wrap">
-            {h.primaryRole && <Pill className={`border-0 ${roleStyle(h.primaryRole)}`}>{h.roleDisplayName || h.primaryRole}</Pill>}
+          <div className="mt-3 flex gap-1.5 flex-wrap items-center">
+            {h.gapCategory && (
+              <span className={`px-2.5 py-1 rounded-full text-[11px] font-black ${gapCategoryStyle(h.gapCategory)}`}>{h.gapCategory}</span>
+            )}
+            {h.betRole && (
+              <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${betRoleStyle(h.betRole)}`}>{h.betRole}</span>
+            )}
+            {h.gapFinishRange && <span className="text-[11px] font-bold text-slate-700">{h.gapFinishRange}</span>}
             {h.classSummary && <Pill className="bg-slate-100 text-slate-600 border-slate-200">{h.classSummary}</Pill>}
-            {h.popularityType && <Pill className="bg-orange-50 text-orange-700 border-orange-200">{h.popularityType}</Pill>}
             {h.localHorseEvaluation?.is_local && <Pill className="bg-purple-50 text-purple-700 border-purple-200">地方注意</Pill>}
             {h.maidenCaution && <Pill className="bg-sky-50 text-sky-700 border-sky-200">{h.maidenCaution.label}</Pill>}
           </div>
         </div>
 
         <div className="overflow-y-auto p-5 space-y-5">
-          {/* 予想カテゴリ・好走レンジ・3スコア */}
-          {h.predictionCategory && (
-            <div className="border border-slate-200 rounded-xl p-3.5 bg-gradient-to-r from-white to-slate-50/60">
-              <div className="flex items-center gap-2 flex-wrap mb-3">
-                <span className="text-[10px] font-bold text-slate-500">予想カテゴリ</span>
-                <span className={`px-2.5 py-1 rounded-full text-[12px] font-black ${categoryStyle(h.predictionCategory)}`}>
-                  {h.predictionCategory}
-                </span>
-                {h.finishRange && (
-                  <>
-                    <span className="text-[10px] font-bold text-slate-500 ml-2">好走レンジ</span>
-                    <span className="text-[12px] font-bold text-slate-800">{h.finishRange}</span>
-                  </>
-                )}
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <ScoreBar label="勝ち切り度" score={h.winScore || 0} tone="navy" />
-                <ScoreBar label="馬券内度" score={h.placeScore || 0} tone="blue" />
-                <ScoreBar label="不安度" score={h.riskScore || 0} tone="rose" inverted />
-              </div>
-            </div>
-          )}
-
-          {/* AI状況コメント（構造化版） */}
-          {h.structuredComment ? (
-            <div className="bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl p-4 space-y-3">
-              <div className="flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-[#4A90E2]" /><span className="text-xs font-bold text-[#0B2545]">AI 構造化評価</span></div>
-              <div>
-                <div className="text-[10px] font-bold text-slate-500 mb-1">▶ 評価理由</div>
-                <p className="text-[12px] text-slate-800 leading-relaxed">{h.structuredComment.reason}</p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-emerald-50/60 border border-emerald-100 rounded-lg p-2.5">
-                  <div className="text-[10px] font-bold text-emerald-700 mb-1">◎ 好材料</div>
-                  <ul className="text-[11px] space-y-0.5">
-                    {(h.structuredComment.positives || []).map((p, i) => (
-                      <li key={i} className="text-slate-700 leading-snug">・{p}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="bg-rose-50/60 border border-rose-100 rounded-lg p-2.5">
-                  <div className="text-[10px] font-bold text-rose-700 mb-1">▲ 不安材料</div>
-                  <ul className="text-[11px] space-y-0.5">
-                    {(h.structuredComment.concerns || []).map((c, i) => (
-                      <li key={i} className="text-slate-700 leading-snug">・{c}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-              <div className="bg-white/60 border border-slate-200 rounded-lg p-2.5">
-                <div className="text-[10px] font-bold text-[#0B2545] mb-1">★ 馬券上の扱い</div>
-                <p className="text-[12px] text-slate-800 font-medium leading-relaxed">{h.structuredComment.betting_advice}</p>
-              </div>
-              <div className="text-[10px] text-slate-400">※ 条件整理に基づく仮説です。買い目は断定しません。最終判断は人間が行います。</div>
-            </div>
-          ) : (
-            <div className="bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl p-4">
-              <div className="flex items-center gap-1.5 mb-2"><Sparkles className="w-4 h-4 text-[#4A90E2]" /><span className="text-xs font-bold text-[#0B2545]">AI状況コメント</span></div>
-              <p className="text-[13px] text-slate-800 leading-relaxed">{h.aiSituationComment || h.comment || '判定不可'}</p>
-            </div>
-          )}
-
-          {/* 昇級評価カード（昇級組のみ） */}
-          {h.upgradeProfile && (
-            <div className="border border-orange-200 rounded-xl overflow-hidden">
-              <div className="bg-orange-50 px-4 py-2 flex items-center gap-1.5">
-                <TrendingUp className="w-4 h-4 text-orange-600" />
-                <span className="text-xs font-bold text-orange-800">昇級評価カード</span>
-                <Pill className="bg-orange-100 text-orange-800 border-orange-200 ml-auto">{h.upgradeProfile.category}</Pill>
-              </div>
-              <dl className="divide-y divide-orange-50 text-[12px]">
-                {[
-                  ['昇級区分', h.upgradeProfile.category],
-                  ['昇級前', h.upgradeProfile.prevClass],
-                  ['勝ち上がり', h.upgradeProfile.prevWinSummary],
-                  ['内容', `${h.upgradeProfile.prevCondition}・${h.upgradeProfile.gachiNaiyou}`],
-                  ['今回評価', h.upgradeProfile.todayEval],
-                  ['見方', h.upgradeProfile.note],
-                ].map(([k, v]) => (
-                  <div key={k} className="flex gap-3 px-4 py-1.5">
-                    <dt className="text-orange-700/70 font-medium w-20 shrink-0">{k}</dt>
-                    <dd className="text-slate-800 font-medium">{v}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          )}
-
-          {/* 3カード */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {/* クラス×人気×着順 */}
-            <div className="border border-slate-200 rounded-xl p-3">
-              <div className="text-[11px] font-bold text-[#0B2545] mb-2 flex items-center gap-1"><Layers2 className="w-3.5 h-3.5" /> クラス×人気×着順</div>
-              <dl className="space-y-1.5 text-[11px]">
-                <Row k="クラス" v={h.classLabel ? `${h.classLabel}${h.classSummary === '同級' ? '（同級）' : ''}` : '—'} />
-                <Row k="同級実績" v={h.classRecordSummary || '—'} />
-                <Row k="得意条件" v={h.favoriteCondition || '—'} />
-                <Row k="傾向メモ" v={h.popularityHistorySummary || '—'} />
-              </dl>
-            </div>
-            {/* 今回補正 */}
-            <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/40">
-              <div className="text-[11px] font-bold text-[#0B2545] mb-2 flex items-center gap-1"><Gauge className="w-3.5 h-3.5" /> 今回補正</div>
-              <dl className="space-y-1.5 text-[11px]">
-                <Row k="調教" v={h.trainingCorrection || '判定不可'} up={h.trainingCorrection === '立て直し気配' || h.trainingCorrection === '高水準仕上げ'} />
-                <Row k="陣営本気度" v={h.stableMotivation || '判定不可'} up={h.stableMotivation === '勝負気配'} />
-                <Row k="騎手相性" v={h.jockeyCompatibility || '判定不可'} up={h.jockeyCompatibility === '好走騎手戻り'} />
-                <Row k="乗り替わり" v={h.jockeyChange || '判定不可'} />
-              </dl>
-            </div>
-            {/* 高配当シナリオ */}
-            <div className="border border-[#4A90E2]/30 rounded-xl p-3 bg-[#4A90E2]/5">
-              <div className="text-[11px] font-bold text-[#2B6CB0] mb-2 flex items-center gap-1"><Wand2 className="w-3.5 h-3.5" /> 高配当シナリオ</div>
-              {h.highPayoutScenario ? (
-                <div className="space-y-1 text-[11px] text-slate-700 leading-relaxed">
-                  {(h.highPayoutScenario.lines || []).map((l, i) => <p key={i}>{l}</p>)}
-                  {h.highPayoutScenario.tag && h.highPayoutScenario.tag !== '—' && (
-                    <div className="pt-1"><Pill className="bg-white text-[#2B6CB0] border-[#4A90E2]/30">{h.highPayoutScenario.tag}</Pill></div>
-                  )}
-                </div>
-              ) : <p className="text-[11px] text-slate-400">判定不可</p>}
-            </div>
-          </div>
-
-          {/* 直近5走成績 */}
+          {/* ① 直近5走成績（人気×着順ギャップ列を含む） */}
           <div>
             <h4 className="text-[11px] font-bold text-slate-700 mb-2 flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> 直近5走成績</h4>
             <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -1100,21 +1076,26 @@ function MainApp({ session, onLogout }) {
                     <th className="py-2 px-2 font-semibold">条件</th>
                     <th className="py-2 px-2 font-semibold text-center">人気</th>
                     <th className="py-2 px-2 font-semibold text-center">着順</th>
-                    <th className="py-2 px-2 font-semibold">判定</th>
+                    <th className="py-2 px-2 font-semibold text-center">ギャップ</th>
                     <th className="py-2 pl-2 pr-3 font-semibold">騎手</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {(h.pastRuns || []).map((run, i) => {
                     const rankColor = run.rank === 1 ? 'text-[#0B2545]' : run.rank <= 3 && run.rank > 0 ? 'text-[#4A90E2]' : run.rank <= 5 && run.rank > 0 ? 'text-slate-700' : 'text-slate-400'
+                    const g = run.popularity_gap
                     return (
                       <tr key={i} className="hover:bg-slate-50/70">
                         <td className="py-2 pl-3 pr-2 text-[10px] text-slate-400 tabular-nums">{run.date}</td>
                         <td className="py-2 px-2 text-[11px] font-semibold text-slate-800">{run.race || '—'}</td>
                         <td className="py-2 px-2 text-[10px] text-slate-500 whitespace-nowrap">{run.dist || '—'}<br />{run.going || ''}</td>
-                        <td className="py-2 px-2 text-center text-[11px] text-slate-500 tabular-nums">{run.popularity ? `${run.popularity}人` : '-'}</td>
+                        <td className="py-2 px-2 text-center text-[11px] text-slate-600 tabular-nums">{run.popularity ? `${run.popularity}人` : '-'}</td>
                         <td className="py-2 px-2 text-center"><span className={`text-[15px] font-black tabular-nums ${rankColor}`}>{run.rank > 0 ? run.rank : '-'}</span>{run.field_size ? <span className="text-[9px] text-slate-400">/{run.field_size}</span> : null}</td>
-                        <td className="py-2 px-2">{run.judgment ? <Pill className={`border-0 ${judgmentStyle(run.judgment)}`}>{run.judgment}</Pill> : <span className="text-slate-300 text-[10px]">—</span>}</td>
+                        <td className="py-2 px-2 text-center">
+                          {g != null ? (
+                            <span className={`text-[12px] font-bold tabular-nums ${gapColor(g)}`}>{g > 0 ? `+${g}` : g}</span>
+                          ) : <span className="text-slate-300 text-[10px]">—</span>}
+                        </td>
                         <td className="py-2 pl-2 pr-3 text-[10px] text-slate-500 truncate max-w-[70px]">{run.jockey || '-'}</td>
                       </tr>
                     )
@@ -1123,9 +1104,95 @@ function MainApp({ session, onLogout }) {
                 </tbody>
               </table>
             </div>
-            <div className="mt-1.5 text-[10px] text-slate-400">※ 成績・オッズは主催者発表・JRDBデータをもとに作成。当日オッズは別アプリで確認。</div>
+            {h.popRankSummary && h.popRankSummary !== '—' && (
+              <div className="mt-2 text-[12px] text-slate-700 font-medium text-center bg-slate-50 border border-slate-200 rounded-lg py-1.5">
+                人気×着順の流れ：<span className="font-bold text-slate-900">{h.popRankSummary}</span>
+              </div>
+            )}
+          </div>
+
+          {/* ② 予想カテゴリ + 好走レンジ + 軸タイプ */}
+          {h.gapCategory && (
+            <div className="border border-slate-200 rounded-xl p-3.5 bg-gradient-to-r from-white to-slate-50/60">
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <div className="text-[10px] font-bold text-slate-500 mb-1">予想カテゴリ</div>
+                  <span className={`inline-block px-2.5 py-1 rounded-full text-[12px] font-black ${gapCategoryStyle(h.gapCategory)}`}>{h.gapCategory}</span>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-slate-500 mb-1">好走レンジ</div>
+                  <span className="text-[13px] font-bold text-slate-800">{h.gapFinishRange || '—'}</span>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-slate-500 mb-1">軸タイプ</div>
+                  {h.betRole ? (
+                    <span className={`inline-block px-2 py-0.5 rounded text-[12px] font-bold border ${betRoleStyle(h.betRole)}`}>{h.betRole}</span>
+                  ) : <span className="text-slate-300 text-xs">—</span>}
+                </div>
+              </div>
+              {/* 指数ミニ表示（ソート理解用、補助） */}
+              {h.popularityGap && (
+                <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-4 gap-2 text-[10px]">
+                  <MiniMetric label="巻き返し" v={h.popularityGap.comeback_index} />
+                  <MiniMetric label="人気落ち妙味" v={h.popularityGap.value_drop_score} />
+                  <MiniMetric label="2着軸適性" v={h.popularityGap.axis2_score} />
+                  <MiniMetric label="3着穴適性" v={h.popularityGap.axis3_score} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ③ AI構造化評価（人気×着順 / クラス / 同級実績 / 得意条件 / 傾向メモ） */}
+          {h.gapStructuredEval && (
+            <div className="bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl p-4">
+              <div className="flex items-center gap-1.5 mb-3"><Sparkles className="w-4 h-4 text-[#4A90E2]" /><span className="text-xs font-bold text-[#0B2545]">AI 構造化評価</span></div>
+              <dl className="space-y-1.5 text-[12px]">
+                <EvalRow k="人気×着順" v={h.gapStructuredEval.pop_rank} />
+                <EvalRow k="クラス" v={h.gapStructuredEval.class} />
+                <EvalRow k="同級実績" v={h.gapStructuredEval.same_class_record} />
+                <EvalRow k="得意条件" v={h.gapStructuredEval.favorite_condition} />
+                <EvalRow k="傾向メモ" v={h.gapStructuredEval.memo} />
+              </dl>
+            </div>
+          )}
+
+          {/* ④ 今回補正 */}
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/40">
+            <div className="text-[11px] font-bold text-[#0B2545] mb-2 flex items-center gap-1"><Gauge className="w-3.5 h-3.5" /> 今回補正</div>
+            <dl className="space-y-1.5 text-[11px]">
+              <Row k="調教" v={h.trainingCorrection || '判定不可'} up={h.trainingCorrection === '立て直し気配' || h.trainingCorrection === '高水準仕上げ'} />
+              <Row k="陣営本気度" v={h.stableMotivation || '判定不可'} up={h.stableMotivation === '勝負気配'} />
+              <Row k="騎手相性" v={h.jockeyCompatibility || '判定不可'} up={h.jockeyCompatibility === '好走騎手戻り'} />
+              <Row k="乗り替わり" v={h.jockeyChange || '判定不可'} />
+            </dl>
+          </div>
+
+          {/* ⑤ 高配当シナリオ（人気×着順の流れから文章） */}
+          <div className="border border-[#4A90E2]/30 rounded-xl p-4 bg-[#4A90E2]/5">
+            <div className="text-[12px] font-bold text-[#2B6CB0] mb-2 flex items-center gap-1"><Wand2 className="w-4 h-4" /> 高配当シナリオ</div>
+            {h.gapNarrative ? (
+              <div className="text-[12px] text-slate-800 leading-relaxed whitespace-pre-line">{h.gapNarrative}</div>
+            ) : <p className="text-[11px] text-slate-400">判定不可</p>}
+            <div className="mt-2 text-[10px] text-slate-400">※ 条件整理に基づく仮説です。買い目は断定しません。最終判断は人間が行います。</div>
           </div>
         </div>
+      </div>
+    )
+  }
+
+  const EvalRow = ({ k, v }) => (
+    <div className="flex items-start gap-3 border-b border-slate-100/60 last:border-0 pb-1.5">
+      <dt className="text-slate-500 font-bold w-24 shrink-0">{k}</dt>
+      <dd className="text-slate-800 font-medium flex-1">{v || '—'}</dd>
+    </div>
+  )
+
+  const MiniMetric = ({ label, v }) => {
+    const n = Number(v) || 0
+    return (
+      <div className="text-center">
+        <div className="text-[9px] text-slate-500 font-bold">{label}</div>
+        <div className={`text-[13px] font-black tabular-nums ${n >= 60 ? 'text-[#0B2545]' : n >= 35 ? 'text-slate-700' : 'text-slate-400'}`}>{n || '—'}</div>
       </div>
     )
   }

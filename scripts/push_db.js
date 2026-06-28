@@ -10,7 +10,7 @@
 //   RACE_DB_PATH=/Users/fujitamasaru/projects/backend/race.db
 //   RACE_DB_BUCKET=race-db
 //   RACE_DB_OBJECT=race.db.gz
-import { readFileSync, statSync, createReadStream, createWriteStream } from 'node:fs'
+import { readFileSync, statSync, createReadStream, createWriteStream, existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createGzip } from 'node:zlib'
@@ -46,16 +46,31 @@ if (!url) throw new Error('SUPABASE_PROJECT_URL が .env.local に未設定')
 if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY が .env.local に未設定')
 if (!dbPath) throw new Error('RACE_DB_PATH が .env.local に未設定')
 
-const rawSize = statSync(dbPath).size
+// フロント不要テーブルを落とした軽量版があればそれを優先（容量削減）
+import { execSync } from 'node:child_process'
+const frontendPath = dbPath.replace(/\.db$/, '.db.frontend')
+let actualDbPath = dbPath
+if (existsSync(frontendPath)) {
+  const srcMtime = statSync(dbPath).mtime.getTime()
+  const fmtime = statSync(frontendPath).mtime.getTime()
+  if (fmtime >= srcMtime) {
+    actualDbPath = frontendPath
+    console.log(`📦 軽量版を使用: ${frontendPath}`)
+  } else {
+    console.log('⚠️  軽量版が古いため再生成が必要 (scripts/build_frontend_db.py を実行)')
+  }
+}
+
+const rawSize = statSync(actualDbPath).size
 const rawMb = (rawSize / 1024 / 1024).toFixed(1)
 console.log('📤 アップロード準備')
-console.log(`   from: ${dbPath} (${rawMb} MB)`)
+console.log(`   from: ${actualDbPath} (${rawMb} MB)`)
 console.log(`   to:   ${url} / ${bucket} / ${object}`)
 
 const gzPath = resolve(tmpdir(), 'race-db-upload.gz')
 console.log('🗜  gzip 圧縮中...')
 const compressStart = Date.now()
-await pipeline(createReadStream(dbPath), createGzip({ level: 9 }), createWriteStream(gzPath))
+await pipeline(createReadStream(actualDbPath), createGzip({ level: 9 }), createWriteStream(gzPath))
 const gzSize = statSync(gzPath).size
 const gzMb = (gzSize / 1024 / 1024).toFixed(1)
 const compressSec = ((Date.now() - compressStart) / 1000).toFixed(1)
@@ -71,17 +86,30 @@ if (bErr) {
   console.error('❌ バケット一覧取得失敗:', bErr.message)
   process.exit(1)
 }
+// gzip サイズに余裕を持たせて 256MB を上限に設定（必要なら拡張）
+const BUCKET_FILE_SIZE_LIMIT = 268435456 // 256MB
 const exists = bList?.some((b) => b.name === bucket)
 if (!exists) {
-  console.log(`📦 バケット ${bucket} が存在しないので作成します（プライベート、上限 50MB）`)
+  console.log(`📦 バケット ${bucket} を新規作成（プライベート、上限 ${(BUCKET_FILE_SIZE_LIMIT/1024/1024).toFixed(0)}MB）`)
   const { error: cErr } = await supabase.storage.createBucket(bucket, {
     public: false,
-    fileSizeLimit: 52428800, // 50MB (Free Plan の上限)
+    fileSizeLimit: BUCKET_FILE_SIZE_LIMIT,
     allowedMimeTypes: ['application/gzip', 'application/octet-stream'],
   })
   if (cErr) {
     console.error('❌ バケット作成失敗:', cErr.message)
     process.exit(1)
+  }
+} else if (gzSize > 50 * 1024 * 1024) {
+  // 既存バケットの上限を引き上げる（gzip が 50MB を超えた場合のみ）
+  console.log(`🔧 既存バケット ${bucket} のファイル上限を ${(BUCKET_FILE_SIZE_LIMIT/1024/1024).toFixed(0)}MB に更新中...`)
+  const { error: uErr } = await supabase.storage.updateBucket(bucket, {
+    public: false,
+    fileSizeLimit: BUCKET_FILE_SIZE_LIMIT,
+    allowedMimeTypes: ['application/gzip', 'application/octet-stream'],
+  })
+  if (uErr) {
+    console.error('⚠️  バケット上限の更新に失敗（続行）:', uErr.message)
   }
 }
 
