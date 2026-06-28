@@ -58,6 +58,8 @@ const ROLE_STYLES = {
   '2着妙味': 'bg-[#4A90E2]/15 text-[#2B6CB0]',
   '3着穴': 'bg-emerald-50 text-emerald-700',
   '危険人気': 'bg-rose-100 text-rose-700',
+  '人気過信注意': 'bg-rose-100 text-rose-700',
+  '人気飛び候補': 'bg-rose-200 text-rose-800',
   // 昇級組（オレンジ系で統一）
   '昇級妙味': 'bg-orange-100 text-orange-800',
   '昇級確認': 'bg-orange-50 text-orange-700',
@@ -107,6 +109,49 @@ const JUDGMENT_STYLES = {
   '比較不可': 'bg-slate-50 text-slate-400',
 }
 const judgmentStyle = (j) => JUDGMENT_STYLES[j] || 'bg-slate-100 text-slate-500'
+
+// ---- 予想カテゴリ（馬券判断直結の6分類） ----
+const CATEGORY_STYLES = {
+  '軸候補':   'bg-[#0B2545] text-white',
+  '相手本線': 'bg-[#4A90E2] text-white',
+  '穴候補':   'bg-orange-500 text-white',
+  '押さえ':   'bg-slate-300 text-slate-800',
+  '評価下げ': 'bg-rose-100 text-rose-700',
+  '見送り':   'bg-slate-100 text-slate-500',
+}
+const categoryStyle = (c) => CATEGORY_STYLES[c] || 'bg-slate-100 text-slate-600'
+
+// ---- スコアバー（win/place/risk 用、0-100） ----
+const ScoreBar = ({ label, score, tone = 'navy', inverted = false }) => {
+  const s = Math.max(0, Math.min(100, Number(score) || 0))
+  // 表示色: tone=navy/blue/rose に応じてバーの色を決める
+  const barColor = tone === 'navy' ? 'bg-[#0B2545]'
+                  : tone === 'blue' ? 'bg-[#4A90E2]'
+                  : tone === 'rose' ? 'bg-rose-500'
+                  : 'bg-slate-400'
+  // 不安度は高いほど悪い → 逆向きの語感ヒントを表示
+  const tier = inverted
+    ? (s >= 65 ? '高' : s >= 45 ? '中' : '低')
+    : (s >= 70 ? '高' : s >= 45 ? '中' : '低')
+  const tierColor = inverted
+    ? (s >= 65 ? 'text-rose-600' : s >= 45 ? 'text-amber-600' : 'text-emerald-600')
+    : (s >= 70 ? 'text-emerald-600' : s >= 45 ? 'text-amber-600' : 'text-slate-400')
+  return (
+    <div className="border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white">
+      <div className="flex justify-between items-baseline mb-1">
+        <span className="text-[10px] font-bold text-slate-500">{label}</span>
+        <span className={`text-[10px] font-bold ${tierColor}`}>{tier}</span>
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-[18px] font-black tabular-nums text-slate-800 leading-none">{s}</span>
+        <span className="text-[10px] text-slate-400">/100</span>
+      </div>
+      <div className="mt-1 w-full h-1 bg-slate-100 rounded-full overflow-hidden">
+        <div className={`h-full ${barColor} transition-all`} style={{ width: `${s}%` }} />
+      </div>
+    </div>
+  )
+}
 
 const fmtTime = (t) => (!t || t.length < 4 ? '' : `${t.slice(0, 2)}:${t.slice(2, 4)}`)
 
@@ -899,7 +944,7 @@ function MainApp({ session, onLogout }) {
             </div>
           </div>
           <div className="mt-3 flex gap-1.5 flex-wrap">
-            {h.primaryRole && <Pill className={`border-0 ${roleStyle(h.primaryRole)}`}>{h.primaryRole}</Pill>}
+            {h.primaryRole && <Pill className={`border-0 ${roleStyle(h.primaryRole)}`}>{h.roleDisplayName || h.primaryRole}</Pill>}
             {h.classSummary && <Pill className="bg-slate-100 text-slate-600 border-slate-200">{h.classSummary}</Pill>}
             {h.popularityType && <Pill className="bg-orange-50 text-orange-700 border-orange-200">{h.popularityType}</Pill>}
             {h.localHorseEvaluation?.is_local && <Pill className="bg-purple-50 text-purple-700 border-purple-200">地方注意</Pill>}
@@ -908,12 +953,67 @@ function MainApp({ session, onLogout }) {
         </div>
 
         <div className="overflow-y-auto p-5 space-y-5">
-          {/* AI状況コメント */}
-          <div className="bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl p-4">
-            <div className="flex items-center gap-1.5 mb-2"><Sparkles className="w-4 h-4 text-[#4A90E2]" /><span className="text-xs font-bold text-[#0B2545]">AI状況コメント</span></div>
-            <p className="text-[13px] text-slate-800 leading-relaxed">{h.aiSituationComment || h.comment || '判定不可'}</p>
-            <div className="mt-2 text-[10px] text-slate-400">※ 条件整理に基づく仮説です。買い目は断定しません。最終判断は人間が行います。</div>
-          </div>
+          {/* 予想カテゴリ・好走レンジ・3スコア */}
+          {h.predictionCategory && (
+            <div className="border border-slate-200 rounded-xl p-3.5 bg-gradient-to-r from-white to-slate-50/60">
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                <span className="text-[10px] font-bold text-slate-500">予想カテゴリ</span>
+                <span className={`px-2.5 py-1 rounded-full text-[12px] font-black ${categoryStyle(h.predictionCategory)}`}>
+                  {h.predictionCategory}
+                </span>
+                {h.finishRange && (
+                  <>
+                    <span className="text-[10px] font-bold text-slate-500 ml-2">好走レンジ</span>
+                    <span className="text-[12px] font-bold text-slate-800">{h.finishRange}</span>
+                  </>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <ScoreBar label="勝ち切り度" score={h.winScore || 0} tone="navy" />
+                <ScoreBar label="馬券内度" score={h.placeScore || 0} tone="blue" />
+                <ScoreBar label="不安度" score={h.riskScore || 0} tone="rose" inverted />
+              </div>
+            </div>
+          )}
+
+          {/* AI状況コメント（構造化版） */}
+          {h.structuredComment ? (
+            <div className="bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl p-4 space-y-3">
+              <div className="flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-[#4A90E2]" /><span className="text-xs font-bold text-[#0B2545]">AI 構造化評価</span></div>
+              <div>
+                <div className="text-[10px] font-bold text-slate-500 mb-1">▶ 評価理由</div>
+                <p className="text-[12px] text-slate-800 leading-relaxed">{h.structuredComment.reason}</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-emerald-50/60 border border-emerald-100 rounded-lg p-2.5">
+                  <div className="text-[10px] font-bold text-emerald-700 mb-1">◎ 好材料</div>
+                  <ul className="text-[11px] space-y-0.5">
+                    {(h.structuredComment.positives || []).map((p, i) => (
+                      <li key={i} className="text-slate-700 leading-snug">・{p}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="bg-rose-50/60 border border-rose-100 rounded-lg p-2.5">
+                  <div className="text-[10px] font-bold text-rose-700 mb-1">▲ 不安材料</div>
+                  <ul className="text-[11px] space-y-0.5">
+                    {(h.structuredComment.concerns || []).map((c, i) => (
+                      <li key={i} className="text-slate-700 leading-snug">・{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+              <div className="bg-white/60 border border-slate-200 rounded-lg p-2.5">
+                <div className="text-[10px] font-bold text-[#0B2545] mb-1">★ 馬券上の扱い</div>
+                <p className="text-[12px] text-slate-800 font-medium leading-relaxed">{h.structuredComment.betting_advice}</p>
+              </div>
+              <div className="text-[10px] text-slate-400">※ 条件整理に基づく仮説です。買い目は断定しません。最終判断は人間が行います。</div>
+            </div>
+          ) : (
+            <div className="bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl p-4">
+              <div className="flex items-center gap-1.5 mb-2"><Sparkles className="w-4 h-4 text-[#4A90E2]" /><span className="text-xs font-bold text-[#0B2545]">AI状況コメント</span></div>
+              <p className="text-[13px] text-slate-800 leading-relaxed">{h.aiSituationComment || h.comment || '判定不可'}</p>
+            </div>
+          )}
 
           {/* 昇級評価カード（昇級組のみ） */}
           {h.upgradeProfile && (
