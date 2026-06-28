@@ -460,12 +460,15 @@ function MainApp({ session, onLogout }) {
   const displayHorses = useMemo(() => {
     let list = [...horses]
     const matchRole = (h, f) => {
+      const cat = h.gapCategory
+      const role = h.betRole
       switch (f) {
-        case 'value': return h.primaryRole === '妙味軸' || (h.roleTags || []).includes('妙味軸')
-        case 'second': return h.primaryRole === '2着妙味' || (h.roleTags || []).includes('2着妙味')
-        case 'unpop': return (h.roleTags || []).includes('妙味軸') || h.popularityType === '人気上位凡走型' || h.recentStatusSummary === '前走大敗'
-        case 'maiden': return !!h.maidenCaution || (h.roleTags || []).some((t) => t === '未勝利注意' || t === '初出走注意')
-        case 'local': return !!(h.localHorseEvaluation && h.localHorseEvaluation.is_local)
+        case 'axis':     return role === '1着軸' || role === '2着軸' || role === '相手軸'
+        case 'comeback': return cat === '巻き返し軸'
+        case 'value':    return cat === '人気落ち妙味' || cat === '人気以上走る型'
+        case 'hole':     return cat === '穴候補' || role === '3着軸'
+        case 'stable':   return cat === '人気安定型'
+        case 'avoid':    return role === '軽視' || cat === '人気裏切り型' || cat === '前走過剰人気'
         default: return true
       }
     }
@@ -492,26 +495,33 @@ function MainApp({ session, onLogout }) {
     const upScore = (h) => (h.upgradeProfile ? (upgradeOrder[h.upgradeProfile.category] || 1) : -1)
     const evalMap = { '◎': 4, '○': 3, '△': 2, '×': 1 }
     const gap = (h, key) => (h.popularityGap && h.popularityGap[key]) || 0
-    // 総合予想スコア: カテゴリ・軸タイプ・好走レンジ・能力・勝ち切り度・巻き返し指数 を加味
+    // 各種優先度マップ（評価が高い順）
     const CAT_PRIO = { '巻き返し軸': 90, '人気落ち妙味': 80, '人気以上走る型': 75, '人気安定型': 72, '穴候補': 55, '判断保留': 32, '前走過剰人気': 18, '人気裏切り型': 10 }
-    const ROLE_PRIO = { '1着軸': 95, '2着軸': 80, '相手軸': 70, '3着軸': 52, '押さえ': 30, '軽視': 8 }
+    const BETROLE_PRIO = { '1着軸': 95, '2着軸': 80, '相手軸': 70, '3着軸': 52, '押さえ': 30, '軽視': 8 }
     const RANGE_PRIO = { '1〜3着候補': 90, '2〜5着候補': 72, '3〜7着候補': 52, '5〜10着候補': 28, '8着以下想定': 8 }
+    // 総合予想スコア: カテゴリ・軸タイプ・好走レンジ・能力・勝ち切り度・巻き返し指数 を加重平均
     const overallScore = (h) => (
       (CAT_PRIO[h.gapCategory] || 30) * 0.28 +
-      (ROLE_PRIO[h.betRole] || 30) * 0.20 +
+      (BETROLE_PRIO[h.betRole] || 30) * 0.20 +
       (RANGE_PRIO[h.gapFinishRange] || 30) * 0.15 +
       (h.abilityScore || 0) * 0.12 +
       (h.winScore || 0) * 0.15 +
       gap(h, 'comeback_index') * 0.10
     )
+    // ティブレーカー: 同点時に総合予想を二次基準にする
+    const tieBreak = (a, b) => overallScore(b) - overallScore(a)
     list.sort((a, b) => {
       switch (sortKey) {
-        case 'no': return a.no - b.no
-        case 'ability': return (b.abilityScore || 0) - (a.abilityScore || 0)
-        case 'winScore': return (b.winScore || 0) - (a.winScore || 0) || (b.abilityScore || 0) - (a.abilityScore || 0)
-        case 'comeback': return gap(b, 'comeback_index') - gap(a, 'comeback_index') || gap(b, 'axis2_score') - gap(a, 'axis2_score')
-        case 'axis2': return gap(b, 'axis2_score') - gap(a, 'axis2_score')
-        case 'axis3': return gap(b, 'axis3_score') - gap(a, 'axis3_score')
+        case 'no':       return a.no - b.no
+        case 'ability':  return (b.abilityScore || 0) - (a.abilityScore || 0) || tieBreak(a, b)
+        case 'winScore': return (b.winScore || 0) - (a.winScore || 0) || tieBreak(a, b)
+        case 'comeback': return gap(b, 'comeback_index') - gap(a, 'comeback_index') || tieBreak(a, b)
+        case 'axis2':    return gap(b, 'axis2_score') - gap(a, 'axis2_score') || tieBreak(a, b)
+        case 'axis3':    return gap(b, 'axis3_score') - gap(a, 'axis3_score') || tieBreak(a, b)
+        case 'category': return (CAT_PRIO[b.gapCategory] || 0) - (CAT_PRIO[a.gapCategory] || 0) || tieBreak(a, b)
+        case 'betRole':  return (BETROLE_PRIO[b.betRole] || 0) - (BETROLE_PRIO[a.betRole] || 0) || tieBreak(a, b)
+        case 'range':    return (RANGE_PRIO[b.gapFinishRange] || 0) - (RANGE_PRIO[a.gapFinishRange] || 0) || tieBreak(a, b)
+        case 'valueDrop':return gap(b, 'value_drop_score') - gap(a, 'value_drop_score') || tieBreak(a, b)
         case 'overall':
         default:
           return overallScore(b) - overallScore(a)
@@ -887,9 +897,15 @@ function MainApp({ session, onLogout }) {
   // ================================================================
   // タブ: 出走馬分析
   // ================================================================
+  // 一覧のフィルタチップ（軸タイプ × 予想カテゴリのよくある絞り込み）
   const ROLE_FILTERS = [
-    ['all', 'すべて'], ['value', '妙味軸'], ['second', '2着妙味'],
-    ['unpop', '人気落ち'], ['maiden', '未勝利注意'], ['local', '地方注意'],
+    ['all', 'すべて'],
+    ['axis', '軸候補'],         // 1着軸 / 2着軸 / 相手軸
+    ['comeback', '巻き返し'],   // 巻き返し軸
+    ['value', '人気落ち妙味'],   // 人気落ち妙味
+    ['hole', '穴候補'],         // 穴候補 / 3着軸
+    ['stable', '人気安定'],     // 人気安定型
+    ['avoid', '評価下げ'],      // 軽視 / 人気裏切り / 前走過剰人気
   ]
   const TabAnalysis = () => {
     if (!raceInfo || horses.length === 0) {
@@ -905,13 +921,23 @@ function MainApp({ session, onLogout }) {
               <div className="relative">
                 <select className="appearance-none bg-white border border-slate-200 text-xs font-bold text-slate-700 py-1.5 pl-3 pr-8 rounded-full focus:outline-none focus:ring-1 focus:ring-[#4A90E2]"
                   value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
-                  <option value="overall">総合予想順</option>
-                  <option value="ability">能力順</option>
-                  <option value="winScore">勝ち切り度順</option>
-                  <option value="comeback">巻き返し指数順</option>
-                  <option value="axis2">2着軸適性順</option>
-                  <option value="axis3">3着穴適性順</option>
-                  <option value="no">馬番順</option>
+                  <option value="overall">総合予想順（おすすめ）</option>
+                  <optgroup label="── 予想分類で並べる ──">
+                    <option value="betRole">軸タイプ順（1着軸→軽視）</option>
+                    <option value="category">予想カテゴリ順</option>
+                    <option value="range">好走レンジ順（上位→下位）</option>
+                  </optgroup>
+                  <optgroup label="── 指数で並べる ──">
+                    <option value="ability">能力順</option>
+                    <option value="winScore">勝ち切り度順</option>
+                    <option value="comeback">巻き返し指数順</option>
+                    <option value="valueDrop">人気落ち妙味順</option>
+                    <option value="axis2">2着軸適性順</option>
+                    <option value="axis3">3着穴適性順</option>
+                  </optgroup>
+                  <optgroup label="── その他 ──">
+                    <option value="no">馬番順</option>
+                  </optgroup>
                 </select>
                 <ArrowUpDown className="w-3 h-3 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
