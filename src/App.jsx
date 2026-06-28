@@ -452,7 +452,7 @@ function MainApp({ session, onLogout }) {
       if (!data) { alert('このレースには評価データがありません（evaluate_all.py の再実行が必要かも）'); return }
       setRaceInfo(data.race); setHorses(data.horses); setSummary(data.summary)
       setCurrentRaceKey(raceKey); setSelectedId(data.horses[0]?.id || null)
-      setRoleFilter('all'); setSortKey('comeback'); setTab(goTab)
+      setRoleFilter('all'); setSortKey('overall'); setTab(goTab)
     } catch (err) { console.error(err); alert('評価データの読み込みに失敗: ' + err.message) }
   }
 
@@ -492,23 +492,29 @@ function MainApp({ session, onLogout }) {
     const upScore = (h) => (h.upgradeProfile ? (upgradeOrder[h.upgradeProfile.category] || 1) : -1)
     const evalMap = { '◎': 4, '○': 3, '△': 2, '×': 1 }
     const gap = (h, key) => (h.popularityGap && h.popularityGap[key]) || 0
+    // 総合予想スコア: カテゴリ・軸タイプ・好走レンジ・能力・勝ち切り度・巻き返し指数 を加味
+    const CAT_PRIO = { '巻き返し軸': 90, '人気落ち妙味': 80, '人気以上走る型': 75, '人気安定型': 72, '穴候補': 55, '判断保留': 32, '前走過剰人気': 18, '人気裏切り型': 10 }
+    const ROLE_PRIO = { '1着軸': 95, '2着軸': 80, '相手軸': 70, '3着軸': 52, '押さえ': 30, '軽視': 8 }
+    const RANGE_PRIO = { '1〜3着候補': 90, '2〜5着候補': 72, '3〜7着候補': 52, '5〜10着候補': 28, '8着以下想定': 8 }
+    const overallScore = (h) => (
+      (CAT_PRIO[h.gapCategory] || 30) * 0.28 +
+      (ROLE_PRIO[h.betRole] || 30) * 0.20 +
+      (RANGE_PRIO[h.gapFinishRange] || 30) * 0.15 +
+      (h.abilityScore || 0) * 0.12 +
+      (h.winScore || 0) * 0.15 +
+      gap(h, 'comeback_index') * 0.10
+    )
     list.sort((a, b) => {
       switch (sortKey) {
         case 'no': return a.no - b.no
         case 'ability': return (b.abilityScore || 0) - (a.abilityScore || 0)
+        case 'winScore': return (b.winScore || 0) - (a.winScore || 0) || (b.abilityScore || 0) - (a.abilityScore || 0)
         case 'comeback': return gap(b, 'comeback_index') - gap(a, 'comeback_index') || gap(b, 'axis2_score') - gap(a, 'axis2_score')
-        case 'valueDrop': return gap(b, 'value_drop_score') - gap(a, 'value_drop_score') || gap(b, 'comeback_index') - gap(a, 'comeback_index')
-        case 'betray': return gap(b, 'betray_score') - gap(a, 'betray_score')
-        case 'overPerform': return gap(b, 'over_perform_score') - gap(a, 'over_perform_score')
         case 'axis2': return gap(b, 'axis2_score') - gap(a, 'axis2_score')
         case 'axis3': return gap(b, 'axis3_score') - gap(a, 'axis3_score')
-        // 互換維持: 旧キーが localStorage 等に残った場合のフォールバック
-        case 'winScore': return (b.winScore || 0) - (a.winScore || 0)
-        case 'placeScore': return (b.placeScore || 0) - (a.placeScore || 0)
-        case 'class': return classScore(b) - classScore(a) || (b.abilityScore || 0) - (a.abilityScore || 0)
-        case 'role': return (roleOrder[b.primaryRole] || 0) - (roleOrder[a.primaryRole] || 0)
-        case 'upgrade': return upScore(b) - upScore(a) || (b.abilityScore || 0) - (a.abilityScore || 0)
-        default: return gap(b, 'comeback_index') - gap(a, 'comeback_index')
+        case 'overall':
+        default:
+          return overallScore(b) - overallScore(a)
       }
     })
     return list
@@ -899,14 +905,13 @@ function MainApp({ session, onLogout }) {
               <div className="relative">
                 <select className="appearance-none bg-white border border-slate-200 text-xs font-bold text-slate-700 py-1.5 pl-3 pr-8 rounded-full focus:outline-none focus:ring-1 focus:ring-[#4A90E2]"
                   value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
+                  <option value="overall">総合予想順</option>
+                  <option value="ability">能力順</option>
+                  <option value="winScore">勝ち切り度順</option>
                   <option value="comeback">巻き返し指数順</option>
-                  <option value="valueDrop">人気落ち妙味順</option>
-                  <option value="betray">前走人気裏切り順</option>
-                  <option value="overPerform">人気以上好走順</option>
                   <option value="axis2">2着軸適性順</option>
                   <option value="axis3">3着穴適性順</option>
                   <option value="no">馬番順</option>
-                  <option value="ability">能力順（参考）</option>
                 </select>
                 <ArrowUpDown className="w-3 h-3 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -926,86 +931,77 @@ function MainApp({ session, onLogout }) {
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-slate-500 text-[11px] border-b border-slate-200">
                 <tr>
-                  <th className="py-2.5 px-2 font-semibold text-center w-10">馬番</th>
-                  <th className="py-2.5 px-2 font-semibold">馬名 / 騎手</th>
-                  <th className="py-2.5 px-2 font-semibold text-center w-20">前走<br/>(人気→着)</th>
-                  <th className="py-2.5 px-2 font-semibold text-center w-12">ギャップ</th>
-                  <th className="py-2.5 px-2 font-semibold w-32">直近5走の推移</th>
-                  <th className="py-2.5 px-2 font-semibold text-center w-14">巻き返し<br/>指数</th>
-                  <th className="py-2.5 px-2 font-semibold text-center w-20">予想カテゴリ<br/>/ 好走レンジ</th>
-                  <th className="py-2.5 px-2 font-semibold text-center w-14">軸タイプ</th>
+                  <th className="py-3 px-2 font-semibold text-center w-10">馬番</th>
+                  <th className="py-3 px-2 font-semibold">馬名 / 騎手</th>
+                  <th className="py-3 px-2 font-semibold text-center w-10">能力</th>
+                  <th className="py-3 px-2 font-semibold w-28">クラス実績</th>
+                  <th className="py-3 px-2 font-semibold text-center w-16">勝ち切り度</th>
+                  <th className="py-3 px-2 font-semibold w-20">直近</th>
+                  <th className="py-3 px-2 font-semibold w-28">予想カテゴリ<br/><span className="text-[9px] font-normal text-slate-400">/ 好走レンジ</span></th>
+                  <th className="py-3 px-2 font-semibold text-center w-16">軸タイプ</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {displayHorses.map((h) => {
-                  const pg = h.popularityGap || {}
-                  const lastPop = pg.last_pop
-                  const lastRank = pg.last_rank
-                  const lastGap = pg.last_gap
-                  const cb = pg.comeback_index || 0
-                  return (
-                    <tr key={h.id} onClick={() => setSelectedId(h.id)}
-                      className={`cursor-pointer transition-colors ${selectedId === h.id ? 'bg-[#4A90E2]/5' : 'hover:bg-slate-50'}`}>
-                      {/* 馬番 */}
-                      <td className="py-2.5 px-2 text-center">
-                        <div className={`w-7 h-7 mx-auto rounded flex items-center justify-center font-bold text-slate-700 text-xs ${selectedId === h.id ? 'bg-white shadow-sm' : 'bg-slate-100'}`}>{h.no}</div>
-                      </td>
-                      {/* 馬名 / 騎手 */}
-                      <td className="py-2.5 px-2">
-                        <div className="font-bold text-slate-900 text-[13px] leading-tight truncate">{h.name}</div>
-                        <div className="text-[11px] text-slate-500">{h.jockey || '—'}</div>
-                      </td>
-                      {/* 前走人気→着順 */}
-                      <td className="py-2.5 px-2 text-center">
-                        {lastPop && lastRank ? (
-                          <div className="text-[12px] font-bold text-slate-800 tabular-nums leading-tight">
-                            <span className={lastPop <= 3 ? 'text-rose-700' : 'text-slate-700'}>{lastPop}人</span>
-                            <span className="text-slate-300 mx-0.5">→</span>
-                            <span className={lastRank <= 3 ? 'text-[#0B2545]' : lastRank <= 5 ? 'text-slate-700' : 'text-slate-400'}>{lastRank}着</span>
-                          </div>
-                        ) : <span className="text-slate-300 text-xs">—</span>}
-                      </td>
-                      {/* 人気着順ギャップ */}
-                      <td className="py-2.5 px-2 text-center">
-                        {lastGap != null ? (
-                          <span className={`text-[14px] font-black tabular-nums ${gapColor(lastGap)}`}>
-                            {lastGap > 0 ? `+${lastGap}` : lastGap}
-                          </span>
-                        ) : <span className="text-slate-300 text-xs">—</span>}
-                      </td>
-                      {/* 5走推移（人気→着順、古い順） */}
-                      <td className="py-2.5 px-2">
-                        <GapTrendStrip pops={pg.pop_trend || []} ranks={pg.rank_trend || []} gaps={pg.gap_trend || []} />
-                      </td>
-                      {/* 巻き返し指数 */}
-                      <td className="py-2.5 px-2 text-center">
-                        <div className={`text-[14px] font-black tabular-nums ${cb >= 60 ? 'text-[#0B2545]' : cb >= 35 ? 'text-slate-700' : 'text-slate-400'}`}>{cb || '—'}</div>
-                        <div className="mt-0.5 mx-auto w-10 h-1 bg-slate-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-[#0B2545]" style={{ width: `${cb}%` }} />
-                        </div>
-                      </td>
-                      {/* 予想カテゴリ + 好走レンジ */}
-                      <td className="py-2.5 px-2 text-center">
-                        {h.gapCategory ? (
-                          <>
-                            <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${gapCategoryStyle(h.gapCategory)}`}>{h.gapCategory}</span>
-                            {h.gapFinishRange && <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">{h.gapFinishRange}</div>}
-                          </>
-                        ) : <span className="text-slate-300 text-xs">—</span>}
-                      </td>
-                      {/* 軸タイプ */}
-                      <td className="py-2.5 px-2 text-center">
-                        {h.betRole ? (
-                          <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-bold border ${betRoleStyle(h.betRole)}`}>{h.betRole}</span>
-                        ) : <span className="text-slate-300 text-xs">—</span>}
-                      </td>
-                    </tr>
-                  )
-                })}
+                {displayHorses.map((h) => (
+                  <tr key={h.id} onClick={() => setSelectedId(h.id)}
+                    className={`cursor-pointer transition-colors ${selectedId === h.id ? 'bg-[#4A90E2]/5' : 'hover:bg-slate-50'}`}>
+                    {/* 馬番 */}
+                    <td className="py-3 px-2 text-center">
+                      <div className={`w-7 h-7 mx-auto rounded flex items-center justify-center font-bold text-slate-700 text-xs ${selectedId === h.id ? 'bg-white shadow-sm' : 'bg-slate-100'}`}>{h.no}</div>
+                    </td>
+                    {/* 馬名 / 騎手 */}
+                    <td className="py-3 px-2">
+                      <div className="font-bold text-slate-900 text-[13px] leading-tight truncate">{h.name}</div>
+                      <div className="text-[11px] text-slate-500 truncate">{h.jockey || '—'}</div>
+                    </td>
+                    {/* 能力 */}
+                    <td className="py-3 px-2 text-center">
+                      <span className={`text-base ${ABILITY_COLORS[h.abilityRank] || 'text-slate-400'}`}>{h.abilityRank}</span>
+                    </td>
+                    {/* クラス実績（昇級なら昇級区分を、それ以外は同級+成績） */}
+                    <td className="py-3 px-2">
+                      {h.upgradeProfile ? (
+                        <>
+                          <div className="text-[11px] font-bold text-orange-700 leading-tight">{h.upgradeProfile.category}</div>
+                          <div className="text-[10px] text-orange-600/80 mt-0.5 leading-tight">{h.upgradeProfile.prevClass} {h.upgradeProfile.prevWinSummary}</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-[11px] font-bold text-slate-700 leading-tight">{h.classSummary || '—'}</div>
+                          {h.classRecordSummary && <div className="text-[10px] text-slate-500 tabular-nums leading-tight">{h.classRecordSummary}</div>}
+                        </>
+                      )}
+                    </td>
+                    {/* 勝ち切り度 */}
+                    <MiniScoreCell score={h.winScore} tone="navy" sortHighlight={sortKey === 'winScore'} />
+                    {/* 直近（recentStatus + popularityType） */}
+                    <td className="py-3 px-2">
+                      <div className="text-[11px] font-bold text-slate-700 leading-tight">{h.recentStatusSummary || '—'}</div>
+                      {h.popularityType && <div className="text-[10px] text-orange-600 font-bold mt-0.5 leading-tight">{h.popularityType}</div>}
+                    </td>
+                    {/* 予想カテゴリ + 好走レンジ */}
+                    <td className="py-3 px-2">
+                      {h.gapCategory ? (
+                        <>
+                          <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${gapCategoryStyle(h.gapCategory)}`}>{h.gapCategory}</span>
+                          {h.gapFinishRange && (
+                            <div className="text-[10px] text-slate-500 mt-1 leading-tight">{h.gapFinishRange}</div>
+                          )}
+                        </>
+                      ) : <span className="text-slate-300 text-xs">—</span>}
+                    </td>
+                    {/* 軸タイプ */}
+                    <td className="py-3 px-2 text-center">
+                      {h.betRole ? (
+                        <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-bold border ${betRoleStyle(h.betRole)}`}>{h.betRole}</span>
+                      ) : <span className="text-slate-300 text-xs">—</span>}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
             <div className="px-4 py-2 text-[10px] text-slate-400 border-t border-slate-100">
-              {horses.length}頭中 {displayHorses.length}件表示 ・ 巻き返し指数順 = 前走で人気を裏切ったが過去評価が高い順
+              {horses.length}頭中 {displayHorses.length}件表示 ・ 総合予想順 = 予想カテゴリ・軸タイプ・好走レンジ・能力・勝ち切り度・巻き返し指数 を加重平均
             </div>
           </div>
         </div>
@@ -1104,14 +1100,40 @@ function MainApp({ session, onLogout }) {
                 </tbody>
               </table>
             </div>
-            {h.popRankSummary && h.popRankSummary !== '—' && (
-              <div className="mt-2 text-[12px] text-slate-700 font-medium text-center bg-slate-50 border border-slate-200 rounded-lg py-1.5">
-                人気×着順の流れ：<span className="font-bold text-slate-900">{h.popRankSummary}</span>
-              </div>
-            )}
           </div>
 
-          {/* ② 予想カテゴリ + 好走レンジ + 軸タイプ */}
+          {/* ② 人気×着順の流れ（独立セクション） */}
+          {h.popularityGap && h.popRankSummary && h.popRankSummary !== '—' && (
+            <div className="border border-slate-200 rounded-xl p-3.5 bg-gradient-to-r from-amber-50/40 to-white">
+              <div className="text-[11px] font-bold text-slate-700 mb-2 flex items-center gap-1">
+                <TrendingUp className="w-3.5 h-3.5" /> 人気×着順の流れ
+              </div>
+              <div className="text-[13px] font-bold text-slate-900 mb-2 leading-relaxed">
+                {h.popRankSummary}
+              </div>
+              {/* 5走推移ストリップ（古い順） */}
+              <div className="mb-2">
+                <GapTrendStrip
+                  pops={h.popularityGap.pop_trend || []}
+                  ranks={h.popularityGap.rank_trend || []}
+                  gaps={h.popularityGap.gap_trend || []}
+                />
+              </div>
+              {/* 前走ハイライト */}
+              {h.popularityGap.last_pop && h.popularityGap.last_rank && (
+                <div className="text-[11px] text-slate-600">
+                  前走 <span className="font-bold">{h.popularityGap.last_pop}人気 → {h.popularityGap.last_rank}着</span>
+                  {h.popularityGap.last_gap != null && (
+                    <span className={`ml-2 font-bold tabular-nums ${gapColor(h.popularityGap.last_gap)}`}>
+                      (ギャップ {h.popularityGap.last_gap > 0 ? `+${h.popularityGap.last_gap}` : h.popularityGap.last_gap})
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ③ 予想カテゴリ + 好走レンジ + 軸タイプ + 補助指数 */}
           {h.gapCategory && (
             <div className="border border-slate-200 rounded-xl p-3.5 bg-gradient-to-r from-white to-slate-50/60">
               <div className="grid grid-cols-3 gap-3">
@@ -1142,7 +1164,7 @@ function MainApp({ session, onLogout }) {
             </div>
           )}
 
-          {/* ③ AI構造化評価（人気×着順 / クラス / 同級実績 / 得意条件 / 傾向メモ） */}
+          {/* ④ AI構造化評価（人気×着順 / クラス / 同級実績 / 得意条件 / 傾向メモ） */}
           {h.gapStructuredEval && (
             <div className="bg-gradient-to-r from-[#0B2545]/5 to-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl p-4">
               <div className="flex items-center gap-1.5 mb-3"><Sparkles className="w-4 h-4 text-[#4A90E2]" /><span className="text-xs font-bold text-[#0B2545]">AI 構造化評価</span></div>
@@ -1156,7 +1178,7 @@ function MainApp({ session, onLogout }) {
             </div>
           )}
 
-          {/* ④ 今回補正 */}
+          {/* ⑤ 今回補正 */}
           <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/40">
             <div className="text-[11px] font-bold text-[#0B2545] mb-2 flex items-center gap-1"><Gauge className="w-3.5 h-3.5" /> 今回補正</div>
             <dl className="space-y-1.5 text-[11px]">
@@ -1167,7 +1189,7 @@ function MainApp({ session, onLogout }) {
             </dl>
           </div>
 
-          {/* ⑤ 高配当シナリオ（人気×着順の流れから文章） */}
+          {/* ⑥ 高配当シナリオ（人気×着順の流れから文章） */}
           <div className="border border-[#4A90E2]/30 rounded-xl p-4 bg-[#4A90E2]/5">
             <div className="text-[12px] font-bold text-[#2B6CB0] mb-2 flex items-center gap-1"><Wand2 className="w-4 h-4" /> 高配当シナリオ</div>
             {h.gapNarrative ? (
