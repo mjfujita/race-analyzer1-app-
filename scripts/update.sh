@@ -55,6 +55,14 @@ cd "$BACKEND"
 echo "📊 評価プレ計算中 (増分のみ)..."
 ./venv/bin/python evaluate_all.py | tail -10
 
+# ---- 3.5 フロント軽量DB を再生成 (Supabase 50MB/ファイル上限対策) --
+# race.db は生JRDBテーブルで肥大化する。フロントが使う
+# jrdb_races / race_evaluations / race_summaries だけに絞った軽量版を作り、
+# それを push する（これを省くとフル DB を push して 50MB 超で失敗する）。
+echo "🪶 フロント軽量DB を再生成中..."
+cd "$FRONTEND"
+RACE_DB_PATH="$BACKEND/race.db" python3 scripts/build_frontend_db.py | tail -3
+
 # ---- 4. Supabase に push ------------------------------------------
 echo "📤 Supabase Storage にアップロード中..."
 cd "$FRONTEND"
