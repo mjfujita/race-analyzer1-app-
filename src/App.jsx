@@ -806,6 +806,7 @@ function MainApp({ session, onLogout }) {
     list.sort((a, b) => {
       switch (sortKey) {
         case 'no':       return a.no - b.no
+        case 'idm':      return (a.predictedFavRank ?? 999) - (b.predictedFavRank ?? 999) || (b.abilityScore || 0) - (a.abilityScore || 0)
         case 'ability':  return (b.abilityScore || 0) - (a.abilityScore || 0) || tieBreak(a, b)
         case 'winScore': return (b.winScore || 0) - (a.winScore || 0) || tieBreak(a, b)
         case 'class':    return classScore(b) - classScore(a) || (b.abilityScore || 0) - (a.abilityScore || 0)
@@ -1298,6 +1299,7 @@ function MainApp({ session, onLogout }) {
                   value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
                   <option value="aiRecommend">AIおすすめ順</option>
                   <option value="ability">能力順</option>
+                  <option value="idm">IDM順位順</option>
                   <option value="class">クラス実績順</option>
                   <option value="winScore">勝ち切り度順</option>
                   <option value="comeback">巻き返し指数順</option>
@@ -1343,6 +1345,7 @@ function MainApp({ session, onLogout }) {
                   <th className="py-3 px-2 font-semibold text-center w-10">馬番</th>
                   <th className="py-3 px-2 font-semibold">馬名 / 騎手</th>
                   <th className="py-3 px-2 font-semibold text-center w-10">能力</th>
+                  <th className="py-3 px-2 font-semibold text-center w-12" title="JRDB IDM のレース内順位（当日オッズ不使用の人気化予想）">IDM順</th>
                   <th className="py-3 px-2 font-semibold w-28">クラス実績</th>
                   <th className="py-3 px-2 font-semibold text-center w-16">勝ち切り度</th>
                   <th className="py-3 px-2 font-semibold w-20">直近</th>
@@ -1377,6 +1380,15 @@ function MainApp({ session, onLogout }) {
                     {/* 能力 */}
                     <td className="py-3 px-2 text-center">
                       <span className={`text-base ${ABILITY_COLORS[h.abilityRank] || 'text-slate-400'}`}>{h.abilityRank}</span>
+                    </td>
+                    {/* IDM順位（レース内・当日オッズ不使用の人気化予想） */}
+                    <td className="py-3 px-2 text-center">
+                      {h.predictedFavRank ? (
+                        <span className={`inline-flex items-center justify-center min-w-[22px] h-[22px] px-1 rounded-full text-[11px] font-bold tabular-nums ${
+                          h.predictedFavRank <= 3 ? 'bg-[#0B2545] text-white' :
+                          h.predictedFavRank <= 6 ? 'bg-[#4A90E2]/15 text-[#2B6CB0]' : 'bg-slate-100 text-slate-500'
+                        }`} title="JRDB IDM のレース内順位">{h.predictedFavRank}</span>
+                      ) : <span className="text-slate-300 text-xs">—</span>}
                     </td>
                     {/* クラス実績（昇級なら昇級区分を、それ以外は同級+成績） */}
                     <td className="py-3 px-2">
