@@ -31,7 +31,7 @@ backend（Python）でJRDB取込み＆評価プレ計算 → race.db 生成
 
 - 認証: Supabase Auth（メール/パスワード）
 - データ: Supabase Storage `race-db` の `race.db` を取得、Cache API で永続キャッシュ
-- ホスティング: Vercel（GitHubプライベートリポジトリから自動デプロイ）
+- ホスティング: Vercel プロジェクト `race-analyzer-app`（本番反映手順は下記「リポジトリ固有情報」を参照）
 - 本番URL: https://race-analyzer-app.vercel.app/
 - 主要ファイル: `src/App.jsx`（メインUI）, `src/lib/db.js`（sql.js読込）, `src/supabase.js`
 - 機能の詳細（4タブ構成・バッジ・フィルタ等）は [STATUS.md](./STATUS.md) を見ること
@@ -181,8 +181,8 @@ main へのマージ / main への直接 push / production デプロイ / 本番
 | ビルドコマンド | `npm run build` |
 | lint | 未確認（lint スクリプトなし） |
 | migration 管理 | 該当なし（DB は backend が生成した `race.db` を Storage から取得） |
-| Preview 作成方法 | Vercel（GitHub プライベートリポジトリから自動デプロイ）。ブランチ push で Preview |
-| 本番反映方法 | main への push で Vercel 自動デプロイ（＝**本番反映**。明示承認なしに main へ push しない） |
+| Preview 作成方法 | **未確認**。2026-07-28 時点でブランチ push による Preview デプロイは確認できていない |
+| 本番反映方法 | **未確認**。2026-07-28 時点で、main への push / マージによる自動本番デプロイは確認されていない（GitHub Deployments・commit status とも記録なし、main マージ後も Production deployment は更新されず）。Vercel CLI 等による手動デプロイの可能性が高い。**本番反映の前に Vercel プロジェクト設定と実際のデプロイ手順を確認すること。確認できるまで、また明示的な承認がない限り本番デプロイを行わない** |
 | 本番反映時の注意 | `npm run push-db` / `scripts/push_db.sh` は Supabase Storage の本番 `race.db` を上書きする。明示承認なしに実行しない |
 | 絶対に変更してはいけない設定 | `VITE_RACE_DB_BUCKET` / `VITE_RACE_DB_OBJECT`（Storage の参照先） |
 | 正式な基準ブランチ | `main`。リモート: https://github.com/mjfujita/race-analyzer1-app-.git |
