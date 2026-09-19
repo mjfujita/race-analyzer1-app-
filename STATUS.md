@@ -87,19 +87,20 @@
 ## 運用
 
 ```bash
-# 週次データ更新
-cd ~/projects/backend && ./venv/bin/python import_jrdb.py
-cd ~/projects/backend && ./venv/bin/python evaluate_all.py    # 評価プレ計算
-cd ~/projects/race-analyzer-app && bash scripts/push_db.sh   # Storage に PUT
+# 週次データ更新（ワンライナー: 解凍→取込→評価→軽量DB生成→Storage push）
+bash ~/projects/race-analyzer-app/scripts/update.sh
 # ブラウザ右上「DB再取得」で反映
 ```
+
+- 2026-09-19 以降、Storage に送る軽量DBは **直近28日分のみ**（`FRONTEND_DB_DAYS`、0 で全期間）。gzip 後 約2MB。元の `~/projects/backend/race.db` は全期間を保持し続ける。
+- `push_db.js` は 6MB 以下なら単発 PUT を失敗時に再接続して再送、6MB 超なら TUS 6MB チャンク方式。完了後に再ダウンロードして SHA-256 照合。
 
 ## トラブルシュート
 
 ### 2026-09-19: `push_db.js` が「fetch failed」で失敗する（Storage 更新不可）
 - **原因**: このMacの回線から **Cloudflare 配下の宛先（Supabase Storage / speed.cloudflare.com / discord.com）への TLS 送信が数MB以上で壊れる**（相手側が `bad record mac` アラートで切断）。AWS(httpbin) / GitHub(Azure) 宛ての16MB送信は正常、ダウンロード方向も正常。IPv4/IPv6 とも同症状、送信速度を落としても同症状。Supabase 停止・権限・バケット上限・DB破損ではない。
 - **切り分け手順**: `node scripts/check_storage.js`（到達性・現オブジェクト）→ curl で `/storage/v1/object/race-db/_probe.bin` に 1/4/8/16MB の乱数を PUT（`000` で切れる境界を見る）→ `https://httpbin.org/post` と `https://api.github.com/` へ同サイズを POST（通れば経路限定の問題）。
-- **対処**: 別回線（iPhone USB テザリング等）で `node scripts/push_db.js` を再実行。改善しなければルーター(OpenWrt)再起動 → ISP。`push_db.js` は TUS 6MB チャンク＋再接続＋再送＋SHA-256 照合方式に変更済み（軽度の劣化なら自動回復。今回のような常時破損では効かない）。
+- **対処**: 送信サイズを直近28日分（約2MB）に絞り、失敗時再送で通した（`update.sh` の既定動作に変更）。2MB でも数回に1回は失敗するが再送で回復する。全期間を送りたい場合は別回線（iPhone USB テザリング等）で `FRONTEND_DB_DAYS=0 bash scripts/update.sh`。根本解決はルーター(OpenWrt)再起動 → ISP 問い合わせ。
 - **併発事象**: 起動ディスクの空きが約250MBまで枯渇していた（`build_frontend_db.py` の VACUUM や sqlite の一時領域が失敗しうる）。`~/.colima`(27GB) / Chrome(9GB) / XMind(8GB) / Claude vm_bundles(6.7GB) / `.codex`(4GB) / `.npm`(3.2GB) / `~/projects/backend/race.db.before_*`(約1.5GB) が主な占有。
 
 ## 直近のコミット履歴

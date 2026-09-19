@@ -194,7 +194,7 @@ async function tusUpload(gzBuf) {
           if (h.status === 200 && h.headers['upload-offset'] != null) resumed = Number(h.headers['upload-offset'])
         } catch { /* HEAD 失敗時は同じ offset から再送 */ }
       }
-      console.log(`\n   ⚠️  チャンク送信失敗 (${e.message}) → offset ${resumed} から再送 [試行 ${attempts}/${MAX_ATTEMPTS}]`)
+      console.log(`\n   ⚠️  チャンク送信失敗 (${String(e.message).split('\n')[0].slice(0, 80)}) → offset ${resumed} から再送 [試行 ${attempts}/${MAX_ATTEMPTS}]`)
       offset = resumed
       await new Promise((r) => setTimeout(r, 500))
     }
@@ -203,18 +203,46 @@ async function tusUpload(gzBuf) {
   return { attempts, failures }
 }
 
-console.log('⬆️  アップロード中 (TUS 6MB チャンク / 接続毎に再接続)...')
-const uploadStart = Date.now()
+// 6MB 以下なら単発 PUT（新規接続）を再試行、超えるなら TUS チャンク方式
+async function putUploadWithRetry(gzBuf) {
+  let attempts = 0
+  let failures = 0
+  for (;;) {
+    if (attempts >= MAX_ATTEMPTS) throw new Error(`PUT の試行回数が上限 (${MAX_ATTEMPTS}) に達しました`)
+    attempts++
+    try {
+      const r = await request('PUT', `${url}/storage/v1/object/${bucket}/${object}`, {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        'x-upsert': 'true',
+        'Content-Type': 'application/gzip',
+        'Content-Length': String(gzBuf.length),
+      }, gzBuf)
+      if (r.status === 200 || r.status === 201) return { attempts, failures }
+      throw new Error(`HTTP ${r.status} ${r.body.slice(0, 200)}`)
+    } catch (e) {
+      failures++
+      console.log(`   ⚠️  送信失敗 (${String(e.message).split('\n')[0].slice(0, 80)}) → 再送 [試行 ${attempts}/${MAX_ATTEMPTS}]`)
+      await new Promise((r) => setTimeout(r, 500))
+    }
+  }
+}
+
 const gzBuf = readFileSync(gzPath)
+const useTus = gzBuf.length > CHUNK
+console.log(useTus
+  ? '⬆️  アップロード中 (TUS 6MB チャンク / 接続毎に再接続)...'
+  : '⬆️  アップロード中 (単発 PUT / 失敗時は再接続して再送)...')
+const uploadStart = Date.now()
 let stats
 try {
-  stats = await tusUpload(gzBuf)
+  stats = useTus ? await tusUpload(gzBuf) : await putUploadWithRetry(gzBuf)
 } catch (e) {
   console.error('❌ アップロード失敗:', e.message)
   process.exit(1)
 }
 const uploadSec = ((Date.now() - uploadStart) / 1000).toFixed(1)
-console.log(`✅ アップロード完了 (${uploadSec}s, チャンク試行 ${stats.attempts} 回 / 失敗 ${stats.failures} 回)`)
+console.log(`✅ アップロード完了 (${uploadSec}s, 送信試行 ${stats.attempts} 回 / 失敗 ${stats.failures} 回)`)
 
 // ---------------------------------------------------------------------------
 // 整合性確認: Storage から再取得して SHA-256 を照合

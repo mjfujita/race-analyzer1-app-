@@ -59,9 +59,17 @@ echo "📊 評価プレ計算中 (増分のみ)..."
 # race.db は生JRDBテーブルで肥大化する。フロントが使う
 # jrdb_races / race_evaluations / race_summaries だけに絞った軽量版を作り、
 # それを push する（これを省くとフル DB を push して 50MB 超で失敗する）。
-echo "🪶 フロント軽量DB を再生成中..."
+# さらに直近 FRONTEND_DB_DAYS 日分（既定 28 日）に絞って送信サイズを 2MB 前後に抑える
+# （2026-09-19: 回線→Cloudflare 宛ての数MB超 TLS 送信が壊れる事象への対策。元の race.db は不変）。
+# 全期間を送りたい場合: FRONTEND_DB_DAYS=0 bash scripts/update.sh
+FRONTEND_DB_DAYS="${FRONTEND_DB_DAYS:-28}"
+echo "🪶 フロント軽量DB を再生成中 (直近 ${FRONTEND_DB_DAYS} 日分、0=全期間)..."
 cd "$FRONTEND"
-RACE_DB_PATH="$BACKEND/race.db" python3 scripts/build_frontend_db.py | tail -3
+if [ "$FRONTEND_DB_DAYS" -gt 0 ]; then
+  RACE_DB_PATH="$BACKEND/race.db" python3 scripts/build_frontend_db.py --days "$FRONTEND_DB_DAYS" | tail -3
+else
+  RACE_DB_PATH="$BACKEND/race.db" python3 scripts/build_frontend_db.py | tail -3
+fi
 
 # ---- 4. Supabase に push ------------------------------------------
 echo "📤 Supabase Storage にアップロード中..."

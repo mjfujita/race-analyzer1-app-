@@ -6,13 +6,20 @@ jrdb_horses / jrdb_results は COUNT(*) 表示用にしか使われないので�
 id カラムだけ残したダミー版に置き換える。
 
 実行:
-    python3 scripts/build_frontend_db.py
+    python3 scripts/build_frontend_db.py               # 全期間
+    python3 scripts/build_frontend_db.py --days 28     # 直近28日分のみ（送信サイズ削減）
+    python3 scripts/build_frontend_db.py --since 20260901
     bash scripts/update.sh  または node scripts/push_db.js
+
+環境変数 FRONTEND_DB_DAYS / FRONTEND_DB_SINCE でも指定可（引数優先）。
+期間で絞っても元の race.db には一切手を付けない（軽量版だけを絞る）。
 """
+import argparse
 import os
 import shutil
 import sqlite3
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 
@@ -20,7 +27,26 @@ SRC = Path(os.environ.get("RACE_DB_PATH", str(Path.home() / "projects/backend/ra
 DST = SRC.with_name(SRC.name + ".frontend")
 
 
+def parse_args():
+    ap = argparse.ArgumentParser(description="フロント用軽量 race.db.frontend を生成")
+    ap.add_argument("--days", type=int, default=os.environ.get("FRONTEND_DB_DAYS"),
+                    help="直近N日分のレースだけを残す")
+    ap.add_argument("--since", default=os.environ.get("FRONTEND_DB_SINCE"),
+                    help="この日付(YYYYMMDD)以降のレースだけを残す")
+    return ap.parse_args()
+
+
 def main():
+    args = parse_args()
+    since = None
+    if args.since:
+        since = str(args.since)
+    elif args.days:
+        since = (date.today() - timedelta(days=int(args.days))).strftime("%Y%m%d")
+    if since is not None and (len(since) != 8 or not since.isdigit()):
+        print(f"❌ --since は YYYYMMDD 形式で指定してください: {since}", file=sys.stderr)
+        sys.exit(1)
+
     if not SRC.exists():
         print(f"❌ {SRC} が見つかりません", file=sys.stderr)
         sys.exit(1)
@@ -53,6 +79,15 @@ def main():
     for t in all_tables:
         if t not in keep:
             c.execute(f"DROP TABLE IF EXISTS {t}")
+
+    # 期間フィルタ（軽量版のみ。元 DB は不変）
+    if since is not None:
+        before = c.execute("SELECT COUNT(*) FROM jrdb_races").fetchone()[0]
+        c.execute("DELETE FROM race_evaluations WHERE race_key IN (SELECT race_key FROM jrdb_races WHERE race_date < ?)", (since,))
+        c.execute("DELETE FROM race_summaries WHERE race_date < ?", (since,))
+        c.execute("DELETE FROM jrdb_races WHERE race_date < ?", (since,))
+        after = c.execute("SELECT COUNT(*) FROM jrdb_races").fetchone()[0]
+        print(f"✂️  {since} 以降に絞り込み: {before} → {after} レース")
 
     c.commit()
     c.execute("VACUUM")
