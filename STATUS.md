@@ -94,6 +94,14 @@ cd ~/projects/race-analyzer-app && bash scripts/push_db.sh   # Storage に PUT
 # ブラウザ右上「DB再取得」で反映
 ```
 
+## トラブルシュート
+
+### 2026-09-19: `push_db.js` が「fetch failed」で失敗する（Storage 更新不可）
+- **原因**: このMacの回線から **Cloudflare 配下の宛先（Supabase Storage / speed.cloudflare.com / discord.com）への TLS 送信が数MB以上で壊れる**（相手側が `bad record mac` アラートで切断）。AWS(httpbin) / GitHub(Azure) 宛ての16MB送信は正常、ダウンロード方向も正常。IPv4/IPv6 とも同症状、送信速度を落としても同症状。Supabase 停止・権限・バケット上限・DB破損ではない。
+- **切り分け手順**: `node scripts/check_storage.js`（到達性・現オブジェクト）→ curl で `/storage/v1/object/race-db/_probe.bin` に 1/4/8/16MB の乱数を PUT（`000` で切れる境界を見る）→ `https://httpbin.org/post` と `https://api.github.com/` へ同サイズを POST（通れば経路限定の問題）。
+- **対処**: 別回線（iPhone USB テザリング等）で `node scripts/push_db.js` を再実行。改善しなければルーター(OpenWrt)再起動 → ISP。`push_db.js` は TUS 6MB チャンク＋再接続＋再送＋SHA-256 照合方式に変更済み（軽度の劣化なら自動回復。今回のような常時破損では効かない）。
+- **併発事象**: 起動ディスクの空きが約250MBまで枯渇していた（`build_frontend_db.py` の VACUUM や sqlite の一時領域が失敗しうる）。`~/.colima`(27GB) / Chrome(9GB) / XMind(8GB) / Claude vm_bundles(6.7GB) / `.codex`(4GB) / `.npm`(3.2GB) / `~/projects/backend/race.db.before_*`(約1.5GB) が主な占有。
+
 ## 直近のコミット履歴
 
 ```
