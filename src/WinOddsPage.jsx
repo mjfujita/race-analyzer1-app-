@@ -88,8 +88,8 @@ export default function WinOddsPage({ race, horses, userId, onOpenAbility }) {
               <td className="px-4 py-3">{horse.rank ?? '—'}</td>
               <td className="px-4 py-3">{horse.before?.toFixed(1) ?? '—'}</td>
               <td className="px-4 py-3">{horse.odds?.toFixed(1) ?? '—'}</td>
-              <td className="px-4 py-3">{horse.change == null ? '—' : percent.format(horse.change)}</td>
-              <td className="px-4 py-3">{horse.gap > 0 ? `+${horse.gap}` : horse.gap ?? '—'}</td>
+              <td className={`px-4 py-3 tabular-nums ${horse.change < 0 ? 'text-[#2B6CB0]' : horse.change > 0 ? 'text-amber-800' : ''}`}>{horse.change == null ? '—' : percent.format(horse.change)}</td>
+              <td className="px-4 py-3 font-mono tabular-nums">{horse.gap > 0 ? `+${horse.gap}` : horse.gap ?? '—'}</td>
               <td className="px-4 py-3">
                 {horse.gap >= 3 && <span className="rounded bg-blue-50 px-2 py-1 font-semibold text-[#0B2545]">過小評価候補</span>}
                 {horse.gap <= -3 && <span className="rounded bg-amber-50 px-2 py-1 font-semibold text-amber-800">買われすぎ候補</span>}

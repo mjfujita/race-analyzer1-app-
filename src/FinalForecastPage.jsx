@@ -59,6 +59,10 @@ export default function FinalForecastPage({ race, horses, statistics, earlierRac
         <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {field.slice(0, 6).map(horse => <li key={horse.no} className="rounded-lg bg-slate-50 p-3 text-sm">
             <p className="font-semibold">{horse.no}番 {horse.name} ・ 推定勝率 {pct(horse.probability)}</p>
+            <div aria-hidden="true" className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+              <div className="h-full rounded-full bg-gradient-to-r from-[#0B2545] to-[#4A90E2]"
+                style={{ width: pct(horse.probability / field[0].probability) }} />
+            </div>
             <p className="mt-1 text-xs text-slate-600">IDM {horse.idm.toFixed(1)} ・ {styles[horse.style] ?? '脚質未取得'}{horse.trend > 0 && ' ・ 当日の傾向に合う'}{horse.pace > 0 && ' ・ 想定展開に合う'}</p>
             <p className="mt-1 text-xs text-slate-600">3着内／走数　距離 {record(horse.stat.distance_top3, horse.stat.distance_runs)} ・ 会場 {record(horse.stat.venue_top3, horse.stat.venue_runs)} ・ 馬場 {record(horse.goingTop3, horse.goingRuns)}</p>
           </li>)}
@@ -87,7 +91,7 @@ export default function FinalForecastPage({ race, horses, statistics, earlierRac
         {!pairs && <p role="alert" className="text-red-700">券種・馬番・倍率・重複を確認してください。</p>}
         {!pairTimeValid && <p role="alert" className="text-red-700">単勝と同じ時刻のオッズを指定してください。</p>}
       </details>
-      <p className="text-xs text-slate-600">評価にはオッズを最低10%下げた想定を使用。単勝は前回より大きく下落した場合、その下落率を最大25%まで適用します。的中率は推定値の85%で評価します。</p>
+      <p className="text-xs text-slate-600">評価にはオッズを最低10%下げた想定を使用。単勝は前回より大きく下落した場合、その下落率を最大25%まで適用します。的中率は推定値の85%で評価します。試算回収率 ＝ 評価的中率 × 評価オッズ。</p>
     </section>
     <section className={card}>
       <h3 className="font-bold text-[#0B2545]">買い目と配分</h3>

@@ -13,7 +13,7 @@ import {
 import { supabase } from './supabase'
 import { loadDb, queryAll, dbMeta } from './lib/db'
 
-const UI_VERSION = 'v0.2'
+const UI_VERSION = 'v0.3'
 const COMMIT_HASH = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'dev'
 
 // ================================================================
@@ -632,7 +632,7 @@ function LoginPage({ onLogin }) {
             </div>
             <div className="text-left">
               <p className="text-[#0B2545] font-black text-lg leading-none">Race Condition Analyzer</p>
-              <p className="text-[10px] font-medium text-slate-500 tracking-wider mt-1">PROTOTYPE v0.2 / 個人専用</p>
+              <p className="text-[10px] font-medium text-slate-500 tracking-wider mt-1">レース分析 / 個人専用</p>
             </div>
           </div>
         </div>
@@ -1859,15 +1859,15 @@ function MainApp({ session, onLogout }) {
   // ヘッダ・レース概要・タブナビ
   // ================================================================
   const GlobalHeader = () => (
-    <header className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm px-8 py-3 flex justify-between items-center">
+    <header className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm px-4 py-3 flex flex-wrap justify-between items-center gap-2 sm:px-8">
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#0B2545] to-[#4A90E2] flex items-center justify-center"><Target className="w-5 h-5 text-white" /></div>
-        <div><h1 className="text-lg font-bold text-[#0B2545] leading-tight">Race Condition Analyzer</h1><p className="text-[10px] font-medium text-slate-500 tracking-wider">PROTOTYPE v0.2</p></div>
+        <div><h1 className="text-lg font-bold text-[#0B2545] leading-tight">Race Condition Analyzer</h1><p className="text-[10px] font-medium text-slate-500 tracking-wider">レース分析</p></div>
       </div>
       <div className="flex items-center gap-3">
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input type="text" placeholder="馬名・騎手で検索..." className="pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-full text-sm w-56 focus:outline-none focus:ring-2 focus:ring-[#4A90E2]/30"
+          <input type="text" placeholder="馬名・騎手で検索..." className="pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-full text-sm w-36 sm:w-56 focus:outline-none focus:ring-2 focus:ring-[#4A90E2]/30"
             value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <button onClick={() => setTab('today')} className="text-sm font-medium text-slate-600 px-4 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50">本日のレース</button>
@@ -1889,16 +1889,16 @@ function MainApp({ session, onLogout }) {
   const RaceInfoHeader = () => {
     if (!raceInfo) return null
     return (
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm mb-6">
+      <div className="rounded-2xl bg-gradient-to-br from-[#091b32] to-[#153a60] p-5 text-white shadow-sm mb-4">
         <div className="flex justify-between items-start gap-4 flex-wrap">
           <div className="space-y-2">
             <div className="text-sm font-bold text-[#4A90E2] tracking-wide tabular-nums">{fmtDate(raceInfo.raceDate)}</div>
             <div className="flex items-center gap-3 flex-wrap">
               <span className="w-8 h-8 rounded bg-[#0B2545] text-white flex items-center justify-center font-black tabular-nums">{raceInfo.raceNo}</span>
-              <h2 className="text-2xl font-black text-slate-900">{raceInfo.name || '—'}</h2>
+              <h2 className="text-2xl font-black text-white">{raceInfo.name || '—'}</h2>
               {raceInfo.grade && <Pill className="bg-rose-50 text-rose-700 border-rose-200">{raceInfo.classLabel}</Pill>}
             </div>
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-600 flex-wrap">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-200 flex-wrap">
               <span>{raceInfo.course}</span><span className="text-slate-300">•</span>
               <span>{raceInfo.distance}</span>{raceInfo.lr && <><span className="text-slate-300">•</span><span>{raceInfo.lr}</span></>}
               <span className="text-slate-300">•</span><span>{raceInfo.weather} ・ {raceInfo.going}</span>
@@ -1913,53 +1913,51 @@ function MainApp({ session, onLogout }) {
           </div>
         </div>
         {/* シナリオバッジ */}
-        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2 flex-wrap">
+        <div className="mt-4 pt-3 border-t border-white/15 flex items-center gap-2 flex-wrap">
           <Pill className={(PRIORITY_STYLES[raceInfo.racePriority] || PRIORITY_STYLES.C).cls}>{(PRIORITY_STYLES[raceInfo.racePriority] || PRIORITY_STYLES.C).label}</Pill>
           {(raceInfo.raceScenarioTags || []).map((t) => <Pill key={t} className={tagStyle(t)}>{t}</Pill>)}
-          <span className="text-xs text-slate-500 ml-1">{raceInfo.raceScenarioComment}</span>
+          <span className="text-xs text-slate-200 ml-1">{raceInfo.raceScenarioComment}</span>
         </div>
       </div>
     )
   }
 
-  const TabNav = () => {
-    const tabs = [
-      { id: 'today', label: '本日注目レース', icon: Star },
-      { id: 'races', label: 'レース一覧', icon: Layers },
-      { id: 'analysis', label: '出走馬分析', icon: Users },
-      { id: 'ability', label: '能力・適性', icon: Gauge },
-      { id: 'pace', label: '展開・天候', icon: Flag },
-      { id: 'scenario', label: 'レースシナリオ', icon: Flag },
-      { id: 'winOdds', label: '単勝オッズ分析', icon: TrendingUp },
-      { id: 'finalForecast', label: '最終予想・買い目', icon: Target },
-      { id: 'oddsReview', label: '買い目比較', icon: Target },
-      { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
-    ]
-    return (
-      <div className="flex gap-6 border-b border-slate-200 mb-6 overflow-x-auto">
-        {tabs.map((t) => {
-          const Icon = t.icon, isActive = tab === t.id
-          return (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 pb-3 px-1 border-b-2 font-bold transition-colors text-sm whitespace-nowrap ${
-                isActive ? 'border-[#0B2545] text-[#0B2545]' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
-              <Icon className="w-4 h-4" /> {t.label}
-            </button>
-          )
-        })}
-      </div>
-    )
-  }
+  const overviewTabs = [
+    { id: 'today', label: '本日注目レース', icon: Star },
+    { id: 'races', label: 'レース一覧', icon: Layers },
+    { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
+  ]
+  const raceTabs = [
+    { id: 'analysis', label: '出走馬分析', icon: Users },
+    { id: 'ability', label: '能力・適性', icon: Gauge },
+    { id: 'pace', label: '展開・天候', icon: Flag },
+    { id: 'winOdds', label: '単勝オッズ分析', icon: TrendingUp },
+    { id: 'finalForecast', label: '最終予想・買い目', icon: Target },
+    { id: 'scenario', label: 'レースシナリオ', icon: Flag },
+    { id: 'oddsReview', label: '買い目比較', icon: Layers2 },
+  ]
 
-  const showRaceHeader = (['analysis', 'ability', 'pace', 'scenario', 'winOdds', 'finalForecast'].includes(tab)) && raceInfo
+  const showRaceHeader = raceInfo && raceTabs.some(item => item.id === tab)
+  const renderNav = (items, label) => (
+    <nav aria-label={label} className="mb-4 flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+      {items.map(({ id, label, icon: Icon }) => (
+        <button key={id} type="button" onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined}
+          className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold sm:text-sm ${tab === id
+            ? 'bg-[#0B2545] text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-[#0B2545]'}`}>
+          <Icon aria-hidden="true" className="h-4 w-4" />{label}
+        </button>
+      ))}
+    </nav>
+  )
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-8"
       style={{ fontFamily: "'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" }}>
       <GlobalHeader />
-      <main className="max-w-[1480px] mx-auto px-8 pt-8">
+      <main className="max-w-[1480px] mx-auto px-3 pt-4 sm:px-8 sm:pt-8">
+        {renderNav(overviewTabs, '開催メニュー')}
         {showRaceHeader && <RaceInfoHeader />}
-        <TabNav />
+        {raceInfo && renderNav(raceTabs, '選択中のレースの分析')}
         <div>
           {tab === 'today' && <TabToday />}
           {tab === 'races' && <TabRaces />}
@@ -1987,7 +1985,7 @@ function MainApp({ session, onLogout }) {
         </div>
       </main>
       <footer className="fixed bottom-0 w-full bg-white border-t border-slate-200 px-8 py-2 text-[10px] text-slate-500 flex justify-between items-center z-40 gap-4">
-        <div className="truncate">朝の時点で注目レースを選定し、当日オッズは別アプリで最終確認。</div>
+        <div className="truncate">レースを選んで能力・展開・オッズ・買い目を比較</div>
         <div className="flex items-center gap-3 shrink-0 tabular-nums text-slate-400">
           <span title="フロントUIバージョン / commit">UI {UI_VERSION} · {COMMIT_HASH}</span>
           {diag && <>
