@@ -6,3 +6,8 @@ dist
 .vercel
 .DS_Store
 *.log
+test-results/
+playwright-report/
+.qa/
+*.sqlite
+*.sqlite-*

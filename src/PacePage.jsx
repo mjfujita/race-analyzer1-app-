@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { CloudSun, Flag } from 'lucide-react'
+import { decisionCutoff, formatRaceTime, raceTimestamp } from './raceTime.js'
+import { readPaceResults, recordedPaceRows } from './paceHistory.js'
 
 const card = 'rounded-2xl border border-slate-200 bg-white p-5 shadow-sm'
 const percent = new Intl.NumberFormat('ja-JP', { style: 'percent' })
@@ -16,8 +18,8 @@ export function summarizeBias(results) {
   const difference = total ? (front - expected) / total : 0
   const direction = results.length < 3 ? 'pending'
     : difference >= 0.15 ? 'front' : difference <= -0.15 ? 'rear' : 'neutral'
-  return { total, front, expected, direction, results, verdict: {
-    pending: '判定保留', front: '前残り傾向', rear: '中団・後方の好走が多い', neutral: '目立った偏りなし',
+  return { total, front, expected, direction, results, adjustmentEligible: false, verdict: {
+    pending: '判定保留', front: '前方馬の好走が多い（記述集計）', rear: '中団・後方の好走が多い（記述集計）', neutral: '目立った偏りなし',
   }[direction] }
 }
 
@@ -34,50 +36,40 @@ function positionProfile(race, horse, style) {
   }
 }
 
-export function readPaceResults(userId, race) {
-  const key = `pace-results:v1:${userId}:${race.raceDate}:${race.placeCode}`
-  try {
-    return {
-      ...JSON.parse(localStorage.getItem(`${key}:芝`)),
-      ...JSON.parse(localStorage.getItem(`${key}:ダート`)),
-      ...JSON.parse(localStorage.getItem(key)),
-    }
-  } catch { return {} }
-}
-
-export function recordedPaceRows(earlierRaces, recorded) {
-  return earlierRaces.filter(row => recorded[row.race_no]).map(row => {
-    const { field, positions } = recorded[row.race_no]
-    return { ...row, field_size: field, top_count: positions.length,
-      front_top_count: positions.filter(pos => pos <= Math.ceil(field / 3)).length }
-  })
-}
-
 export default function PacePage({ race, horses, statistics, earlierRaces, userId }) {
-  const key = `pace-results:v1:${userId}:${race.raceDate}:${race.placeCode}`
   const [recorded, setRecorded] = useState(() => readPaceResults(userId, race))
   const [error, setError] = useState('')
+  const [asofOnly, setAsofOnly] = useState(true)
   function saveResult(event) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const raceNo = Number(form.get('raceNo'))
     const field = Number(form.get('field'))
     const positions = ['first', 'second', 'third'].map(key => Number(form.get(key)))
+    const publishedAt = raceTimestamp(race, form.get('publishedTime'))
+    const earlier = earlierRaces.find(row => Number(row.race_no) === raceNo)
+    const startAt = earlier && raceTimestamp(race, earlier.post_time)
     if (!earlierRaces.some(row => row.race_no === raceNo)
       || !Number.isInteger(field) || field < 6 || field > 18
-      || positions.some(pos => !Number.isInteger(pos) || pos < 1 || pos > field)) {
+      || positions.some(pos => !Number.isInteger(pos) || pos < 1 || pos > field)
+      || !publishedAt || !startAt || publishedAt <= startAt || Date.parse(publishedAt) > Date.now()) {
       setError('実出走頭数と4角順位を確認してください。')
       return
     }
-    const next = { ...recorded, [raceNo]: { field, positions } }
     try {
-      localStorage.setItem(key, JSON.stringify(next))
-      setRecorded(next)
+      const eventsKey = `pace-events:v2:${userId}:${race.raceDate}:${race.placeCode}`
+      const events = JSON.parse(localStorage.getItem(eventsKey) ?? '[]')
+      if (!Array.isArray(events)) throw new Error('保存記録の形式を確認できません。')
+      const entry = { id: crypto.randomUUID(), raceNo, field, positions, publishedAt, retrievedAt: new Date().toISOString(),
+        revisionOf: recorded[raceNo]?.id ?? null }
+      localStorage.setItem(eventsKey, JSON.stringify([...events, entry]))
+      setRecorded({ ...recorded, [raceNo]: entry })
       setError('')
-    } catch { setError('このブラウザに保存できませんでした。') }
+    } catch (err) { setError(err.message || 'このブラウザに保存できませんでした。') }
   }
 
-  const results = recordedPaceRows(earlierRaces, recorded)
+  const cutoffAt = asofOnly ? decisionCutoff(race) ?? 'unknown' : null
+  const results = recordedPaceRows(earlierRaces, cutoffAt ? readPaceResults(userId, race, { cutoffAt }) : recorded, { cutoffAt })
   const styleByNumber = new Map(statistics.map(row => [Number(row.horse_no), Number(row.running_style)]))
   const profiles = horses.map(horse => positionProfile(race, horse, styleByNumber.get(Number(horse.no))))
   const likelyFront = profiles.filter(horse => horse.style === 1 || horse.style === 2)
@@ -129,10 +121,12 @@ export default function PacePage({ race, horses, statistics, earlierRaces, userI
     </section>
     <section className={card}>
       <h3 className="font-bold text-[#0B2545]">当日開催の傾向</h3>
-      <p className="mt-1 text-xs text-slate-500">同日・同場で今回より前に終わったレースを集計。3レース以上で、4角前方3分の1にいた馬の3着内比率が比較基準から15ポイント以上離れると傾向ありと判定します。</p>
+      <p className="mt-1 text-xs leading-relaxed text-slate-500">同日・同場の先行レースを芝・ダート別に集計。頭数だけの比較基準を使う記述集計です。能力・ペースを調整していないため、馬場の因果効果や確率への自動加点には使いません。</p>
+      <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={asofOnly} onChange={e => setAsofOnly(e.target.checked)} />発走10分前までに取得した結果のみ（{formatRaceTime(decisionCutoff(race))}）</label>
+      {!asofOnly && <p className="mt-2 text-xs text-amber-800">振り返り表示。時刻不明・後から取得した記録も含みます。</p>}
       <div className="mt-3 grid gap-3 md:grid-cols-2">
         {summaries.map(summary => <div key={summary.label} className="rounded-lg border border-slate-200 p-3 text-sm">
-          <h4 className="font-semibold">{summary.label}　{summary.label === race.surface && '（今回の予想に使用）'}</h4>
+          <h4 className="font-semibold">{summary.label}　{summary.label === race.surface && '（今回と同じ馬場区分）'}</h4>
           <p>{summary.verdict} ・ {summary.results.length}レース</p>
           {summary.total > 0 && <p className="text-xs text-slate-600">
             3着以内のうち4角前方 {summary.front}/{summary.total}頭（{percent.format(summary.front / summary.total)}、比較基準 {percent.format(summary.expected / summary.total)}）
@@ -151,6 +145,7 @@ export default function PacePage({ race, horses, statistics, earlierRaces, userI
           <label>対象レース<select name="raceNo" className="ml-1 rounded border border-slate-300 p-1">
             {earlierRaces.map(row => <option key={row.race_no} value={row.race_no}>{row.race_no}R {surfaceLabels[row.surface_code]}</option>)}
           </select></label>
+          <label>結果の公開時刻<input type="time" name="publishedTime" required className="ml-1 rounded border border-slate-300 p-1" /></label>
           {[['field', '実出走頭数', 6], ['first', '1着馬の4角', 1], ['second', '2着馬の4角', 1], ['third', '3着馬の4角', 1]]
             .map(([name, label, min]) => <label key={name}>{label}
               <input className="ml-1 w-16 rounded border border-slate-300 p-1" type="number" name={name} min={min} max="18" required />

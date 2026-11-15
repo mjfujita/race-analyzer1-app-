@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronsUpDown, Gauge } from 'lucide-react'
-import { oddsStorageKey, readOddsHistory } from './oddsHistory.js'
+import { appendOddsSnapshot, createOddsSnapshot, importOddsSnapshots, oddsStorageKey, readOddsEvents, readOddsHistory } from './oddsHistory.js'
 import { nearDistanceRecord } from './initialForecast.js'
+import { formatRaceTime, raceDateISO, snapshotTiming } from './raceTime.js'
+import { downloadJson } from './fileIO.js'
 
 function recordText(topThree, runs) {
   if (runs == null) return '未取得'
@@ -37,11 +39,12 @@ function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSe
   const [sort, setSort] = useState({ key: 'rank', ascending: true })
   const [history, setHistory] = useState(() => readOddsHistory(storageKey))
   const [selectedTime, setSelectedTime] = useState('')
-  const snapshotIndex = Math.max(0, history.findIndex(item => item.time === selectedTime))
+  const snapshotIndex = Math.max(0, history.findIndex(item => item.id === selectedTime))
   const snapshot = history[snapshotIndex]
   const previousSnapshot = history[snapshotIndex + 1]
   const [edit, setEdit] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   if (!race) return <div className="rounded-2xl border border-slate-200 bg-white p-5">
     <button type="button" className="font-semibold text-[#2B6CB0]" onClick={onSelectRace}>レース一覧から選ぶ</button>
   </div>
@@ -67,17 +70,15 @@ function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSe
       setError('観測時刻と単勝オッズを入力してください。')
       return
     }
-    const next = [...history.filter(item => item.time !== time), { time, odds }]
-      .sort((a, b) => b.time.localeCompare(a.time))
     try {
-      localStorage.setItem(storageKey, JSON.stringify(next))
-      setHistory(next)
-      setSelectedTime(time)
+      const entry = createOddsSnapshot({ race, time, odds, kind: form.get('kind'), date: form.get('date') })
+      appendOddsSnapshot(storageKey, entry)
+      setHistory(readOddsHistory(storageKey))
+      setSelectedTime(entry.kind === 'observed' ? entry.id : '')
       setEdit(false)
       setError('')
-    } catch {
-      setError('このブラウザに保存できませんでした。')
-    }
+      setNotice(`${entry.kind === 'baseline' ? '基準オッズ' : '実オッズ'}を追記しました。同時刻の訂正前データも保持します。`)
+    } catch (err) { setError(err.message || 'このブラウザに保存できませんでした。') }
   }
 
   const statsByHorse = new Map(statistics.map(row => [Number(row.horse_no), row]))
@@ -123,18 +124,38 @@ function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSe
         {!statistics.length && <p className="text-xs text-slate-500">IDM実数と競馬場別実績は、能力データ付きのDBの取得後に表示します。</p>}
         {rows.length > 0 && <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-3 text-xs">
-            <span className="text-slate-600">{snapshot ? `単勝オッズ ${snapshot.time}時点（日本時間・手入力）` : '単勝オッズは未入力です。'}</span>
+            <span className="text-slate-600">{snapshot ? `単勝オッズ ${snapshot.time}時点（日本時間）` : '単勝オッズは未入力です。'}</span>
             {history.length > 1 && <label>表示時刻
-              <select value={snapshot.time} onChange={e => { setSelectedTime(e.target.value); setEdit(false) }}
+              <select value={snapshot.id} onChange={e => { setSelectedTime(e.target.value); setEdit(false) }}
                 className="ml-1 rounded border border-slate-300 bg-white px-2 py-1">
-                {history.map(item => <option key={item.time} value={item.time}>{item.time}</option>)}
+                {history.map(item => <option key={item.id} value={item.id}>{item.time}</option>)}
               </select>
             </label>}
             {previousSnapshot && <span className="text-slate-600">変化率は {previousSnapshot.time} 時点と比較</span>}
             <button type="button" className="font-semibold text-[#2B6CB0] hover:underline" aria-expanded={edit}
-              onClick={() => { setEdit(!edit); setError('') }}>{edit ? '閉じる' : '単勝オッズを記録'}</button>
+              onClick={() => { setEdit(!edit); setError('') }}>{edit ? '閉じる' : '実オッズ・基準オッズを記録'}</button>
+            <label className="cursor-pointer font-semibold text-[#2B6CB0]">記録JSONを取込<input type="file" accept=".json,application/json" className="sr-only" onChange={async event => {
+              const file = event.target.files?.[0]
+              if (!file) return
+              try {
+                if (file.size > 4000000) throw new Error('4MB以下のJSONを指定してください。')
+                const count = importOddsSnapshots(storageKey, JSON.parse(await file.text()), race, horses.map(h => h.no))
+                setHistory(readOddsHistory(storageKey)); setNotice(`${count}件の記録を追加しました。`); setError('')
+              } catch (err) { setError(err.message) }
+              event.target.value = ''
+            }} /></label>
+            <button type="button" className="font-semibold text-[#2B6CB0]" onClick={() => {
+              try { downloadJson(`odds-${race.id}.json`, { schemaVersion: 2, snapshots: readOddsEvents(storageKey) }); setError('') }
+              catch (err) { setError(err.message) }
+            }}>履歴を書出し</button>
           </div>
+          {snapshot && <p className="text-xs text-slate-500">取得 {formatRaceTime(snapshot.retrievedAt)} ・ {snapshotTiming(snapshot, race).reason ?? '10分前までの時刻条件を満たす記録'}</p>}
+          <p className="text-xs text-slate-500">記録はこのブラウザに保存。基準オッズは人気予測として別に記録します。表示元の日時を入力し、取得時刻は保存時に自動記録します。</p>
+          {notice && <p role="status" className="text-xs text-cyan-800">{notice}</p>}
+          {error && !edit && <p role="alert" className="text-sm text-red-700">{error}</p>}
           {edit && <form onSubmit={saveOdds} className="max-w-md space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+            <label className="block">データの種類<select name="kind" className="ml-2 rounded border border-slate-300 p-1"><option value="observed">実際の単勝オッズ</option><option value="baseline">JRDB基準単勝オッズ</option></select></label>
+            <label className="block">表示元の日付<input name="date" type="date" required defaultValue={raceDateISO(race)} className="ml-2 rounded border border-slate-300 p-1" /></label>
             <label className="block">観測時刻（日本時間）
               <input name="time" type="time" required
                 className="ml-2 rounded border border-slate-300 bg-white px-2 py-1" />

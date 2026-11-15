@@ -772,7 +772,11 @@ function MainApp({ session, onLogout }) {
     try {
       const data = dataApi.getEvaluation(db, raceKey)
       if (!data) { alert('このレースには評価データがありません（evaluate_all.py の再実行が必要かも）'); return }
-      setRaceInfo(data.race); setHorses(data.horses); setSummary(data.summary)
+      const [metadata] = queryAll(db, 'SELECT race_date, post_time, field_size, place_code FROM jrdb_races WHERE race_key = ?', [raceKey])
+      setRaceInfo({ ...data.race, id: raceKey, raceDate: metadata?.race_date ?? data.race.raceDate,
+        postTime: metadata?.post_time ?? data.race.postTime, fieldSize: metadata?.field_size ?? data.race.fieldSize,
+        placeCode: metadata?.place_code ?? data.race.placeCode })
+      setHorses(data.horses); setSummary(data.summary)
       setCurrentRaceKey(raceKey); setSelectedId(data.horses[0]?.id || null)
       setRoleFilter('all'); setSortKey('aiRecommend'); setTab(goTab)
     } catch (err) { console.error(err); alert('評価データの読み込みに失敗: ' + err.message) }
@@ -1974,6 +1978,7 @@ function MainApp({ session, onLogout }) {
           {tab === 'winOdds' && (raceInfo ? <WinOddsPage
             key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`}
             race={raceInfo} horses={horses} userId={session.user.id}
+            statistics={db ? dataApi.getAbility(db, raceInfo.id) : []}
             onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
           {tab === 'finalForecast' && (raceInfo ? <FinalForecastPage
             key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={raceInfo} horses={horses}
