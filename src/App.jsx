@@ -581,10 +581,10 @@ const dataApi = {
   },
   getEarlierPace(db, raceKey) {
     return queryAll(db, `
-      SELECT earlier.race_no, earlier.post_time, earlier.distance, earlier.field_size
+      SELECT earlier.race_no, earlier.post_time, earlier.distance, earlier.field_size, earlier.surface_code
       FROM jrdb_races target
       JOIN jrdb_races earlier ON earlier.race_date = target.race_date
-        AND earlier.place_code = target.place_code AND earlier.surface_code = target.surface_code
+        AND earlier.place_code = target.place_code AND earlier.surface_code IN ('1', '2')
         AND earlier.race_no < target.race_no AND earlier.post_time < target.post_time
       WHERE target.race_key = ? AND length(earlier.post_time) = 4 AND length(target.post_time) = 4
       ORDER BY earlier.post_time
