@@ -30,12 +30,13 @@ export function scoreField(horses, statistics, race, bias) {
     .sort((a, b) => b.probability - a.probability)
 }
 
-export function buildTickets(field, odds, earlierOdds, pairs, budget) {
+export function buildTickets(field, odds, earlierOdds, pairs, budget, anchor = null) {
   const byNo = new Map(field.map(horse => [horse.no, horse]))
-  const singles = field.filter(horse => odds[horse.no] >= 1).map(horse => ({
+  const singles = field.filter(horse => odds[horse.no] >= 1 && (anchor === null || horse.no === anchor)).map(horse => ({
     type: '単勝', first: horse.no, probability: horse.probability, odds: odds[horse.no], before: earlierOdds[horse.no],
   }))
-  const combinations = pairs.filter(pair => byNo.has(pair.first) && byNo.has(pair.second)).map(pair => {
+  const combinations = pairs.filter(pair => byNo.has(pair.first) && byNo.has(pair.second)
+    && (anchor === null || pair.first === anchor || pair.second === anchor)).map(pair => {
     const first = byNo.get(pair.first).probability
     const second = byNo.get(pair.second).probability
     const ordered = first * second / (1 - first)

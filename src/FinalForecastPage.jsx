@@ -32,6 +32,7 @@ export default function FinalForecastPage({ race, horses, statistics, earlierRac
     .filter(item => !/^\d{4}$/.test(postTime) || item.time.replace(':', '') < postTime)
     .sort((a, b) => b.time.localeCompare(a.time)))
   const [time, setTime] = useState(history[0]?.time ?? '')
+  const [anchor, setAnchor] = useState('')
   const [budget, setBudget] = useState('10000')
   const [pairText, setPairText] = useState('')
   const [pairTime, setPairTime] = useState(history[0]?.time ?? '')
@@ -45,9 +46,11 @@ export default function FinalForecastPage({ race, horses, statistics, earlierRac
   const pairs = parsePairs(pairText, new Set(horses.map(horse => Number(horse.no))))
   const budgetValid = budget !== '' && Number.isSafeInteger(Number(budget)) && Number(budget) >= 0
   const pairTimeValid = !pairText.trim() || (Boolean(time) && pairTime === time)
+  const anchorNo = anchor === '' ? null : Number(anchor)
+  const anchorHorse = horses.find(horse => Number(horse.no) === anchorNo)
   const canAllocate = budgetValid && Boolean(current) && pairs !== null && pairTimeValid && field.length > 0
   const { evaluated, tickets } = canAllocate
-    ? buildTickets(field, current.odds, previous?.odds ?? {}, pairs, Number(budget)) : { evaluated: [], tickets: [] }
+    ? buildTickets(field, current.odds, previous?.odds ?? {}, pairs, Number(budget), anchorNo) : { evaluated: [], tickets: [] }
   const total = tickets.reduce((sum, ticket) => sum + ticket.stake, 0)
   const expectedReturn = total ? tickets.reduce((sum, ticket) => sum + ticket.expectedReturn * ticket.stake, 0) / total : null
   return <div className="space-y-4">
@@ -75,12 +78,21 @@ export default function FinalForecastPage({ race, horses, statistics, earlierRac
     <section className={card}>
       <h3 className="font-bold text-[#0B2545]">オッズと予算</h3>
       <div className="flex flex-wrap items-center gap-4 text-sm">
+        <label>軸馬<select className="ml-2 rounded border border-slate-300 bg-white p-1" value={anchor}
+          onChange={event => setAnchor(event.target.value)}>
+          <option value="">指定なし（全馬を比較）</option>
+          {[...horses].sort((a, b) => a.no - b.no).map(horse =>
+            <option key={horse.no} value={horse.no}>{horse.no}番 {horse.name}</option>)}
+        </select></label>
         <label>予算上限（円）<input className="ml-2 w-28 rounded border border-slate-300 p-1" type="number" min="0" step="100" value={budget} onChange={e => setBudget(e.target.value)} /></label>
         <label>単勝オッズ時刻<select className="ml-2 rounded border border-slate-300 p-1" value={time} onChange={e => setTime(e.target.value)}>
           {!history.length && <option value="">未記録</option>}
           {history.map(item => <option key={item.time}>{item.time}</option>)}
         </select></label>
       </div>
+      {anchorHorse && <p className="text-sm text-slate-600">
+        {anchorHorse.no}番 {anchorHorse.name}の単勝・馬連と、同馬を1着または2着に置く馬単を比較します。馬連・馬単は実オッズを入力した組み合わせが対象です。
+      </p>}
       <details className="text-sm">
         <summary className="cursor-pointer font-semibold text-[#2B6CB0]">馬連・馬単の実オッズを追加</summary>
         <label className="mt-2 block">組み合わせオッズの時刻<input className="ml-2 rounded border border-slate-300 p-1" type="time" value={pairTime} onChange={e => setPairTime(e.target.value)} /></label>
@@ -98,7 +110,7 @@ export default function FinalForecastPage({ race, horses, statistics, earlierRac
       {!budgetValid && <p className="text-sm text-red-700">0円以上の整数で予算を入力してください。</p>}
       {canAllocate ? <>
         <p className="text-sm font-semibold">{tickets.length ? `${tickets.length}点 ・ 購入 ${yen(total)} ・ 残り ${yen(Number(budget) - total)} ・ 投入分の試算回収率 ${pct(expectedReturn)}`
-          : '見送り ・ 購入 0円'}</p>
+          : evaluated.length === 0 ? '比較できる実オッズがありません。' : '見送り ・ 購入 0円'}</p>
         {tickets.length > 0 && <ul className="flex flex-wrap gap-2 text-sm">
           {tickets.map(ticket => <li key={`${ticket.type}:${ticket.pair}`} className="rounded-lg bg-blue-50 px-3 py-2 font-semibold text-[#0B2545]">
             {ticket.type} {ticket.pair}　{yen(ticket.stake)}
