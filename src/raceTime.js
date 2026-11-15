@@ -28,15 +28,17 @@ export function snapshotTiming(snapshot, race, { cutoffAt = decisionCutoff(race)
   const observedAt = snapshot?.observedAt ?? null
   const retrievedAt = snapshot?.retrievedAt ?? null
   const publishedAt = snapshot?.sourcePublishedAt ?? null
-  const legacy = !validTimestamp(observedAt) || !validTimestamp(retrievedAt) || !validTimestamp(publishedAt)
+  const direct = snapshot?.timingEvidence === 'observed-visible-at' && validTimestamp(snapshot.availabilityAt)
+    && Date.parse(snapshot.availabilityAt) === Date.parse(retrievedAt)
+  const legacy = !validTimestamp(observedAt) || !validTimestamp(retrievedAt) || (!direct && !validTimestamp(publishedAt))
   const ageMinutes = validTimestamp(cutoffAt) && validTimestamp(observedAt)
     ? (Date.parse(cutoffAt) - Date.parse(observedAt)) / 60000 : null
   let reason = null
   if (!validTimestamp(cutoffAt)) reason = '発走時刻が未取得です。'
   else if (legacy) reason = '取得・公開時刻の証跡がないため、過去検証用です。'
   else if (snapshot?.raceId != null && String(snapshot.raceId) !== String(race?.id)) reason = '別レースの記録です。'
-  else if (Date.parse(publishedAt) > Date.parse(observedAt) || Date.parse(observedAt) > Date.parse(retrievedAt)) reason = '公開・観測・取得時刻の順序が不正です。'
-  else if ([observedAt, retrievedAt, publishedAt].some(t => Date.parse(t) > Date.parse(cutoffAt))) reason = '発走10分前までに取得された情報ではありません。'
+  else if ((publishedAt != null && (!validTimestamp(publishedAt) || Date.parse(publishedAt) > Date.parse(observedAt))) || Date.parse(observedAt) > Date.parse(retrievedAt)) reason = '公開・観測・取得時刻の順序が不正です。'
+  else if ([observedAt, retrievedAt, publishedAt].filter(Boolean).some(t => Date.parse(t) > Date.parse(cutoffAt))) reason = '発走10分前までに取得された情報ではありません。'
   else if (ageMinutes > maxAgeMinutes) reason = `締切時点で${Math.floor(ageMinutes)}分前の情報です。`
   return { eligible: !reason, reason, legacy, observedAt, retrievedAt, cutoffAt, ageMinutes }
 }

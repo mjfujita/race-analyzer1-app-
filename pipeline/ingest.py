@@ -236,9 +236,12 @@ def validate_snapshot(snapshot, expected_numbers):
     if snapshot.get('kind') not in ('observed', 'baseline'):
         raise ValueError('Invalid snapshot kind')
     observed = iso(snapshot.get('observedAt'))
-    published = iso(snapshot.get('sourcePublishedAt'))
     retrieved = iso(snapshot.get('retrievedAt'))
-    if published > retrieved or observed > retrieved:
+    visible = snapshot.get('timingEvidence') == 'observed-visible-at' and snapshot.get('availabilityAt') == snapshot.get('retrievedAt')
+    published = iso(snapshot['sourcePublishedAt']) if snapshot.get('sourcePublishedAt') is not None else None
+    if published is None and not visible:
+        raise ValueError('Publication time or verified visible-at evidence is required')
+    if (published is not None and published > observed) or observed > retrieved:
         raise ValueError('Observation/publication cannot follow retrieval')
     if snapshot.get('kind') == 'observed' and observed.astimezone(JST).strftime('%Y%m%d') != snapshot['raceDate']:
         raise ValueError('Observation date and race date differ')

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronsUpDown, Gauge } from 'lucide-react'
 import { appendOddsSnapshot, createOddsSnapshot, importOddsSnapshots, oddsStorageKey, readOddsEvents, readOddsHistory } from './oddsHistory.js'
 import { nearDistanceRecord } from './initialForecast.js'
@@ -30,14 +30,15 @@ function recordRate(topThree, runs) {
   return runs > 0 && topThree != null ? topThree / runs : null
 }
 
-export default function AbilityPage({ race, horses, statistics, userId, onSelectRace, onSelectHorse }) {
+export default function AbilityPage({ race, horses, statistics, userId, cloudRevision = 0, onSelectRace, onSelectHorse }) {
   const storageKey = oddsStorageKey(userId, race)
-  return <AbilityTable key={storageKey} {...{ race, horses, statistics, storageKey, onSelectRace, onSelectHorse }} />
+  return <AbilityTable key={storageKey} {...{ race, horses, statistics, storageKey, cloudRevision, onSelectRace, onSelectHorse }} />
 }
 
-function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSelectHorse }) {
+function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onSelectRace, onSelectHorse }) {
   const [sort, setSort] = useState({ key: 'rank', ascending: true })
   const [history, setHistory] = useState(() => readOddsHistory(storageKey))
+  useEffect(() => { setHistory(readOddsHistory(storageKey)) }, [storageKey, cloudRevision])
   const [selectedTime, setSelectedTime] = useState('')
   const snapshotIndex = Math.max(0, history.findIndex(item => item.id === selectedTime))
   const snapshot = history[snapshotIndex]

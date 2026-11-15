@@ -95,12 +95,19 @@ export function validateLedger(value, scope) {
       || !finite(record.parameters.minHit) || record.parameters.minHit < 0 || record.parameters.minHit > 1
       || !finite(record.parameters.oddsFactor) || record.parameters.oddsFactor <= 0 || record.parameters.oddsFactor > 1) fail('予想の形式が正しくありません。')
     if (record.mode === 'live') {
-      const times = [record.inputs.sourcePublishedAt, record.inputs.observedAt, record.inputs.retrievedAt, record.createdAt]
+      const direct = record.inputs.timingEvidence === 'observed-visible-at' && validDate(record.inputs.availabilityAt)
+        && Date.parse(record.inputs.availabilityAt) === Date.parse(record.inputs.retrievedAt)
+      const times = [...(direct && record.inputs.sourcePublishedAt == null ? [] : [record.inputs.sourcePublishedAt]), record.inputs.observedAt, record.inputs.retrievedAt, record.createdAt]
       if (times.some(time => !validDate(time) || Date.parse(time) > Date.parse(record.cutoffAt))
         || times.some((time, index) => index > 0 && Date.parse(time) < Date.parse(times[index - 1]))) fail('締切前記録の時刻証跡が不正です。')
       if (record.inputs.quotes?.some(ticket => ticket.type !== '単勝')) {
         if (![record.inputs.quoteObservedAt, record.inputs.quoteRetrievedAt].every(time => validDate(time) && Date.parse(time) <= Date.parse(record.cutoffAt))
           || Date.parse(record.inputs.quoteObservedAt) > Date.parse(record.inputs.quoteRetrievedAt)) fail('組合せオッズの取得時刻を確認できません。')
+      }
+      const runtimeUsed = record.field.some(horse => horse.pM != null || horse.contextContributions?.length)
+        || Object.values(record.inputs.closingPrices ?? {}).some(price => price.median != null)
+      if (runtimeUsed && record.inputs.runtimeModels) {
+        if (![record.inputs.runtimeModels.generatedAt, record.inputs.runtimeModels.adoptedAt].every(time => validDate(time) && Date.parse(time) <= Date.parse(record.cutoffAt))) fail('当日モデルの作成・採用時刻を確認できません。')
       }
       if (record.inputs.model) {
         const modelTimes = [record.inputs.model.generatedAt, record.inputs.model.adoptedAt ?? record.inputs.model.importedAt]

@@ -14,6 +14,7 @@ from pathlib import Path
 from .ingest import append_observations, digest, export_store, import_snapshots, now_iso, open_store, read_zip
 from .ledger import import_ledger, payout_suggestions, saved_ledgers, summarize_ledger
 from .train import load_complete_races, open_source, train_conditions, train_model
+from .prediction import train_runtime_models
 
 
 def write_json(path, value):
@@ -118,6 +119,19 @@ def main(argv=None):
                     if not condition_experiment.exists():
                         write_json(condition_experiment, conditions)
                     write_json(output / 'model.conditions.json', conditions)
+                    # Keep the forward baseline fixed as observations accumulate.
+                    # A newly trained ability challenger must not erase the earlier T-10 evaluation window.
+                    runtime_base_path = output / 'model.runtime-base.json'
+                    if not runtime_base_path.exists():
+                        write_json(runtime_base_path, conditions)
+                    runtime_base = read_json(runtime_base_path)
+                    with closing(open_source(source)) as runtime_source:
+                        runtime = train_runtime_models(runtime_source, export_store(store), runtime_base)
+                    write_json(output / 'model.runtime.json', runtime)
+                    runtime_experiment = output / 'experiments' / f"{runtime['id']}.json"
+                    if not runtime_experiment.exists():
+                        write_json(runtime_experiment, runtime)
+                    report['runtimeModels'] = {name: runtime[name]['status'] for name in ('contextModel', 'marketModel', 'closingOddsModel')}
                     report['model'] = {'id': model['id'], 'temperature': model['temperature'],
                                        'trainedThrough': model['trainedThrough'], 'status': model['status'],
                                        'holdoutRaces': model['validation']['periods']['holdout']['races']}

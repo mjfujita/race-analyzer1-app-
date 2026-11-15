@@ -5,7 +5,7 @@ import hooks from 'eslint-plugin-react-hooks'
 
 export default [
   { ignores: ['dist/**', 'node_modules/**', 'pipeline/**', 'test-results/**', 'playwright-report/**'] },
-  { files: ['src/{marketModel,portfolio,raceTime,oddsHistory,paceHistory,modelStore,fileIO,forecastLedger}.js', 'src/{AbilityPage,PacePage,WinOddsPage,FinalForecastPage,RaceDataPanel}.jsx', 'dev/**/*.{js,jsx}', 'tests/**/*.js'],
+  { files: ['src/{marketModel,portfolio,raceTime,oddsHistory,paceHistory,modelStore,fileIO,forecastLedger,predictionModel,cloudStore,useCompanion}.js', 'src/{AbilityPage,PacePage,WinOddsPage,FinalForecastPage,RaceDataPanel,AutomationPanel,RuntimeModelPanel}.jsx', 'dev/**/*.{js,jsx}', 'tests/**/*.js', 'server/**/*.js', 'api/**/*.js'],
     ...js.configs.recommended,
     languageOptions: { ecmaVersion: 'latest', sourceType: 'module', parserOptions: { ecmaFeatures: { jsx: true } }, globals: { ...globals.browser, ...globals.node } },
     plugins: { react, 'react-hooks': hooks },

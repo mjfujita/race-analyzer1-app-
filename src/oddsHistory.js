@@ -12,16 +12,22 @@ function validOddsMap(value) {
 }
 
 function sameEvent(a, b) {
-  const fields = ['schemaVersion', 'id', 'raceId', 'raceDate', 'kind', 'time', 'observedAt', 'sourcePublishedAt', 'retrievedAt', 'source', 'revisionOf']
+  const fields = ['schemaVersion', 'id', 'raceId', 'raceDate', 'kind', 'time', 'observedAt', 'sourcePublishedAt', 'retrievedAt', 'source', 'revisionOf', 'timingEvidence', 'availabilityAt']
   return fields.every(key => (a[key] ?? null) === (b[key] ?? null))
     && JSON.stringify(Object.entries(a.odds).sort()) === JSON.stringify(Object.entries(b.odds).sort())
+}
+
+function validAvailability(row) {
+  const direct = row?.timingEvidence === 'observed-visible-at' && validTimestamp(row.availabilityAt)
+    && Date.parse(row.availabilityAt) === Date.parse(row.retrievedAt)
+  return (direct || validTimestamp(row.sourcePublishedAt))
+    && (row.sourcePublishedAt == null ? direct : validTimestamp(row.sourcePublishedAt) && Date.parse(row.sourcePublishedAt) <= Date.parse(row.observedAt))
 }
 
 function validEvent(row) {
   return row?.schemaVersion === 2 && typeof row.id === 'string' && row.id.length > 0 && row.id.length <= 100
     && typeof row.raceId === 'string' && ['observed', 'baseline'].includes(row.kind) && validOddsMap(row.odds)
-    && validTimestamp(row.observedAt) && validTimestamp(row.retrievedAt) && validTimestamp(row.sourcePublishedAt)
-    && Date.parse(row.sourcePublishedAt) <= Date.parse(row.observedAt) && Date.parse(row.observedAt) <= Date.parse(row.retrievedAt)
+    && validTimestamp(row.observedAt) && validTimestamp(row.retrievedAt) && validAvailability(row) && Date.parse(row.observedAt) <= Date.parse(row.retrievedAt)
     && /^\d{2}:\d{2}$/.test(row.time ?? '')
     && new Date(Date.parse(row.observedAt) + 9 * 3600000).toISOString().slice(11, 16) === row.time
 }
@@ -43,7 +49,7 @@ export function readOddsHistory(key, { kind = 'observed', storage = globalThis.l
   try {
     const latest = new Map()
     for (const row of readOddsEvents(key, storage).filter(row => row.kind === kind)) {
-      if (asOf && (!validTimestamp(asOf) || ![row.observedAt, row.sourcePublishedAt, row.retrievedAt].every(t => validTimestamp(t) && Date.parse(t) <= Date.parse(asOf)))) continue
+      if (asOf && (!validTimestamp(asOf) || !validEvent(row) || ![row.observedAt, row.sourcePublishedAt, row.retrievedAt].filter(Boolean).every(t => validTimestamp(t) && Date.parse(t) <= Date.parse(asOf)))) continue
       const group = row.observedAt ?? row.time
       const prior = latest.get(group)
       if (!prior || !row.retrievedAt || Date.parse(row.retrievedAt) >= Date.parse(prior.retrievedAt ?? '1970-01-01')) latest.set(group, row)
@@ -93,15 +99,14 @@ export function importOddsSnapshots(key, input, race, numbers, storage = globalT
       || String(row.raceId) !== String(race.id) || String(row.raceDate).replaceAll('-', '') !== String(race.raceDate).replaceAll('-', '')
       || !['observed', 'baseline'].includes(row.kind) || !validOddsMap(row.odds)
       || Object.keys(row.odds).some(no => !allowed.has(Number(no)))
-      || !validTimestamp(row.observedAt) || !validTimestamp(row.retrievedAt) || !validTimestamp(row.sourcePublishedAt)
-      || Date.parse(row.sourcePublishedAt) > Date.parse(row.observedAt) || Date.parse(row.observedAt) > Date.parse(row.retrievedAt)
+      || !validTimestamp(row.observedAt) || !validTimestamp(row.retrievedAt) || !validAvailability(row) || Date.parse(row.observedAt) > Date.parse(row.retrievedAt)
       || Date.parse(row.retrievedAt) > Date.now() + 60000
       || !validEvent(row)) {
       throw new Error('レース・馬番・時刻・倍率が不正です。取込みは行いませんでした。')
     }
     const clean = { schemaVersion: 2, id: row.id, raceId: String(row.raceId), raceDate: row.raceDate,
       kind: row.kind, time: row.time, odds: { ...row.odds }, observedAt: row.observedAt, sourcePublishedAt: row.sourcePublishedAt,
-      retrievedAt: row.retrievedAt, source: String(row.source ?? 'json-import').slice(0, 100), revisionOf: row.revisionOf ?? null }
+      retrievedAt: row.retrievedAt, ...(row.timingEvidence ? { timingEvidence: row.timingEvidence, availabilityAt: row.availabilityAt } : {}), source: String(row.source ?? 'json-import').slice(0, 100), revisionOf: row.revisionOf ?? null }
     if (ids.has(row.id)) {
       const old = ids.get(row.id)
       if (!sameEvent(old, clean)) {

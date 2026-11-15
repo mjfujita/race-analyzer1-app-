@@ -3,6 +3,9 @@ import WinOddsPage from './WinOddsPage.jsx'
 import PacePage from './PacePage.jsx'
 import AbilityPage from './AbilityPage.jsx'
 import OddsReview from './OddsReview.jsx'
+import AutomationPanel from './AutomationPanel.jsx'
+import { useCompanion } from './useCompanion.js'
+import { applyCloudData, fetchCloudRace, enrichCloudHorses, syncLedgerToCloud, requestRaceCapture } from './cloudStore.js'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ChevronRight, Search, Target, TrendingUp, AlertTriangle,
@@ -13,7 +16,7 @@ import {
 import { supabase } from './supabase'
 import { loadDb, queryAll, dbMeta } from './lib/db'
 
-const UI_VERSION = 'v0.3'
+const UI_VERSION = 'v0.4'
 const COMMIT_HASH = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'dev'
 
 // ================================================================
@@ -699,6 +702,20 @@ function MainApp({ session, onLogout }) {
   const [horses, setHorses] = useState([])
   const [summary, setSummary] = useState({})
   const [currentRaceKey, setCurrentRaceKey] = useState(null)
+  const { sync, refresh: refreshCompanion } = useCompanion({ userId: session.user.id, race: raceInfo, horses })
+  const [captureMessage, setCaptureMessage] = useState('')
+  const [capturePending, setCapturePending] = useState(false)
+  async function requestLatestCapture() {
+    if (!raceInfo || capturePending) return
+    setCapturePending(true); setCaptureMessage('')
+    try { await requestRaceCapture(raceInfo); setCaptureMessage('最新取得を依頼しました。PCの取得ワーカーが順次確認し、この画面へ自動同期します。'); await refreshCompanion() }
+    catch (error) { setCaptureMessage(error.message) }
+    finally { setCapturePending(false) }
+  }
+  const cloudRace = String(sync.data?.race?.id ?? sync.data?.race?.raceId) === String(raceInfo?.id) && String(sync.data?.race?.raceDate).replaceAll('-', '') === String(raceInfo?.raceDate).replaceAll('-', '') ? sync.data?.race : null
+  const analysisRace = useMemo(() => raceInfo ? { ...raceInfo, surface: raceInfo.surface === 'ダ' ? 'ダート' : raceInfo.surface } : null, [raceInfo])
+  const analysisHorses = useMemo(() => enrichCloudHorses(horses, cloudRace), [horses, cloudRace])
+  const analysisStatistics = useMemo(() => cloudRace?.statistics?.length ? cloudRace.statistics : db && raceInfo ? dataApi.getAbility(db, raceInfo.id) : [], [cloudRace, db, raceInfo])
 
   // 本日の日付・一覧
   const [selectedDate, setSelectedDate] = useState(null)
@@ -780,6 +797,22 @@ function MainApp({ session, onLogout }) {
       setCurrentRaceKey(raceKey); setSelectedId(data.horses[0]?.id || null)
       setRoleFilter('all'); setSortKey('aiRecommend'); setTab(goTab)
     } catch (err) { console.error(err); alert('評価データの読み込みに失敗: ' + err.message) }
+  }
+
+  const loadCollectedRace = async (item) => {
+    const raceKey = item.id ?? item.raceId
+    if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, 'finalForecast'); return }
+    try {
+      const metadata = { ...item, id: raceKey }
+      const payload = await fetchCloudRace(metadata)
+      const received = payload.race
+      if (!received?.horses?.length) throw new Error('このレースは出走馬を取得中です。')
+      await applyCloudData(session.user.id, metadata, received.horses, payload)
+      setRaceInfo({ ...received, id: raceKey, liveOnly: true, place: received.place ?? PLACE_NAMES[received.placeCode],
+        surface: received.surface ?? SURFACE_NAMES[received.surfaceCode] })
+      setHorses(received.horses.map(horse => ({ ...horse, id: horse.id ?? `${raceKey}-${horse.no}`, pastRuns: horse.pastRuns ?? [] })))
+      setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab('finalForecast')
+    } catch (error) { alert(error.message) }
   }
 
   // ---- 出走馬一覧の表示用ソート/フィルタ ----
@@ -1929,6 +1962,7 @@ function MainApp({ session, onLogout }) {
   const overviewTabs = [
     { id: 'today', label: '本日注目レース', icon: Star },
     { id: 'races', label: 'レース一覧', icon: Layers },
+    { id: 'automation', label: '自動取得・学習', icon: Activity },
     { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
   ]
   const raceTabs = [
@@ -1939,7 +1973,7 @@ function MainApp({ session, onLogout }) {
     { id: 'finalForecast', label: '最終予想・買い目', icon: Target },
     { id: 'scenario', label: 'レースシナリオ', icon: Flag },
     { id: 'oddsReview', label: '買い目比較', icon: Layers2 },
-  ]
+  ].filter(item => !raceInfo?.liveOnly || ['ability', 'pace', 'winOdds', 'finalForecast'].includes(item.id))
 
   const showRaceHeader = raceInfo && raceTabs.some(item => item.id === tab)
   const renderNav = (items, label) => (
@@ -1960,29 +1994,30 @@ function MainApp({ session, onLogout }) {
       <GlobalHeader />
       <main className="max-w-[1480px] mx-auto px-3 pt-4 sm:px-8 sm:pt-8">
         {renderNav(overviewTabs, '開催メニュー')}
-        {showRaceHeader && <RaceInfoHeader />}
+        {showRaceHeader && <><RaceInfoHeader /><div className="mb-4 flex flex-wrap items-center gap-3 text-xs"><button type="button" disabled={capturePending} onClick={requestLatestCapture} className="rounded-lg bg-[#0B2545] px-3 py-2 font-semibold text-white disabled:opacity-50">{capturePending ? '取得を依頼中…' : 'JRDBへ最新取得を依頼'}</button><button type="button" onClick={refreshCompanion} disabled={sync.loading} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold disabled:opacity-50">保存済みデータと同期</button>{captureMessage && <span role="status" className="text-slate-600">{captureMessage}</span>}{sync.error && <span role="alert" className="text-rose-700">{sync.error}</span>}</div></>}
         {raceInfo && renderNav(raceTabs, '選択中のレースの分析')}
         <div>
           {tab === 'today' && <TabToday />}
           {tab === 'races' && <TabRaces />}
+          {tab === 'automation' && <AutomationPanel sync={sync} onRefresh={refreshCompanion} onSelectRace={loadCollectedRace} />}
           {tab === 'analysis' && <TabAnalysis />}
-          {tab === 'ability' && <AbilityPage race={raceInfo} horses={horses} userId={session.user.id}
-            statistics={db && raceInfo ? dataApi.getAbility(db, raceInfo.id) : []}
+          {tab === 'ability' && <AbilityPage race={analysisRace} horses={analysisHorses} userId={session.user.id}
+            cloudRevision={sync.revision} statistics={analysisStatistics}
             onSelectRace={() => setTab('races')}
             onSelectHorse={id => { setSelectedId(id); setTab('analysis') }} />}
-          {tab === 'pace' && (raceInfo ? <PacePage race={raceInfo} horses={horses}
+          {tab === 'pace' && (raceInfo ? <PacePage race={analysisRace} horses={analysisHorses}
             key={`${session.user.id}:${raceInfo.id}:${raceInfo.raceDate}`} userId={session.user.id}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
-            statistics={db ? dataApi.getAbility(db, raceInfo.id) : []} /> : <EmptyRace />)}
+            cloudRevision={sync.revision} statistics={analysisStatistics} /> : <EmptyRace />)}
           {tab === 'scenario' && <TabScenario />}
           {tab === 'winOdds' && (raceInfo ? <WinOddsPage
             key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`}
-            race={raceInfo} horses={horses} userId={session.user.id}
-            statistics={db ? dataApi.getAbility(db, raceInfo.id) : []}
+            race={analysisRace} horses={analysisHorses} userId={session.user.id} cloudRevision={sync.revision}
+            statistics={analysisStatistics}
             onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
           {tab === 'finalForecast' && (raceInfo ? <FinalForecastPage
-            key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={raceInfo} horses={horses}
-            userId={session.user.id} statistics={db ? dataApi.getAbility(db, raceInfo.id) : []}
+            key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={analysisRace} horses={analysisHorses}
+            userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
             onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
           {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}

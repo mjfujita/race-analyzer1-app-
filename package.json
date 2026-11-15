@@ -9,11 +9,11 @@
     "preview": "vite preview",
     "push-db": "node scripts/push_db.js",
     "test": "node --test tests/*.test.js",
-    "lint": "eslint src dev tests --max-warnings 0",
+    "lint": "eslint src dev tests server api --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "data:run": "python3 -m pipeline.run run",
-    "test:pipeline": "python3 -m unittest pipeline.test_pipeline -v"
+    "test:pipeline": "python3 -m unittest pipeline.test_pipeline pipeline.test_prediction -v"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",

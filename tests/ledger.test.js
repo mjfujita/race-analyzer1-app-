@@ -209,3 +209,12 @@ test('frame tickets require every official frame, existing frames and two runner
   const unknown = withForecast()
   assert.throws(() => appendPurchase(unknown.ledger, { forecastId: unknown.record.id, tickets: [{ ...invalidFrame, key: '枠連:1-2', numbers: [1, 2] }] }, at), /正式な枠番号/)
 })
+
+test('live forecast accepts verified visible capture and retains unknown publication, rejects forged availability', () => {
+  const input={...proposal(),mode:'live',inputs:{observedAt:at,retrievedAt:at,sourcePublishedAt:null,
+    timingEvidence:'observed-visible-at',availabilityAt:at}}
+  const saved=appendForecast(emptyLedger(scope),input,at)
+  assert.equal(saved.record.inputs.sourcePublishedAt,null)
+  assert.equal(importLedger(emptyLedger(scope),exportLedger(saved.ledger)).forecasts.length,1)
+  assert.throws(()=>appendForecast(emptyLedger(scope),{...input,inputs:{...input.inputs,availabilityAt:'2026-11-15T06:19:00Z'}},at),/時刻証跡/)
+})

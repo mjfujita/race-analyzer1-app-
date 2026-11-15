@@ -2,6 +2,12 @@ import { useState } from 'react'
 import { CloudSun, Flag } from 'lucide-react'
 import { decisionCutoff, formatRaceTime, raceTimestamp } from './raceTime.js'
 import { readPaceResults, recordedPaceRows } from './paceHistory.js'
+import { loadModel } from './modelStore.js'
+import { buildAbilityField } from './marketModel.js'
+import { loadRuntimeModel, readCloudRace, enrichCloudHorses } from './cloudStore.js'
+import { applyPredictionModels, availableAt, buildRaceContext } from './predictionModel.js'
+import { oddsStorageKey, readOddsHistory } from './oddsHistory.js'
+import RuntimeModelPanel from './RuntimeModelPanel.jsx'
 
 const card = 'rounded-2xl border border-slate-200 bg-white p-5 shadow-sm'
 const percent = new Intl.NumberFormat('ja-JP', { style: 'percent' })
@@ -36,10 +42,20 @@ function positionProfile(race, horse, style) {
   }
 }
 
-export default function PacePage({ race, horses, statistics, earlierRaces, userId }) {
+export default function PacePage({ race, horses, statistics = [], earlierRaces = [], userId }) {
   const [recorded, setRecorded] = useState(() => readPaceResults(userId, race))
   const [error, setError] = useState('')
   const [asofOnly, setAsofOnly] = useState(true)
+  const cloud = readCloudRace(userId, race)
+  const models = loadRuntimeModel(userId)
+  const enriched = enrichCloudHorses(horses, cloud?.race)
+  const ability = buildAbilityField({ race, horses: enriched, statistics, model: models?.baseModel ?? loadModel(userId) })
+  const modelCutoff = decisionCutoff(race)
+  const context = buildRaceContext({ race, horses: enriched, field: ability.field, statistics,
+    observations: cloud?.observations ?? [], earlierRaces: cloud?.race?.earlierResults ?? [], cutoffAt: modelCutoff })
+  const history = readOddsHistory(oddsStorageKey(userId, race), { asOf: modelCutoff })
+  const prediction = applyPredictionModels({ race, field: ability.field, odds: history[0]?.odds ?? {}, history, context, models,
+    cutoffAt: modelCutoff, abilityModelId: ability.model.id })
   function saveResult(event) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
@@ -69,9 +85,21 @@ export default function PacePage({ race, horses, statistics, earlierRaces, userI
   }
 
   const cutoffAt = asofOnly ? decisionCutoff(race) ?? 'unknown' : null
-  const results = recordedPaceRows(earlierRaces, cutoffAt ? readPaceResults(userId, race, { cutoffAt }) : recorded, { cutoffAt })
+  const manualResults = recordedPaceRows(earlierRaces, cutoffAt ? readPaceResults(userId, race, { cutoffAt }) : recorded, { cutoffAt })
+  const capturedResults = (cloud?.race?.earlierResults ?? []).filter(row => row.raceDate === race.raceDate && String(row.placeCode) === String(race.placeCode)
+    && (!cutoffAt || availableAt(row, cutoffAt)) && Array.isArray(row.results))
+    .map(row => {
+      const positions = row.results.filter(h => Number(h.rank) >= 1 && Number(h.rank) <= 3).map(h => Number(h.cornerPass4))
+      const fieldSize = Number(row.fieldSize ?? row.field?.length)
+      if (positions.length !== 3 || positions.some(p => !Number.isInteger(p) || p < 1 || p > fieldSize)) return null
+      return { race_no: Number(row.raceNo ?? String(row.raceId).slice(-2)), field_size: fieldSize, surface_code: row.surfaceCode ?? (row.surface === '芝' ? '1' : row.surface === 'ダート' ? '2' : null),
+        distance: row.distance, top_count: 3, front_top_count: positions.filter(p => p <= Math.ceil(fieldSize / 3)).length,
+        retrievedAt: row.retrievedAt, source: 'JRDB巡回' }
+    }).filter(Boolean)
+  const results = [...new Map([...manualResults, ...capturedResults.sort((a, b) => Date.parse(a.retrievedAt) - Date.parse(b.retrievedAt))].map(row => [row.race_no, row])).values()]
   const styleByNumber = new Map(statistics.map(row => [Number(row.horse_no), Number(row.running_style)]))
-  const profiles = horses.map(horse => positionProfile(race, horse, styleByNumber.get(Number(horse.no))))
+  const displayedRace = { ...race, going: context.evidence.goingAffinity ?? race.going, weather: context.evidence.weatherAffinity ?? race.weather }
+  const profiles = enriched.map(horse => positionProfile(displayedRace, horse, styleByNumber.get(Number(horse.no)) ?? horse.running_style))
   const likelyFront = profiles.filter(horse => horse.style === 1 || horse.style === 2)
   const leaders = likelyFront.filter(horse => horse.style === 1)
   const knownProfiles = profiles.filter(horse => styles[horse.style]).length
@@ -97,9 +125,10 @@ export default function PacePage({ race, horses, statistics, earlierRaces, userI
   return <div className="space-y-4">
     <section className={card}>
       <h3 className="flex items-center gap-2 font-bold text-[#0B2545]"><CloudSun className="h-5 w-5" />天候・馬場</h3>
-      <p className="mt-2 text-sm text-slate-700">天候 {race.weather || '未取得'} ・ 馬場 {race.going || '未取得'} ・ {race.distance}</p>
-      <p className="mt-1 text-xs text-slate-500">レース情報に登録されている値です。</p>
+      <p className="mt-2 text-sm text-slate-700">天候 {displayedRace.weather || '未取得'} ・ 馬場 {displayedRace.going || '未取得'} ・ {race.distance}</p>
+      <p className="mt-1 text-xs text-slate-500">{context.source ? `締切以前のJRDB観測を参照。取得 ${formatRaceTime(context.source.retrievedAt)}` : 'レース情報に登録されている値です。時点を確認した観測は未取得です。'}</p>
     </section>
+    <RuntimeModelPanel prediction={prediction} context={context} observations={cloud?.observations} />
     <section className={card}>
       <h3 className="flex items-center gap-2 font-bold text-[#0B2545]"><Flag className="h-5 w-5" />展開予想</h3>
       <p className="mt-2 text-sm font-semibold">想定展開　{paceLabel}</p>

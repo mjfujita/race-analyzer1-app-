@@ -49,14 +49,15 @@ def validate_ledger(value):
         cutoff = iso(forecast.get('cutoffAt'))
         inputs = forecast.get('inputs', {})
         timestamps = {}
+        visible = inputs.get('timingEvidence') == 'observed-visible-at' and inputs.get('availabilityAt') == inputs.get('retrievedAt')
         for field in ('observedAt', 'retrievedAt', 'sourcePublishedAt'):
-            if forecast['mode'] == 'replay' and inputs.get(field) is None:
+            if inputs.get(field) is None and (forecast['mode'] == 'replay' or (field == 'sourcePublishedAt' and visible)):
                 continue
             stamp = iso(inputs.get(field))
             timestamps[field] = stamp
             if forecast['mode'] == 'live' and stamp > cutoff:
                 raise ValueError('Live forecast includes post-cutoff information')
-        if forecast['mode'] == 'live' and not (timestamps['sourcePublishedAt'] <= timestamps['observedAt'] <= timestamps['retrievedAt'] <= iso(forecast['createdAt']) <= cutoff):
+        if forecast['mode'] == 'live' and not (timestamps.get('sourcePublishedAt', timestamps['observedAt']) <= timestamps['observedAt'] <= timestamps['retrievedAt'] <= iso(forecast['createdAt']) <= cutoff):
             raise ValueError('Live input timestamp ordering is invalid')
         if forecast.get('kind') == 'ace' and forecast.get('parentId') is not None:
             raise ValueError('ACE original cannot have a parent')

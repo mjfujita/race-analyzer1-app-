@@ -2,8 +2,11 @@ import { useState } from 'react'
 import { ArrowUpDown, TrendingUp, Upload } from 'lucide-react'
 import { oddsStorageKey, readOddsHistory } from './oddsHistory.js'
 import { analyzeMarket, buildAbilityField } from './marketModel.js'
-import { formatRaceTime, snapshotTiming } from './raceTime.js'
+import { decisionCutoff, formatRaceTime, snapshotTiming } from './raceTime.js'
 import { loadModel, saveModel } from './modelStore.js'
+import { readCloudRace, loadRuntimeModel, enrichCloudHorses } from './cloudStore.js'
+import { applyPredictionModels, buildRaceContext } from './predictionModel.js'
+import RuntimeModelPanel from './RuntimeModelPanel.jsx'
 
 const pct = value => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '—'
 const num = value => Number.isFinite(value) ? value.toFixed(2) : '—'
@@ -11,22 +14,32 @@ const select = 'ml-2 rounded-lg border border-slate-300 bg-white px-2 py-1.5 tex
 
 export default function WinOddsPage({ race, horses, statistics = [], userId, onOpenAbility }) {
   const key = oddsStorageKey(userId, race)
-  const [history] = useState(() => readOddsHistory(key))
-  const [selected, setSelected] = useState(history[0]?.id ?? '')
+  const history = readOddsHistory(key)
+  const [selected, setSelected] = useState('')
   const [sort, setSort] = useState('gapLog')
   const [descending, setDescending] = useState(true)
   const [factor, setFactor] = useState('90')
-  const [model, setModel] = useState(() => loadModel(userId))
+  const [modelOverride, setModel] = useState(undefined)
   const [error, setError] = useState('')
-  const current = history.find(item => item.id === selected)
+  const current = history.find(item => item.id === selected) ?? history[0]
+  const cloud = readCloudRace(userId, race)
+  const models = loadRuntimeModel(userId)
+  const model = modelOverride === undefined ? models?.baseModel ?? loadModel(userId) : modelOverride
+  const enriched = enrichCloudHorses(horses, cloud?.race)
+  const decisionAt = decisionCutoff(race)
+  const cutoffAt = current?.retrievedAt && decisionAt && Date.parse(current.retrievedAt) < Date.parse(decisionAt) ? current.retrievedAt : decisionAt
   const available = current?.retrievedAt ? readOddsHistory(key, { asOf: current.retrievedAt }) : []
   const previous = available.find(item => Date.parse(item.observedAt) < Date.parse(current?.observedAt))
   const baseline = current?.retrievedAt ? readOddsHistory(key, { kind: 'baseline', asOf: current.retrievedAt })
     .find(item => Date.parse(item.observedAt) <= Date.parse(current.observedAt)) : null
-  const ability = buildAbilityField({ horses, statistics, race, model })
-  const analysis = analyzeMarket({ field: ability.field, odds: current?.odds ?? {}, baselineOdds: baseline?.odds ?? {},
+  const ability = buildAbilityField({ horses: enriched, statistics, race, model })
+  const context = buildRaceContext({ race, horses: enriched, field: ability.field, statistics,
+    observations: cloud?.observations ?? [], earlierRaces: cloud?.race?.earlierResults ?? [], cutoffAt })
+  const prediction = applyPredictionModels({ race, field: ability.field, odds: current?.odds ?? {}, history, context, models,
+    cutoffAt, abilityModelId: ability.model.id })
+  const analysis = analyzeMarket({ field: prediction.field, odds: current?.odds ?? {}, baselineOdds: baseline?.odds ?? {},
     previousOdds: previous?.odds ?? {}, priceFactor: Number(factor) / 100 })
-  const rows = [...analysis.rows].sort((a, b) => {
+  const rows = analysis.rows.map(row => ({ ...row, predictedOdds: prediction.prices[row.no]?.median ?? null })).sort((a, b) => {
     const av = a[sort], bv = b[sort]
     if (av == null) return bv == null ? a.no - b.no : 1
     if (bv == null) return -1
@@ -35,8 +48,8 @@ export default function WinOddsPage({ race, horses, statistics = [], userId, onO
   const timing = current ? snapshotTiming(current, race) : null
   const candidates = rows.filter(row => row.stressReturn > 1).length
   const columns = [
-    ['no', '馬番・馬名'], ['pF', '能力モデル勝率'], ['marketShare', '市場支持率'],
-    ['baselineShare', '基準人気支持率'], ['odds', '実オッズ'], ['movement', '前回からの変化'],
+    ['no', '馬番・馬名'], ['pF', '能力モデル勝率'], ['pContext', '条件反映勝率'], ['pM', '校正市場勝率'], ['pStar', '統合勝率'], ['marketShare', '市場支持率'],
+    ['baselineShare', '基準人気支持率'], ['odds', '実オッズ'], ['predictedOdds', '最終価格予測'], ['movement', '前回からの変化'],
     ['gapLog', '市場評価差'], ['expectedReturn', '現在価格の回収率'], ['stressReturn', '下落時の回収率'], ['fairOdds', '損益分岐オッズ'],
   ]
   return <div className="space-y-4">
@@ -54,7 +67,7 @@ export default function WinOddsPage({ race, horses, statistics = [], userId, onO
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <button type="button" onClick={onOpenAbility} className="font-semibold text-[#2B6CB0]">実オッズ・基準オッズを記録</button>
         <label>表示記録<select className={select} value={selected} onChange={e => setSelected(e.target.value)}>
-          {!history.length && <option value="">記録なし</option>}
+          {history.length ? <option value="">最新を自動表示（{history[0].time}）</option> : <option value="">記録なし</option>}
           {history.map(item => <option key={item.id} value={item.id}>{item.time}</option>)}
         </select></label>
         <label>価格の感度<select className={select} value={factor} onChange={e => setFactor(e.target.value)}>
@@ -72,14 +85,15 @@ export default function WinOddsPage({ race, horses, statistics = [], userId, onO
         <thead className="bg-slate-50 text-xs text-slate-600"><tr>{columns.map(([column, label]) => <th key={column} scope="col" className="px-4 py-3" aria-sort={sort === column ? descending ? 'descending' : 'ascending' : undefined}><button type="button" className="inline-flex items-center gap-1" onClick={() => { setSort(column); setDescending(sort === column ? !descending : column !== 'no') }}>{label}<ArrowUpDown aria-hidden="true" size={12} /></button></th>)}<th scope="col" className="p-3">解釈</th></tr></thead>
         <tbody className="divide-y divide-slate-100">{rows.map(row => <tr key={row.no} className="hover:bg-slate-50">
           <th scope="row" className="px-4 py-3 font-semibold"><span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded bg-slate-100 font-mono">{row.no}</span>{row.name}</th>
-          <td className="px-4 py-3 font-mono">{pct(row.pF)}</td><td className="px-4 py-3 font-mono">{pct(row.marketShare)}</td><td className="px-4 py-3 font-mono">{pct(row.baselineShare)}</td>
-          <td className="px-4 py-3 font-mono">{num(row.odds)}</td><td className="px-4 py-3 font-mono">{pct(row.movement)}</td><td className="px-4 py-3 font-mono">{num(row.gapLog)}</td>
+          <td className="px-4 py-3 font-mono">{pct(row.pF)}</td><td className="px-4 py-3 font-mono">{pct(row.pContext)}</td><td className="px-4 py-3 font-mono">{pct(row.pM)}</td><td className="px-4 py-3 font-mono">{pct(row.pStar)}</td><td className="px-4 py-3 font-mono">{pct(row.marketShare)}</td><td className="px-4 py-3 font-mono">{pct(row.baselineShare)}</td>
+          <td className="px-4 py-3 font-mono">{num(row.odds)}</td><td className="px-4 py-3 font-mono">{num(row.predictedOdds)}{row.predictedOdds !== null && <span className="block text-[10px] text-slate-500">{num(prediction.prices[row.no].lower)}〜{num(prediction.prices[row.no].upper)}</span>}</td><td className="px-4 py-3 font-mono">{pct(row.movement)}</td><td className="px-4 py-3 font-mono">{num(row.gapLog)}</td>
           <td className="px-4 py-3 font-mono">{pct(row.expectedReturn)}</td><td className={`px-4 py-3 font-mono ${row.stressReturn > 1 ? 'font-bold text-teal-700' : ''}`}>{pct(row.stressReturn)}</td>
           <td className="px-4 py-3 font-mono">{num(row.fairOdds)}</td><td className="px-4 py-3 text-xs">{row.marketShare == null ? '価格比較保留' : row.stressReturn > 1 ? '価格面の候補・検証中' : row.pF > row.marketShare ? '市場より高評価・購入条件不足' : '価格が見合わない可能性'}</td>
         </tr>)}</tbody>
       </table></div>}
       <p className="border-t border-slate-100 p-4 text-xs text-slate-500">市場評価差は正なら能力モデルの方が高評価。基準人気が揃う場合は、下の内訳で差の由来を確認できます。</p>
     </section>
+    <RuntimeModelPanel prediction={prediction} context={context} observations={cloud?.observations} />
     {baseline && rows.length > 0 && <details className="rounded-2xl border border-slate-200 bg-white p-5 text-sm"><summary className="cursor-pointer font-semibold text-[#0B2545]">評価差の内訳</summary><p className="my-3 text-xs text-slate-600">log(pF/q) = log(pF/q基準) + log(q基準/q)。右側は予想人気との差で、実際の資金流入額を示すものではありません。</p><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{rows.map(row => <p key={row.no} className="rounded-lg bg-slate-50 p-3"><strong>{row.no}番</strong>　実力と予想人気 {num(row.abilityBaselineGap)}<br /><span className="text-slate-600">予想人気と現在 {num(row.baselineMarketGap)}</span></p>)}</div></details>}
     <details className="rounded-2xl border border-slate-200 bg-white p-5 text-sm">
       <summary className="cursor-pointer font-semibold text-[#0B2545]">学習モデルと検証結果</summary>

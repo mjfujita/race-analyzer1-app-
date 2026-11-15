@@ -75,3 +75,16 @@ test('later pace corrections do not hide the evidence available at the decision 
   assert.equal(recordedPaceRows([{race_no:1}],prior,{cutoffAt})[0].front_top_count,3)
   assert.equal(readPaceResults('u',target,{storage})[1].id,'later')
 })
+
+test('direct visible capture remains eligible without inventing publication, but late capture cannot enter cutoff history', () => {
+  const storage=store(), original=snapshot()
+  const direct={...original,sourcePublishedAt:null,timingEvidence:'observed-visible-at',availabilityAt:original.retrievedAt}
+  assert.equal(importOddsSnapshots('k',[direct],race,[1,2],storage),1)
+  assert.equal(snapshotTiming(readOddsEvents('k',storage)[0],race).eligible,true)
+  assert.equal(readOddsHistory('k',{storage,asOf:decisionCutoff(race)}).length,1)
+  const late={...direct,id:'late',retrievedAt:'2026-01-01T07:00:00Z',availabilityAt:'2026-01-01T07:00:00Z',odds:{1:7,2:3}}
+  importOddsSnapshots('k',[late],race,[1,2],storage)
+  assert.equal(readOddsHistory('k',{storage,asOf:decisionCutoff(race)})[0].odds[1],5)
+  assert.equal(snapshotTiming(late,race).eligible,false)
+  assert.throws(()=>importOddsSnapshots('k',[{...direct,id:'false',availabilityAt:'2026-01-01T06:19:00Z'}],race,[1,2],storage))
+})
