@@ -29,7 +29,7 @@ import { createClient } from '@supabase/supabase-js'
 import WebSocket from 'ws'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const envPath = resolve(__dirname, '..', '.env.local')
+const envPath = process.env.RACE_ENV_FILE || resolve(__dirname, '..', '.env.local')
 
 function loadEnv(path) {
   const text = readFileSync(path, 'utf8')
@@ -44,7 +44,7 @@ function loadEnv(path) {
   return out
 }
 
-const env = loadEnv(envPath)
+const env = { ...(existsSync(envPath) ? loadEnv(envPath) : {}), ...process.env }
 const url = env.SUPABASE_PROJECT_URL
 const key = env.SUPABASE_SERVICE_ROLE_KEY
 const dbPath = env.RACE_DB_PATH
