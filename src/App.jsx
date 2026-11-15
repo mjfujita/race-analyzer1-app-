@@ -1,3 +1,4 @@
+import PacePage from './PacePage.jsx'
 import AbilityPage from './AbilityPage.jsx'
 import OddsReview from './OddsReview.jsx'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
@@ -577,6 +578,17 @@ const dataApi = {
     return rows.map((r) => ({
       ...r, place: PLACE_NAMES[r.place_code] || r.place_code, surface: SURFACE_NAMES[r.surface_code] || r.surface_code,
     }))
+  },
+  getEarlierPace(db, raceKey) {
+    return queryAll(db, `
+      SELECT earlier.race_no, earlier.post_time, earlier.distance, earlier.field_size
+      FROM jrdb_races target
+      JOIN jrdb_races earlier ON earlier.race_date = target.race_date
+        AND earlier.place_code = target.place_code AND earlier.surface_code = target.surface_code
+        AND earlier.race_no < target.race_no AND earlier.post_time < target.post_time
+      WHERE target.race_key = ? AND length(earlier.post_time) = 4 AND length(target.post_time) = 4
+      ORDER BY earlier.post_time
+    `, [raceKey])
   },
   getAbility(db, raceKey) {
     const [table] = queryAll(db, "SELECT name FROM sqlite_master WHERE type='table' AND name='race_ability'")
@@ -1914,6 +1926,7 @@ function MainApp({ session, onLogout }) {
       { id: 'races', label: 'レース一覧', icon: Layers },
       { id: 'analysis', label: '出走馬分析', icon: Users },
       { id: 'ability', label: '能力・適性', icon: Gauge },
+      { id: 'pace', label: '展開・天候', icon: Flag },
       { id: 'scenario', label: 'レースシナリオ', icon: Flag },
       { id: 'oddsReview', label: '買い目比較', icon: Target },
       { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
@@ -1934,7 +1947,7 @@ function MainApp({ session, onLogout }) {
     )
   }
 
-  const showRaceHeader = (['analysis', 'ability', 'scenario'].includes(tab)) && raceInfo
+  const showRaceHeader = (['analysis', 'ability', 'pace', 'scenario'].includes(tab)) && raceInfo
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-8"
@@ -1951,6 +1964,10 @@ function MainApp({ session, onLogout }) {
             statistics={db && raceInfo ? dataApi.getAbility(db, raceInfo.id) : []}
             onSelectRace={() => setTab('races')}
             onSelectHorse={id => { setSelectedId(id); setTab('analysis') }} />}
+          {tab === 'pace' && (raceInfo ? <PacePage race={raceInfo} horses={horses}
+            key={`${session.user.id}:${raceInfo.id}:${raceInfo.raceDate}`} userId={session.user.id}
+            earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
+            statistics={db ? dataApi.getAbility(db, raceInfo.id) : []} /> : <EmptyRace />)}
           {tab === 'scenario' && <TabScenario />}
           {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}
           {tab === 'philosophy' && <TabPhilosophy />}
