@@ -1,3 +1,4 @@
+import FinalForecastPage from './FinalForecastPage.jsx'
 import WinOddsPage from './WinOddsPage.jsx'
 import PacePage from './PacePage.jsx'
 import AbilityPage from './AbilityPage.jsx'
@@ -1930,6 +1931,7 @@ function MainApp({ session, onLogout }) {
       { id: 'pace', label: '展開・天候', icon: Flag },
       { id: 'scenario', label: 'レースシナリオ', icon: Flag },
       { id: 'winOdds', label: '単勝オッズ分析', icon: TrendingUp },
+      { id: 'finalForecast', label: '最終予想・買い目', icon: Target },
       { id: 'oddsReview', label: '買い目比較', icon: Target },
       { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
     ]
@@ -1949,7 +1951,7 @@ function MainApp({ session, onLogout }) {
     )
   }
 
-  const showRaceHeader = (['analysis', 'ability', 'pace', 'scenario', 'winOdds'].includes(tab)) && raceInfo
+  const showRaceHeader = (['analysis', 'ability', 'pace', 'scenario', 'winOdds', 'finalForecast'].includes(tab)) && raceInfo
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-8"
@@ -1975,6 +1977,11 @@ function MainApp({ session, onLogout }) {
             key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`}
             race={raceInfo} horses={horses} userId={session.user.id}
             onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
+          {tab === 'finalForecast' && (raceInfo ? <FinalForecastPage
+            key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={raceInfo} horses={horses}
+            userId={session.user.id} statistics={db ? dataApi.getAbility(db, raceInfo.id) : []}
+            earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
+            onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
           {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}
           {tab === 'philosophy' && <TabPhilosophy />}
         </div>

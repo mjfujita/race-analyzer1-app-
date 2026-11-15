@@ -8,7 +8,7 @@ const styles = { 1: '逃げ', 2: '先行', 3: '差し', 4: '追込' }
 
 const surfaceLabels = { 1: '芝', 2: 'ダート' }
 
-function summarizeBias(results) {
+export function summarizeBias(results) {
   const total = results.reduce((sum, row) => sum + row.top_count, 0)
   const front = results.reduce((sum, row) => sum + row.front_top_count, 0)
   const expected = results.reduce((sum, row) =>
@@ -34,18 +34,28 @@ function positionProfile(race, horse, style) {
   }
 }
 
+export function readPaceResults(userId, race) {
+  const key = `pace-results:v1:${userId}:${race.raceDate}:${race.placeCode}`
+  try {
+    return {
+      ...JSON.parse(localStorage.getItem(`${key}:芝`)),
+      ...JSON.parse(localStorage.getItem(`${key}:ダート`)),
+      ...JSON.parse(localStorage.getItem(key)),
+    }
+  } catch { return {} }
+}
+
+export function recordedPaceRows(earlierRaces, recorded) {
+  return earlierRaces.filter(row => recorded[row.race_no]).map(row => {
+    const { field, positions } = recorded[row.race_no]
+    return { ...row, field_size: field, top_count: positions.length,
+      front_top_count: positions.filter(pos => pos <= Math.ceil(field / 3)).length }
+  })
+}
+
 export default function PacePage({ race, horses, statistics, earlierRaces, userId }) {
   const key = `pace-results:v1:${userId}:${race.raceDate}:${race.placeCode}`
-  const [recorded, setRecorded] = useState(() => {
-    try {
-      return {
-        ...JSON.parse(localStorage.getItem(`${key}:芝`)),
-        ...JSON.parse(localStorage.getItem(`${key}:ダート`)),
-        ...JSON.parse(localStorage.getItem(key)),
-      }
-    }
-    catch { return {} }
-  })
+  const [recorded, setRecorded] = useState(() => readPaceResults(userId, race))
   const [error, setError] = useState('')
   function saveResult(event) {
     event.preventDefault()
@@ -67,11 +77,7 @@ export default function PacePage({ race, horses, statistics, earlierRaces, userI
     } catch { setError('このブラウザに保存できませんでした。') }
   }
 
-  const results = earlierRaces.filter(row => recorded[row.race_no]).map(row => {
-    const { field, positions } = recorded[row.race_no]
-    return { ...row, field_size: field, top_count: positions.length,
-      front_top_count: positions.filter(pos => pos <= Math.ceil(field / 3)).length }
-  })
+  const results = recordedPaceRows(earlierRaces, recorded)
   const styleByNumber = new Map(statistics.map(row => [Number(row.horse_no), Number(row.running_style)]))
   const profiles = horses.map(horse => positionProfile(race, horse, styleByNumber.get(Number(horse.no))))
   const likelyFront = profiles.filter(horse => horse.style === 1 || horse.style === 2)
