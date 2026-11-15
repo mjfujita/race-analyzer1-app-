@@ -50,7 +50,7 @@ export function readOddsHistory(key, { kind = 'observed', storage = globalThis.l
     const latest = new Map()
     for (const row of readOddsEvents(key, storage).filter(row => row.kind === kind)) {
       if (asOf && (!validTimestamp(asOf) || !validEvent(row) || ![row.observedAt, row.sourcePublishedAt, row.retrievedAt].filter(Boolean).every(t => validTimestamp(t) && Date.parse(t) <= Date.parse(asOf)))) continue
-      const group = row.observedAt ?? row.time
+      const group = validTimestamp(row.observedAt) ? Date.parse(row.observedAt) : row.time
       const prior = latest.get(group)
       if (!prior || !row.retrievedAt || Date.parse(row.retrievedAt) >= Date.parse(prior.retrievedAt ?? '1970-01-01')) latest.set(group, row)
     }
@@ -81,7 +81,7 @@ export function appendOddsSnapshot(key, snapshot, storage = globalThis.localStor
     if (!sameEvent(existing, snapshot)) throw new Error('同じIDに異なる記録があります。上書きしませんでした。')
     return rows
   }
-  const previous = rows.findLast(row => row.kind === snapshot.kind && row.time === snapshot.time && row.observedAt === snapshot.observedAt)
+  const previous = rows.findLast(row => row.kind === snapshot.kind && row.time === snapshot.time && Date.parse(row.observedAt) === Date.parse(snapshot.observedAt))
   const next = [...rows, { ...snapshot, revisionOf: previous?.id ?? null }]
   storage.setItem(key, JSON.stringify(next))
   return next

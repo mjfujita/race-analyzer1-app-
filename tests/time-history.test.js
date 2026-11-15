@@ -88,3 +88,13 @@ test('direct visible capture remains eligible without inventing publication, but
   assert.equal(snapshotTiming(late,race).eligible,false)
   assert.throws(()=>importOddsSnapshots('k',[{...direct,id:'false',availabilityAt:'2026-01-01T06:19:00Z'}],race,[1,2],storage))
 })
+
+test('equivalent ISO timestamps share a revision group, preserving latest price and cutoff reconstruction',()=>{
+  const storage=store(),first=snapshot()
+  appendOddsSnapshot('k',first,storage)
+  appendOddsSnapshot('k',{...first,id:'iso-revision',observedAt:first.observedAt.replace('.000Z','Z'),odds:{1:7,2:3}},storage)
+  const rows=readOddsHistory('k',{storage,asOf:decisionCutoff(race)})
+  assert.equal(rows.length,1)
+  assert.equal(rows[0].odds[1],7)
+  assert.equal(rows[0].revisionOf,first.id)
+})
