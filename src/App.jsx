@@ -1,3 +1,4 @@
+import AbilityPage from './AbilityPage.jsx'
 import OddsReview from './OddsReview.jsx'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
@@ -576,6 +577,10 @@ const dataApi = {
     return rows.map((r) => ({
       ...r, place: PLACE_NAMES[r.place_code] || r.place_code, surface: SURFACE_NAMES[r.surface_code] || r.surface_code,
     }))
+  },
+  getAbility(db, raceKey) {
+    const [table] = queryAll(db, "SELECT name FROM sqlite_master WHERE type='table' AND name='race_ability'")
+    return table ? queryAll(db, 'SELECT * FROM race_ability WHERE race_key = ?', [raceKey]) : []
   },
   getEvaluation(db, raceKey) {
     const rows = queryAll(db, 'SELECT payload FROM race_evaluations WHERE race_key = ?', [raceKey])
@@ -1908,6 +1913,7 @@ function MainApp({ session, onLogout }) {
       { id: 'today', label: '本日注目レース', icon: Star },
       { id: 'races', label: 'レース一覧', icon: Layers },
       { id: 'analysis', label: '出走馬分析', icon: Users },
+      { id: 'ability', label: '能力・適性', icon: Gauge },
       { id: 'scenario', label: 'レースシナリオ', icon: Flag },
       { id: 'oddsReview', label: '買い目比較', icon: Target },
       { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
@@ -1928,7 +1934,7 @@ function MainApp({ session, onLogout }) {
     )
   }
 
-  const showRaceHeader = (tab === 'analysis' || tab === 'scenario') && raceInfo
+  const showRaceHeader = (['analysis', 'ability', 'scenario'].includes(tab)) && raceInfo
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-8"
@@ -1941,6 +1947,10 @@ function MainApp({ session, onLogout }) {
           {tab === 'today' && <TabToday />}
           {tab === 'races' && <TabRaces />}
           {tab === 'analysis' && <TabAnalysis />}
+          {tab === 'ability' && <AbilityPage race={raceInfo} horses={horses}
+            statistics={db && raceInfo ? dataApi.getAbility(db, raceInfo.id) : []}
+            onSelectRace={() => setTab('races')}
+            onSelectHorse={id => { setSelectedId(id); setTab('analysis') }} />}
           {tab === 'scenario' && <TabScenario />}
           {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}
           {tab === 'philosophy' && <TabPhilosophy />}

@@ -58,6 +58,49 @@ def main():
 
     c = sqlite3.connect(DST)
 
+    # 公開用の軽量DBには、能力画面で使う集計値だけを残す。
+    c.execute("""
+        CREATE TABLE race_ability (
+            race_key TEXT NOT NULL, horse_no INTEGER NOT NULL, idm REAL,
+            distance_runs INTEGER NOT NULL, distance_top3 INTEGER NOT NULL,
+            venue_runs INTEGER NOT NULL, venue_top3 INTEGER NOT NULL,
+            course_runs INTEGER NOT NULL, course_top3 INTEGER NOT NULL,
+            PRIMARY KEY (race_key, horse_no)
+        ) WITHOUT ROWID
+    """)
+    c.execute("""
+        WITH entries AS (
+            SELECT r.race_key, r.race_date, r.place_code, r.surface_code, r.distance,
+                   e.horse_no, e.ketto_id, e.idm
+            FROM jrdb_races r
+            JOIN race_evaluations v ON v.race_key = r.race_key
+            JOIN jrdb_entries e ON e.race_key = r.race_key
+            WHERE r.race_date >= ?
+        ), recent AS (
+            SELECT e.race_key, e.horse_no, p.rank,
+                   p.surface_code = e.surface_code AND abs(p.distance - e.distance) <= 200 AS near_distance,
+                   p.surface_code = e.surface_code AND substr(p.race_key, 1, 2) = e.place_code AS same_venue,
+                   p.surface_code = e.surface_code AND substr(p.race_key, 1, 2) = e.place_code
+                       AND p.distance = e.distance AS same_course_distance,
+                   row_number() OVER (
+                       PARTITION BY e.race_key, e.horse_no
+                       ORDER BY p.race_date DESC, p.race_key DESC
+                   ) AS seq
+            FROM entries e
+            JOIN jrdb_results p ON p.ketto_id = e.ketto_id
+                 AND p.race_date < e.race_date
+                 AND p.rank BETWEEN 1 AND p.field_size
+        )
+        INSERT INTO race_ability
+        SELECT e.race_key, e.horse_no, CASE WHEN e.idm > 0 THEN e.idm END,
+               coalesce(sum(p.near_distance), 0), coalesce(sum(p.near_distance AND p.rank <= 3), 0),
+               coalesce(sum(p.same_venue), 0), coalesce(sum(p.same_venue AND p.rank <= 3), 0),
+               coalesce(sum(p.same_course_distance), 0), coalesce(sum(p.same_course_distance AND p.rank <= 3), 0)
+        FROM entries e
+        LEFT JOIN recent p ON p.race_key = e.race_key AND p.horse_no = e.horse_no AND p.seq <= 5
+        GROUP BY e.race_key, e.horse_no, e.idm
+    """, (since or "",))
+
     # フロント COUNT 用にカウントだけ確保（削減のためサイズの大きい SED 列を捨てる）
     c.executescript("""
         CREATE TABLE jrdb_results_min (id INTEGER PRIMARY KEY);
@@ -73,7 +116,7 @@ def main():
 
     # フロント未参照テーブルを落とす
     keep = {"jrdb_races", "race_evaluations", "race_summaries",
-            "jrdb_horses", "jrdb_results", "sqlite_sequence"}
+            "jrdb_horses", "jrdb_results", "race_ability", "sqlite_sequence"}
     all_tables = [r[0] for r in c.execute(
         "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     for t in all_tables:
