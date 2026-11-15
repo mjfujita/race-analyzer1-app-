@@ -1040,7 +1040,7 @@ function MainApp({ session, onLogout }) {
         </div>
 
         <div className="bg-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl px-4 py-2.5 text-xs text-[#2B6CB0] flex items-center gap-2">
-          <Info className="w-4 h-4 shrink-0" /> AIは買い目を断定せず、妙味が出そうな構造を整理します。当日オッズは別アプリで最終確認してください。
+          <Info className="w-4 h-4 shrink-0" /> 能力・展開・市場評価を確認し、最終予想で予算内の買い目と配分を比較できます。実購入前に最新の価格を確認してください。
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
@@ -1161,7 +1161,7 @@ function MainApp({ session, onLogout }) {
                   '調教・騎手相性は補正材料',
                   '新馬戦は基本除外、未勝利の初出走は要注意',
                   '地方実績は中央換算の参考評価',
-                  '当日オッズは別アプリで最終確認',
+                  '最終予想で予算内の買い目を比較し、実購入前に価格を確認',
                 ].map((t, i) => (
                   <li key={i} className="flex gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#4A90E2] shrink-0 mt-0.5" /><span>{t}</span></li>
                 ))}
@@ -1865,13 +1865,13 @@ function MainApp({ session, onLogout }) {
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pb-12 items-stretch">
       <div className="bg-gradient-to-br from-[#0B2545] to-[#1a365d] rounded-2xl p-8 text-white shadow-md relative overflow-hidden">
         <Zap className="absolute -right-8 -bottom-8 w-48 h-48 text-white/5" />
-        <h2 className="text-2xl font-black mb-4 relative z-10">AIは予想者ではない</h2>
+        <h2 className="text-2xl font-black mb-4 relative z-10">根拠を比較し、買い方を判断する</h2>
         <p className="text-slate-300 text-sm leading-relaxed mb-8 relative z-10">
-          当システムは「当たるAI」を目指していません。買い目は断定せず、当日オッズも取り込みません。
-          クラス実績・過去人気・着順・直近状態・調教・騎手相性を整理し、朝の時点で見るべきレースと妙味が出そうな馬を抽出する判断支援コックピットです。
+          能力・適性を土台に、取得できた展開・天候・パドックとオッズを確認し、予算内の買い目・配分を比較します。
+          条件の補正や最終オッズの推定は、学習データと時点の条件が揃った場合に使用します。確率と回収率は試算で、的中や利益を保証するものではありません。購入は利用者が行い、実購入と払戻を記録して検証します。
         </p>
         <div className="space-y-4 relative z-10">
-          {['能力順は入口。最終判断はクラス・人気履歴・着順で確認', '調教・騎手相性は補正材料', '新馬戦は基本除外、未勝利の初出走は要注意', '当日オッズは別アプリで人間が最終判断'].map((t, i) => (
+          {['能力・適性、当日条件、市場の評価差を順に確認', '発走10分前までに取得できた情報で予想を固定', '学習データが足りない条件は補正を保留', '実購入前に価格を確認し、購入内容と払戻を記録'].map((t, i) => (
             <div key={i} className="flex items-center gap-3 bg-white/10 p-3 rounded-lg border border-white/5">
               <CheckCircle2 className="w-5 h-5 text-[#4A90E2] shrink-0" /><span className="font-medium text-sm">{t}</span>
             </div>
@@ -1879,12 +1879,19 @@ function MainApp({ session, onLogout }) {
         </div>
       </div>
       <div className="bg-white rounded-2xl p-8 border border-slate-200/80 shadow-sm">
-        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2"><Activity className="w-5 h-5 text-[#4A90E2]" /> 拡張機能 (Coming Soon)</h2>
+        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2"><Activity className="w-5 h-5 text-[#4A90E2]" /> 分析機能と利用条件</h2>
         <div className="grid grid-cols-2 gap-4">
-          {['当日オッズ連携', '馬体重変化追跡', '天候連動シミュレート', 'EV(期待値)計算', '買い目(フォーメーション)提案', '当日トラックバイアス補正'].map((t, i) => (
-            <div key={i} className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between h-24 bg-slate-50/50">
-              <span className="font-bold text-slate-700 text-sm">{t}</span>
-              <div className="text-right"><span className="text-[9px] font-black tracking-wider text-slate-400 bg-slate-200 px-2 py-0.5 rounded-sm">SOON</span></div>
+          {[
+            ['当日オッズ・直前情報', 'PCの巡回・同期が必要'],
+            ['天候・パドックの補正', '学習データ不足の間は保留'],
+            ['期待回収率・リスク比較', '取得済み価格で試算'],
+            ['予算内の買い目・配分', '価格未取得の馬券は保留'],
+            ['当日の芝・ダート傾向', '取得済みの先行レースを集計'],
+            ['実購入・払戻の検証', '購入記録と正式払戻が必要'],
+          ].map(([title, condition]) => (
+            <div key={title} className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between gap-3 min-h-24 bg-slate-50/50">
+              <span className="font-bold text-slate-700 text-sm">{title}</span>
+              <p className="text-xs leading-relaxed text-slate-500">{condition}</p>
             </div>
           ))}
         </div>
