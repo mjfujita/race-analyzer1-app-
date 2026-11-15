@@ -28,6 +28,6 @@ export function allocateTickets(tickets, budget) {
   const scale = Math.max(1, fractions.reduce((sum, fraction) => sum + fraction, 0))
   return tickets.map((ticket, index) => ({
     ...ticket,
-    stake: String(Math.floor(budget * fractions[index] / scale / 100) * 100),
+    stake: String(Math.floor(Number((budget * fractions[index] / scale / 100).toPrecision(15))) * 100),
   }))
 }
