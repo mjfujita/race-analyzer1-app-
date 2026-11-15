@@ -9,7 +9,8 @@ function recordText(topThree, runs) {
 
 const columns = [
   { key: 'rank', label: 'IDM順位', ascending: true },
-  { key: 'number', label: '馬番・馬名', ascending: true },
+  { key: 'number', label: '馬番', ascending: true },
+  { key: 'odds', label: '単勝オッズ', ascending: true },
   { key: 'idm', label: 'JRDB IDM' },
   { key: 'ability', label: '能力スコア' },
   { key: 'distance', label: '近い距離' },
@@ -21,11 +22,57 @@ function recordRate(topThree, runs) {
   return runs > 0 && topThree != null ? topThree / runs : null
 }
 
-export default function AbilityPage({ race, horses, statistics, onSelectRace, onSelectHorse }) {
+export default function AbilityPage({ race, horses, statistics, userId, onSelectRace, onSelectHorse }) {
+  const storageKey = `race-ability-odds:v1:${userId}:${race?.raceDate}:${race?.id}`
+  return <AbilityTable key={storageKey} {...{ race, horses, statistics, storageKey, onSelectRace, onSelectHorse }} />
+}
+
+function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSelectHorse }) {
   const [sort, setSort] = useState({ key: 'rank', ascending: true })
+  const [snapshot, setSnapshot] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey))
+    } catch {
+      return null
+    }
+  })
+  const [edit, setEdit] = useState(false)
+  const [error, setError] = useState('')
   if (!race) return <div className="rounded-2xl border border-slate-200 bg-white p-5">
     <button type="button" className="font-semibold text-[#2B6CB0]" onClick={onSelectRace}>レース一覧から選ぶ</button>
   </div>
+
+  function saveOdds(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const time = form.get('time')
+    const lines = form.get('odds').trim().split(/\r?\n/).filter(line => line.trim())
+    const horseNumbers = new Set(horses.map(horse => Number(horse.no)))
+    const odds = {}
+    for (const line of lines) {
+      const match = line.trim().match(/^(\d+)[\s,、]+(\d+(?:\.\d+)?)$/)
+      const number = Number(match?.[1])
+      const value = Number(match?.[2])
+      if (!horseNumbers.has(number) || !Number.isFinite(value) || value < 1 || number in odds) {
+        setError(`馬番と単勝オッズを確認してください。入力行「${line}」`)
+        return
+      }
+      odds[number] = value
+    }
+    if (!time || !lines.length) {
+      setError('観測時刻と単勝オッズを入力してください。')
+      return
+    }
+    const next = { time, odds }
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(next))
+      setSnapshot(next)
+      setEdit(false)
+      setError('')
+    } catch {
+      setError('このブラウザに保存できませんでした。')
+    }
+  }
 
   const statsByHorse = new Map(statistics.map(row => [Number(row.horse_no), row]))
   const rows = horses.map(horse => {
@@ -36,6 +83,7 @@ export default function AbilityPage({ race, horses, statistics, onSelectRace, on
     const values = {
       rank: horse.predictedFavRank,
       number: Number(horse.no),
+      odds: snapshot?.odds[horse.no],
       idm: stats?.idm,
       ability: horse.abilityScore,
       distance: recordRate(distanceTop3, distanceRuns),
@@ -63,6 +111,26 @@ export default function AbilityPage({ race, horses, statistics, onSelectRace, on
           : '出走時IDMの順位が揃うと、能力の軸候補を表示します。'}</p>
         <p className="text-xs text-slate-500">実績は直近5走の3着内／出走数。同じ芝・ダート区分で集計します。近い距離は今回の±200m、同場同距離は競馬場と距離が一致する走です。実績列は3着内率で並び替えます。</p>
         {!statistics.length && <p className="text-xs text-slate-500">IDM実数と競馬場別実績は、能力データ付きのDBの取得後に表示します。</p>}
+        {rows.length > 0 && <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <span className="text-slate-600">{snapshot ? `単勝オッズ ${snapshot.time}時点（日本時間・手入力）` : '単勝オッズは未入力です。'}</span>
+            <button type="button" className="font-semibold text-[#2B6CB0] hover:underline" aria-expanded={edit}
+              onClick={() => { setEdit(!edit); setError('') }}>{edit ? '閉じる' : '単勝オッズを入力'}</button>
+          </div>
+          {edit && <form onSubmit={saveOdds} className="max-w-md space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+            <label className="block">観測時刻（日本時間）
+              <input name="time" type="time" required defaultValue={snapshot?.time}
+                className="ml-2 rounded border border-slate-300 bg-white px-2 py-1" />
+            </label>
+            <label className="block">馬番と単勝オッズ（1頭につき1行）
+              <textarea name="odds" required rows={4} placeholder={'7 4.6\n15 9.9'}
+                defaultValue={Object.entries(snapshot?.odds ?? {}).map(([number, odds]) => `${number} ${odds}`).join('\n')}
+                className="mt-1 block w-full rounded border border-slate-300 bg-white p-2" />
+            </label>
+            {error && <p role="alert" className="text-red-700">{error}</p>}
+            <button type="submit" className="rounded bg-[#0B2545] px-3 py-1.5 font-semibold text-white">このブラウザに保存</button>
+          </form>}
+        </div>}
       </div>
       {rows.length === 0 ? <p className="p-5 text-sm text-slate-600">このレースの出走馬情報は未取得です。</p> :
         <div className="overflow-x-auto">
@@ -83,15 +151,19 @@ export default function AbilityPage({ race, horses, statistics, onSelectRace, on
                     </button>
                   </th>
                 )
-              })}</tr>
+              }).flatMap((header, index) => index === 1
+                ? [header, <th scope="col" key="name" className="px-4 py-3 font-semibold">馬名</th>]
+                : [header])}</tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {rows.map(horse => {
                 const stats = horse.stats
                 return <tr key={horse.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-semibold tabular-nums text-[#0B2545]">{horse.predictedFavRank ?? '—'}</td>
+                  <td className="px-4 py-3 tabular-nums">{horse.no}</td>
                   <td className="px-4 py-3"><button type="button" onClick={() => onSelectHorse(horse.id)}
-                    className="font-semibold text-[#2B6CB0] hover:underline">{horse.no} {horse.name}</button></td>
+                    className="font-semibold text-[#2B6CB0] hover:underline">{horse.name}</button></td>
+                  <td className="px-4 py-3 tabular-nums">{horse.values.odds == null ? '—' : horse.values.odds.toFixed(1)}</td>
                   <td className="px-4 py-3 tabular-nums">{stats?.idm == null ? '—' : Number(stats.idm).toFixed(1)}</td>
                   <td className="px-4 py-3 tabular-nums">{horse.abilityScore ?? '—'}</td>
                   <td className="px-4 py-3">{recordText(horse.distanceTop3, horse.distanceRuns)}</td>

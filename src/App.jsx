@@ -1947,7 +1947,7 @@ function MainApp({ session, onLogout }) {
           {tab === 'today' && <TabToday />}
           {tab === 'races' && <TabRaces />}
           {tab === 'analysis' && <TabAnalysis />}
-          {tab === 'ability' && <AbilityPage race={raceInfo} horses={horses}
+          {tab === 'ability' && <AbilityPage race={raceInfo} horses={horses} userId={session.user.id}
             statistics={db && raceInfo ? dataApi.getAbility(db, raceInfo.id) : []}
             onSelectRace={() => setTab('races')}
             onSelectHorse={id => { setSelectedId(id); setTab('analysis') }} />}
