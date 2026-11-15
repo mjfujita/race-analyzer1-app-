@@ -125,7 +125,8 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const inputsReady = Boolean(ability.complete && market.complete && budgetValid && stressValid && pairTimeValid && !parsed.errors.length && !pairErrors.length && current)
   const automaticQuotes = useMemo(() => {
     const source = context.source
-    if (!current || source?.observedAt !== current.observedAt || !ability.field.every(h => source.winOdds?.[h.no] === current.odds[h.no])) return []
+    if (!source?.observedAt || !current?.observedAt || Date.parse(source.observedAt) !== Date.parse(current.observedAt)
+      || !ability.field.every(h => source.winOdds?.[h.no] === current.odds[h.no])) return []
     const text = (source.quotes ?? []).map(q => `${q.type} ${q.numbers.join('-')} ${q.odds}`).join('\n')
     return parseQuotes(text, ability.field, frames).quotes.filter(q => q.type !== '単勝' && !parsed.quotes.some(manual => manual.type === q.type && manual.numbers.join('-') === q.numbers.join('-')))
   }, [context.source, current, ability.field, frames, parsed.quotes])

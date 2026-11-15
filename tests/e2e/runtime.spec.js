@@ -39,6 +39,21 @@ async function applySyntheticSync(page, payload, state = 'normal') {
   await page.getByRole('button', { name: '同期データを再読込（開発確認）' }).click()
 }
 
+test('legacy odds without dated live context remain readable as research data', async ({ page }) => {
+  const errors = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.goto('/market-preview.html')
+  await page.evaluate(async ({ race, odds }) => {
+    const { oddsStorageKey } = await import('/src/oddsHistory.js')
+    localStorage.setItem(oddsStorageKey('synthetic-demo-normal', race), JSON.stringify([{ time: '15:30', odds }]))
+  }, { race, odds })
+  await page.getByRole('button', { name: '同期データを再読込（開発確認）' }).click()
+  await expect(page.getByRole('button', { name: '研究用の試算を固定保存' })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('button', { name: '研究用の試算を固定保存' })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
 test('runtime models and observed-direct data appear after sync, future context stays retrospective', async ({ page }) => {
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
