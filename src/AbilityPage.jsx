@@ -7,10 +7,15 @@ function recordText(topThree, runs) {
   return runs > 0 ? `${topThree} / ${runs}` : '該当走なし'
 }
 
+const oddsChangeFormat = new Intl.NumberFormat('ja-JP', {
+  style: 'percent', maximumFractionDigits: 1, signDisplay: 'exceptZero',
+})
+
 const columns = [
   { key: 'rank', label: 'IDM順位', ascending: true },
   { key: 'number', label: '馬番', ascending: true },
   { key: 'odds', label: '単勝オッズ', ascending: true },
+  { key: 'oddsChange', label: '単勝オッズ変化率' },
   { key: 'idm', label: 'JRDB IDM' },
   { key: 'ability', label: '能力スコア' },
   { key: 'distance', label: '近い距離' },
@@ -29,13 +34,18 @@ export default function AbilityPage({ race, horses, statistics, userId, onSelect
 
 function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSelectHorse }) {
   const [sort, setSort] = useState({ key: 'rank', ascending: true })
-  const [snapshot, setSnapshot] = useState(() => {
+  const [history, setHistory] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem(storageKey))
+      const saved = JSON.parse(localStorage.getItem(storageKey))
+      return Array.isArray(saved) ? saved : saved?.time && saved?.odds ? [saved] : []
     } catch {
-      return null
+      return []
     }
   })
+  const [selectedTime, setSelectedTime] = useState('')
+  const snapshotIndex = Math.max(0, history.findIndex(item => item.time === selectedTime))
+  const snapshot = history[snapshotIndex]
+  const previousSnapshot = history[snapshotIndex + 1]
   const [edit, setEdit] = useState(false)
   const [error, setError] = useState('')
   if (!race) return <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -63,10 +73,12 @@ function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSe
       setError('観測時刻と単勝オッズを入力してください。')
       return
     }
-    const next = { time, odds }
+    const next = [...history.filter(item => item.time !== time), { time, odds }]
+      .sort((a, b) => b.time.localeCompare(a.time))
     try {
       localStorage.setItem(storageKey, JSON.stringify(next))
-      setSnapshot(next)
+      setHistory(next)
+      setSelectedTime(time)
       setEdit(false)
       setError('')
     } catch {
@@ -80,10 +92,14 @@ function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSe
     const fallback = nearDistanceRecord(race, horse)
     const distanceTop3 = stats?.distance_top3 ?? fallback?.similarTopThree
     const distanceRuns = stats?.distance_runs ?? fallback?.similarRuns
+    const odds = snapshot?.odds[horse.no]
+    const previousOdds = previousSnapshot?.odds[horse.no]
+    const oddsChange = odds != null && previousOdds > 0 ? (odds / previousOdds - 1) * 100 : null
     const values = {
       rank: horse.predictedFavRank,
       number: Number(horse.no),
-      odds: snapshot?.odds[horse.no],
+      odds,
+      oddsChange,
       idm: stats?.idm,
       ability: horse.abilityScore,
       distance: recordRate(distanceTop3, distanceRuns),
@@ -114,17 +130,23 @@ function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSe
         {rows.length > 0 && <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-3 text-xs">
             <span className="text-slate-600">{snapshot ? `単勝オッズ ${snapshot.time}時点（日本時間・手入力）` : '単勝オッズは未入力です。'}</span>
+            {history.length > 1 && <label>表示時刻
+              <select value={snapshot.time} onChange={e => { setSelectedTime(e.target.value); setEdit(false) }}
+                className="ml-1 rounded border border-slate-300 bg-white px-2 py-1">
+                {history.map(item => <option key={item.time} value={item.time}>{item.time}</option>)}
+              </select>
+            </label>}
+            {previousSnapshot && <span className="text-slate-600">変化率は {previousSnapshot.time} 時点と比較</span>}
             <button type="button" className="font-semibold text-[#2B6CB0] hover:underline" aria-expanded={edit}
-              onClick={() => { setEdit(!edit); setError('') }}>{edit ? '閉じる' : '単勝オッズを入力'}</button>
+              onClick={() => { setEdit(!edit); setError('') }}>{edit ? '閉じる' : '単勝オッズを記録'}</button>
           </div>
           {edit && <form onSubmit={saveOdds} className="max-w-md space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
             <label className="block">観測時刻（日本時間）
-              <input name="time" type="time" required defaultValue={snapshot?.time}
+              <input name="time" type="time" required
                 className="ml-2 rounded border border-slate-300 bg-white px-2 py-1" />
             </label>
             <label className="block">馬番と単勝オッズ（1頭につき1行）
               <textarea name="odds" required rows={4} placeholder={'7 4.6\n15 9.9'}
-                defaultValue={Object.entries(snapshot?.odds ?? {}).map(([number, odds]) => `${number} ${odds}`).join('\n')}
                 className="mt-1 block w-full rounded border border-slate-300 bg-white p-2" />
             </label>
             {error && <p role="alert" className="text-red-700">{error}</p>}
@@ -164,6 +186,9 @@ function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSe
                   <td className="px-4 py-3"><button type="button" onClick={() => onSelectHorse(horse.id)}
                     className="font-semibold text-[#2B6CB0] hover:underline">{horse.name}</button></td>
                   <td className="px-4 py-3 tabular-nums">{horse.values.odds == null ? '—' : horse.values.odds.toFixed(1)}</td>
+                  <td className="px-4 py-3 tabular-nums">
+                    {horse.values.oddsChange == null ? '—' : oddsChangeFormat.format(horse.values.oddsChange / 100)}
+                  </td>
                   <td className="px-4 py-3 tabular-nums">{stats?.idm == null ? '—' : Number(stats.idm).toFixed(1)}</td>
                   <td className="px-4 py-3 tabular-nums">{horse.abilityScore ?? '—'}</td>
                   <td className="px-4 py-3">{recordText(horse.distanceTop3, horse.distanceRuns)}</td>
