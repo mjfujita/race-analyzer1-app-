@@ -18,3 +18,16 @@ export function reviewTicket({ baseline, earlier, current, lower, probability })
     qualifies: expectedReturn !== null && expectedReturn > 1,
   }
 }
+
+// Half Kelly per candidate, scaled down together if the allocation exceeds the cap.
+export function allocateTickets(tickets, budget) {
+  const fractions = tickets.map(ticket => {
+    if (!ticket.qualifies || !ticket.pair.trim() || !ticket.reason.trim()) return 0
+    return (ticket.expectedReturn - 1) / (2 * (Number(ticket.lower) - 1))
+  })
+  const scale = Math.max(1, fractions.reduce((sum, fraction) => sum + fraction, 0))
+  return tickets.map((ticket, index) => ({
+    ...ticket,
+    stake: String(Math.floor(budget * fractions[index] / scale / 100) * 100),
+  }))
+}
