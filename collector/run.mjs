@@ -37,13 +37,13 @@ export async function companionAction(config,body,request=globalThis.fetch){
   const data=await response.text();if(data.length>3000000)throw new Error('同期応答が上限を超えました。')
   return JSON.parse(data)
 }
-async function synchronize(bundle,config){
+async function synchronize(bundle,config,timeoutMs=30000){
   if(!config.syncToken) return {state:'sync_not_configured',chunks:0}
   const url=new URL(config.syncUrl??'https://race-analyzer-app.vercel.app/api/companion')
   if(url.protocol!=='https:'||url.username||url.password)throw new Error('同期先は認証情報を含まないHTTPS URLにしてください。')
   const batches=chunkBundles(bundle)
-  for(const body of batches){const response=await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${config.syncToken}`,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000),redirect:'error'})
-    if(!response.ok)throw Object.assign(new Error('同期に失敗しました。'),{code:'sync_failed'})
+  for(const body of batches){const response=await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${config.syncToken}`,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(timeoutMs),redirect:'error'})
+    if(!response.ok)throw Object.assign(new Error('同期に失敗しました。'),{code:'sync_failed',httpStatus:response.status})
   }
   return {state:'synced',chunks:batches.length}
 }
@@ -63,6 +63,16 @@ export async function synchronizePending(bundle,config,state,{changed=false,now=
     await persistState(state)
   }
   return result
+}
+export async function reportSyncFailure(bundle,config,status,state,error,send=synchronize){
+  const failure={...redactedFailure(error),code:'sync_failed'}
+  if(Number.isInteger(error.httpStatus)&&error.httpStatus>=400&&error.httpStatus<=599)failure.httpStatus=error.httpStatus
+  status.failures.push(failure)
+  status.state=status.failures.some(f=>f.code==='auth_required')?'auth_required':'partial'
+  status.sync={state:'failed',...failure}
+  status.lastFullSyncAt=state.lastFullSyncAt??null
+  // A status heartbeat never clears the pending data bit or acknowledges a capture command.
+  try{await send({...bundle,races:[],models:null,status},config,5000)}catch{/* Offline UI detects the stale heartbeat; local failure remains available. */}
 }
 async function downloadPublishedZips(page,config,date,state){
   if(config['no-download'])return 0
@@ -154,14 +164,18 @@ async function cycle(page,config,state,force=false){
   const status={state:failures.some(f=>f.code==='auth_required')?'auth_required':failures.length?'partial':jobs.length?'ready':'waiting',
     lastRunAt:new Date().toISOString(),source:'local-jrdb-companion',date,scheduledRaces:races.length,capturedRaces:captures.length,addedRecords:added,
     downloadedFiles:downloads,ledgerRecords,failures,scheduledOffsetsMinutes:CAPTURE_OFFSETS,decisionMinutesBefore:10,
-    nextDueAt:Number.isFinite(nextDue)?new Date(nextDue).toISOString():null}
+    nextDueAt:Number.isFinite(nextDue)?new Date(nextDue).toISOString():null,lastFullSyncAt:state.lastFullSyncAt??null}
   await saveJson(join(config.stateDir,'status.json'),status)
   await python(['-m','collector.persist','bundle','--source-db',config.sourceDb,'--output',config.output,'--date',date,'--status',join(config.stateDir,'status.json')])
   if(!config['no-sync']){
     try{
       status.sync=await synchronizePending(await json(join(config.output,'companion.bundle.json')),config,state,
         {changed:Boolean(force||added||downloads||ledgerRecords||modelUpdated),persistState:value=>saveJson(join(config.stateDir,'state.json'),value)})
-    }catch(error){status.sync=redactedFailure(error)}
+      if(status.sync.state==='synced'&&status.lastFullSyncAt!==state.lastFullSyncAt){
+        status.lastFullSyncAt=state.lastFullSyncAt??null
+        try{await synchronize({...await json(join(config.output,'companion.bundle.json')),races:[],models:null,status},config,5000)}catch{/* Data success remains valid even if its status heartbeat is delayed. */}
+      }
+    }catch(error){await reportSyncFailure(await json(join(config.output,'companion.bundle.json')),config,status,state,error)}
     for(const ack of acknowledgements){
       if(ack.status==='completed'&&status.sync.state!=='synced')continue
       try{await companionAction(config,{action:'ack-command',...ack})}catch(error){failures.push(redactedFailure(error))}

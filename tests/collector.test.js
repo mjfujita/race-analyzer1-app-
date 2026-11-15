@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { safeJrdbUrl, publicSource, postTimestamp, dueCaptures, parseVisibleRace, parseHistoryTable } from '../collector/capture.mjs'
-import { chunkBundles, companionAction, synchronizePending } from '../collector/run.mjs'
+import { chunkBundles, companionAction, synchronizePending, reportSyncFailure } from '../collector/run.mjs'
 const race={raceId:'08265411',raceDate:'20261115',postTime:'1540',fieldSize:2,horses:[{horseNo:1,name:'架空馬A'},{horseNo:2,name:'架空馬B'}]}
 const at='2026-11-15T06:29:00.000Z'
 const rows=[1,2].map(no=>({umaban:String(no),bamei9m:`架空馬${no===1?'A':'B'}`,idm:'△60',sirusi_padock:'◎2.5',tanodds:no===1?'3.0':'4.5',kijtanodds:'4.0',fukodds:'1.2',bataiju:'480',zogendsp:'+ 2',se_tyakujun:''}))
@@ -97,4 +97,16 @@ test('failed full sync remains pending and is retried even when no new observati
   assert.equal(result.state,'unchanged')
   await synchronizePending(bundle,{},state,{changed:true,now:'2026-01-01T00:02:00Z',send:async body=>{assert.equal(body.races.length,0);assert.equal(body.models.runtimeModel.id,'new-model');return{state:'synced'}}})
   await synchronizePending({...bundle,races:[{raceId:'one',context:{weather:'雨'}}]}, {},state,{changed:true,now:'2026-01-01T00:03:00Z',send:async body=>{assert.equal(body.races.length,1);return{state:'synced'}}})
+})
+
+test('sync failure publishes only safe failure status and preserves pending data after heartbeat success',async()=>{
+  const state={pendingFullSync:true,lastFullSyncAt:'2026-01-01T00:00:00Z'},status={state:'waiting',failures:[]}
+  await reportSyncFailure({races:[{raceId:'one'}],models:{runtimeModel:{id:'one'}}},{},status,state,Object.assign(new Error('private response is not exposed'),{code:'sync_failed',httpStatus:400}),async body=>{
+    assert.deepEqual(body.races,[]);assert.equal(body.models,null);assert.equal(body.status.state,'partial')
+    assert.equal(body.status.sync.state,'failed');assert.equal(body.status.sync.httpStatus,400)
+    assert.equal(JSON.stringify(body).includes('private response'),false)
+    return{state:'synced'}
+  })
+  assert.equal(state.pendingFullSync,true);assert.equal(state.lastFullSyncAt,'2026-01-01T00:00:00Z')
+  assert.equal(status.sync.state,'failed');assert.equal(status.lastFullSyncAt,state.lastFullSyncAt)
 })

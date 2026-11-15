@@ -5,13 +5,26 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from collector.persist import persist
+from unittest.mock import patch
+from collector.persist import persist, bundle
 from collector.prepare import extract_paci
-from pipeline.ingest import validate_snapshot
+from pipeline.ingest import validate_snapshot, open_store, append_observations
 from pipeline.ledger import validate_ledger
 from pipeline.test_pipeline import snapshot_fixture, ledger_fixture
 
 class CaptureTests(unittest.TestCase):
+    def test_pulled_ledgers_stay_in_research_and_are_not_echoed_as_observations(self):
+        with tempfile.TemporaryDirectory() as temp:
+            race={'raceId':'05261101','raceDate':'20261115','postTime':'1540','fieldSize':2,'placeCode':'05','raceNo':1,'horses':[],'statistics':[]}
+            with open_store(Path(temp)/'market.sqlite') as db:
+                append_observations(db,[('TYB',{'raceId':race['raceId'],'raceDate':race['raceDate']},'source','official'),
+                                        ('LEDGER',{'raceId':race['raceId'],'raceDate':race['raceDate'],'ledger':{}},'owner-ledger','owner')])
+            with patch('collector.persist.catalog',return_value=[race]):
+                exported=bundle('unused',temp,'20261115',{'lastRunAt':'2026-11-15T07:00:00Z'})
+            self.assertEqual([e['kind'] for e in exported['races'][0]['observations']],['TYB'])
+            with sqlite3.connect(Path(temp)/'market.sqlite') as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM observations WHERE kind='LEDGER'").fetchone()[0],1)
+
     def test_visible_snapshot_needs_explicit_available_at_evidence(self):
         s=snapshot_fixture();s['sourcePublishedAt']=None
         with self.assertRaises(ValueError):validate_snapshot(s,[1,2])

@@ -80,7 +80,8 @@ def bundle(source, output, date, status):
                                'cancelled':next((h.get('cancelled',False) for h in (context or {}).get('horses',[]) if h['horseNo']==horse['horseNo']),False)} for horse in race['horses']],
                     'statistics':race['statistics']},
             'snapshots':[event['payload'] for event in events if event['kind']=='ODDS'],
-            'observations':[event for event in events if event['kind']!='ODDS'][-2000:],
+            # Owner ledgers are pulled into the research store, never echoed back as source observations.
+            'observations':[event for event in events if event['kind'] in ('TYB','HJC','LIVE','LIVE_RACE','RESULT')][-2000:],
             'context':context,'results':context.get('results',[]) if context else []})
     def model(name):
         path=output/name
