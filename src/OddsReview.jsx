@@ -21,9 +21,11 @@ export default function OddsReview({ raceInfo, userId }) {
     }
   })
   const [observation, setObservation] = useState('')
+  const [revisions, setRevisions] = useState({})
+  const [revisionReason, setRevisionReason] = useState('')
   const [storageError, setStorageError] = useState('')
   const { budget = '10000', tickets = [newTicket(1)], oddsTime = '', observations = [],
-    final = null, payouts = {} } = record
+    final = null, payouts = {}, changes = [] } = record
   const save = (patch) => {
     const next = { ...record, ...patch }
     try {
@@ -47,7 +49,28 @@ export default function OddsReview({ raceInfo, userId }) {
   const total = staked.reduce((sum, ticket) => sum + Number(ticket.stake), 0)
   const invalid = staked.some(ticket => Number(ticket.stake) < 100 || Number(ticket.stake) % 100 !== 0
     || !ticket.qualifies || !ticket.pair.trim() || !ticket.reason.trim())
-  const canFinalize = budgetValid && !invalid && total <= Number(budget) && (total === 0 || oddsTime)
+  const revisedTickets = reviewed.map(ticket => {
+    if (!Object.hasOwn(revisions, ticket.id)) return ticket
+    const revised = { ...ticket, probability: revisions[ticket.id] }
+    return { ...revised, ...reviewTicket(revised) }
+  })
+  const revisionValid = Object.keys(revisions).length > 0 && revisedTickets.every(ticket =>
+    !Object.hasOwn(revisions, ticket.id) || (ticket.pair.trim() && ticket.reason.trim() && ticket.breakEven !== null))
+  const proposal = revisionValid && budgetValid && oddsTime
+    ? allocateTickets(revisedTickets, Number(budget))
+    : null
+  const comparison = proposal?.flatMap((ticket, index) => {
+    const before = reviewed[index]
+    if (Number(before.probability) === Number(ticket.probability) && Number(before.stake) === Number(ticket.stake)) return []
+    return [{
+      id: ticket.id, type: ticket.type, pair: ticket.pair,
+      probabilityBefore: before.breakEven === null ? null : Number(before.probability) / 100,
+      probabilityAfter: ticket.breakEven === null ? null : Number(ticket.probability) / 100,
+      returnBefore: before.expectedReturn, returnAfter: ticket.expectedReturn,
+      stakeBefore: Number(before.stake), stakeAfter: Number(ticket.stake),
+    }]
+  }) ?? []
+  const canFinalize = Object.keys(revisions).length === 0 && budgetValid && !invalid && total <= Number(budget) && (total === 0 || oddsTime)
   const settled = final?.tickets.every(ticket => payouts[ticket.id] !== undefined && payouts[ticket.id] !== ''
     && Number.isSafeInteger(Number(payouts[ticket.id])) && Number(payouts[ticket.id]) >= 0)
   const returned = settled ? final.tickets.reduce((sum, ticket) =>
@@ -100,6 +123,51 @@ export default function OddsReview({ raceInfo, userId }) {
       <button type="button" className="ml-2 rounded border px-3 py-2 text-sm disabled:opacity-50"
         disabled={!budgetValid || !oddsTime}
         onClick={() => setTickets(allocateTickets(reviewed, Number(budget)))}>自動配分（試算）</button>
+      {!final && observations.length > 0 && <section className="space-y-3 rounded border border-slate-200 p-3 text-sm">
+        <h3 className="font-semibold">会場メモを踏まえた再評価</h3>
+        <p className="text-slate-600">最新の会場メモを根拠に、見直した候補だけに新しい的中率を入力します。反映前に全候補の配分を比較できます。</p>
+        <p className="whitespace-pre-wrap break-words rounded bg-slate-50 p-2">{observations.at(-1).text}</p>
+        <label className="block">評価を変更する理由
+          <textarea className={input} value={revisionReason} onChange={event => setRevisionReason(event.target.value)} />
+        </label>
+        {reviewed.filter(ticket => ticket.pair.trim() && ticket.reason.trim()).map(ticket =>
+          <label key={ticket.id} className="block">
+            {ticket.type} {ticket.pair} ／ 現在 {ticket.breakEven === null ? '未入力' : percent(Number(ticket.probability) / 100)}
+            <input className={`${input} ml-2 max-w-32`} type="number" min="0" max="100" step="any"
+              placeholder="変更後 (%)" value={revisions[ticket.id] ?? ''}
+              onChange={event => {
+                const next = { ...revisions }
+                if (event.target.value === '') delete next[ticket.id]
+                else next[ticket.id] = event.target.value
+                setRevisions(next)
+              }} />
+          </label>
+        )}
+        {comparison.map(item => <p key={item.id} className="tabular-nums">
+          {item.type} {item.pair} ／ 的中率 {percent(item.probabilityBefore)} → {percent(item.probabilityAfter)}
+          {' ／ 期待回収率 '}{percent(item.returnBefore)} → {percent(item.returnAfter)}
+          {' ／ 配分 '}{item.stakeBefore.toLocaleString()} → {item.stakeAfter.toLocaleString()}円
+        </p>)}
+        <button type="button" className="rounded border px-3 py-2 disabled:opacity-50"
+          disabled={!proposal || comparison.length === 0 || !revisionReason.trim()}
+          onClick={() => {
+            const change = { at: new Date().toISOString(), observation: observations.at(-1),
+              reason: revisionReason.trim(), budget: Number(budget), oddsTime, comparison }
+            if (save({ tickets: proposal, changes: [...changes, change] })) {
+              setRevisions({})
+              setRevisionReason('')
+            }
+          }}>再評価と配分を反映</button>
+        <button type="button" className="ml-2 rounded border px-3 py-2"
+          onClick={() => { setRevisions({}); setRevisionReason('') }}>入力をクリア</button>
+      </section>}
+      {changes.length > 0 && <details className="rounded border p-3 text-sm">
+        <summary>再評価の履歴（{changes.length}件）</summary>
+        {changes.map(change => <div key={change.at} className="mt-2 border-t pt-2">
+          <p className="whitespace-pre-wrap break-words">{change.reason}</p>
+          {change.comparison.map(item => <p key={item.id}>{item.type} {item.pair} ／ {percent(item.probabilityBefore)} → {percent(item.probabilityAfter)} ／ {item.stakeBefore} → {item.stakeAfter}円</p>)}
+        </div>)}
+      </details>}
       <p className="text-xs text-slate-500">期待回収率100%超の候補に、1点ごとの推定優位性に応じて配分します。買い目間の相関は未反映です。</p>
       <p className="text-sm font-semibold" role="status">
         {!budgetValid || total > Number(budget) ? '予算上限と配分を確認してください。'
@@ -110,7 +178,7 @@ export default function OddsReview({ raceInfo, userId }) {
       </p>
       <button type="button" disabled={!canFinalize} className="rounded bg-[#0B2545] px-3 py-2 text-sm text-white disabled:opacity-50"
         onClick={() => save({ final: { at: new Date().toISOString(), budget: Number(budget),
-          tickets: staked, candidates: reviewed, oddsTime, observations, total, version: 1 } })}>
+          tickets: staked, candidates: reviewed, oddsTime, observations, changes, total, version: 2 } })}>
         {total > 0 ? '買い目と予算を確定' : '見送りを確定'}
       </button>
       </fieldset>
