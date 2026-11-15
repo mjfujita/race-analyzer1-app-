@@ -13,6 +13,17 @@ export class ApiError extends Error {
 }
 const invalid = message => { throw new ApiError(400, 'invalid_input', message) }
 const conflict = message => { throw new ApiError(409, 'record_conflict', message) }
+async function forEachBounded(items, limit, apply) {
+  let next = 0, failure
+  // Stop scheduling after failure, but drain every already-started operation before returning.
+  await Promise.allSettled(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (!failure && next < items.length) {
+      const item = items[next++]
+      try { await apply(item) } catch (error) { failure ??= error }
+    }
+  }))
+  if (failure) throw failure
+}
 export function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (plain(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`
@@ -254,18 +265,25 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     const receivedAt = new Date(now()).toISOString(), hash = contentHash(bundle)
     // Store the full immutable input before publishing its race records and metadata.
     await immutable(`${prefix}/bundles/${hash}.json`, { schemaVersion: 1, ownerId, bundle })
-    for (const race of bundle.races) {
-      // Atomic identity slots prevent concurrent collectors from publishing different data under one ID.
-      for (const snapshot of race.snapshots) await immutable(`${racePrefix(race.raceId, race.raceDate)}/snapshot-ids/${keyHash(snapshot.id)}.json`, snapshot)
-      for (const observation of race.observations) await immutable(`${racePrefix(race.raceId, race.raceDate)}/observation-ids/${keyHash(observation.eventId)}.json`, observation)
-      const raceRecord = { schemaVersion: 1, ownerId, generatedAt: bundle.generatedAt, race }
-      const savedRace = await store.putImmutable(`${racePrefix(race.raceId, race.raceDate)}/observations/${contentHash(race)}.json`, raceRecord)
-      // Heartbeats can republish unchanged observations at a later bundle time; keep the original version.
-      if (!savedRace.created && (savedRace.existing?.ownerId !== ownerId || contentHash(savedRace.existing?.race) !== contentHash(race))) conflict('保存済み観測の内容が一致しません。')
+    await forEachBounded(bundle.races, 4, async race => {
+      const base = racePrefix(race.raceId, race.raceDate), raceHash = contentHash(race)
+      const path = `${base}/observations/${raceHash}.json`
+      const existing = await store.get(path)
+      if (existing && (existing.ownerId !== ownerId || contentHash(existing.race) !== raceHash)) conflict('保存済み観測の内容が一致しません。')
+      if (!existing) {
+        // At most four races × four identities: retain create-only conflict checks without serial network latency.
+        const identities = [...race.snapshots.map(value => ({ path: `${base}/snapshot-ids/${keyHash(value.id)}.json`, value })),
+          ...race.observations.map(value => ({ path: `${base}/observation-ids/${keyHash(value.eventId)}.json`, value }))]
+        await forEachBounded(identities, 4, item => immutable(item.path, item.value))
+        const raceRecord = { schemaVersion: 1, ownerId, generatedAt: bundle.generatedAt, race }
+        const savedRace = await store.putImmutable(path, raceRecord)
+        // A published immutable race has already passed every identity check. Identical retries can reuse it.
+        if (!savedRace.created && (savedRace.existing?.ownerId !== ownerId || contentHash(savedRace.existing?.race) !== raceHash)) conflict('保存済み観測の内容が一致しません。')
+      }
       const indexPath = `${prefix}/race-index/${race.raceDate}/${race.raceId}.json`
       // The index only records discovery. Changing metadata comes from the latest race payload.
       await store.putImmutable(indexPath, raceMeta(race))
-    }
+    })
     const prior = await latestMeta()
     const meta = { schemaVersion: 1, ownerId, generatedAt: bundle.generatedAt, receivedAt, status: bundle.status,
       models: { abilityModel: bundle.models.abilityModel ?? prior?.models?.abilityModel ?? null,

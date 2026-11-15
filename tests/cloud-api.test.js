@@ -192,6 +192,63 @@ test('later heartbeats can resend identical race data without creating duplicate
   assert.equal(result.models.abilityModel.id, 'test-model')
 })
 
+test('bundle ingestion bounds network concurrency and reuses fully verified races on retry', async () => {
+  const store = memoryStore(), original = store.putImmutable, delay = 12
+  let active = 0, peak = 0, identityWrites = 0, maxActiveRaces = 0, maxPerRace = 0
+  const activeRaces = new Map()
+  store.putImmutable = async (path, value) => {
+    const raceId = path.match(/\/races\/\d{8}\/([^/]+)\/(?:snapshot-ids|observation-ids)\//)?.[1]
+    active++; peak = Math.max(peak, active)
+    if (raceId) {
+      identityWrites++
+      activeRaces.set(raceId, (activeRaces.get(raceId) ?? 0) + 1)
+      maxActiveRaces = Math.max(maxActiveRaces, activeRaces.size)
+      maxPerRace = Math.max(maxPerRace, activeRaces.get(raceId))
+    }
+    try { await new Promise(resolve => setTimeout(resolve, delay)); return await original(path, value) }
+    finally {
+      active--
+      if (raceId) { const count = activeRaces.get(raceId) - 1; if (count) activeRaces.set(raceId, count); else activeRaces.delete(raceId) }
+    }
+  }
+  const input = bundle(), template = clone(input.races[0])
+  input.races = Array.from({ length: 8 }, (_, index) => {
+    const raceId = `race-${index}`, race = clone(template)
+    race.raceId = raceId; race.race.id = raceId; race.snapshots[0].raceId = raceId
+    race.observations = Array.from({ length: 12 }, (_, i) => ({ ...clone(template.observations[0]), eventId: `live-${i}`, payload: { ...template.observations[0].payload, raceId } }))
+    return race
+  })
+  const service = createCompanionService({ store, ownerId, now: () => Date.parse(at) + 1000 })
+  const start = performance.now()
+  await service.ingestBundle(input)
+  const elapsed = performance.now() - start
+  assert.equal(active, 0); assert.equal(maxActiveRaces, 4); assert.equal(maxPerRace, 4)
+  assert.ok(peak <= 16 && peak >= 8, `peak=${peak}`)
+  assert.ok(elapsed < (8 * 15 + 2) * delay * .65, `parallel ingestion took ${elapsed}ms`)
+  const writes = identityWrites
+  await service.ingestBundle(input)
+  assert.equal(identityWrites, writes, 'fully published immutable races do not redo identity requests')
+})
+
+test('parallel ingestion drains in-flight writes before reporting failure and retries the valid partial state', async () => {
+  const store = memoryStore(), original = store.putImmutable
+  let active = 0, fail = true
+  store.putImmutable = async (path, value) => {
+    active++
+    try {
+      await new Promise(resolve => setTimeout(resolve, 5))
+      if (path.includes('/observation-ids/') && fail) { fail = false; throw new ApiError(503, 'transport', 'Temporary failure') }
+      return await original(path, value)
+    } finally { active-- }
+  }
+  const service = createCompanionService({ store, ownerId, now: () => Date.parse(at) + 1000 })
+  await assert.rejects(service.ingestBundle(bundle()), /Temporary/)
+  assert.equal(active, 0, 'no write continues after the failed request completes')
+  assert.equal((await service.get(scope)).observations.length, 0)
+  await service.ingestBundle(bundle())
+  assert.equal((await service.get(scope)).observations.length, 1)
+})
+
 test('oversized and malformed bodies fail without writing or leaking internal exceptions', async () => {
   const { handler } = setup()
   assert.equal((await request(handler, { method: 'POST', body: '{}', headers: { 'content-length': String(MAX_BODY_BYTES + 1) } })).status, 413)

@@ -66,6 +66,10 @@ test('sync batches stay bounded and oversized races fail without truncating immu
   const bundle={schemaVersion:1,kind:'race-companion-bundle',races:[{raceId:'one',text:'a'.repeat(100)},{raceId:'two',text:'b'.repeat(100)}]}
   assert.equal(chunkBundles(bundle,250).length,2)
   assert.throws(()=>chunkBundles(bundle,100))
+  assert.equal(chunkBundles({...bundle,races:Array.from({length:9},(_,i)=>({raceId:String(i)}))}).length,3)
+  const many={raceId:'many',observations:Array.from({length:120},(_,i)=>({id:i}))}
+  const chunks=chunkBundles({...bundle,races:[{raceId:'a',observations:[1]},many,{raceId:'b'}]})
+  assert.equal(chunks.length,3);assert.equal(chunks[1].races[0].observations.length,120)
 })
 
 
@@ -91,4 +95,6 @@ test('failed full sync remains pending and is retried even when no new observati
   assert.equal(sent.races.length,1);assert.equal(sent.models.runtimeModel.id,'new-model');assert.equal(state.pendingFullSync,false)
   const result=await synchronizePending(bundle,{},state,{changed:false,now:'2026-01-01T00:01:00Z',send:async()=>{throw new Error('unexpected')}})
   assert.equal(result.state,'unchanged')
+  await synchronizePending(bundle,{},state,{changed:true,now:'2026-01-01T00:02:00Z',send:async body=>{assert.equal(body.races.length,0);assert.equal(body.models.runtimeModel.id,'new-model');return{state:'synced'}}})
+  await synchronizePending({...bundle,races:[{raceId:'one',context:{weather:'雨'}}]}, {},state,{changed:true,now:'2026-01-01T00:03:00Z',send:async body=>{assert.equal(body.races.length,1);return{state:'synced'}}})
 })

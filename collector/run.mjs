@@ -19,10 +19,12 @@ function redactedFailure(error){return {code:['auth_required','wrong_race','pipe
 
 export function chunkBundles(bundle,limit=2700000){
   const base={...bundle,races:[]},chunks=[];let current={...base,races:[]}
+  const events=race=>(race.snapshots?.length??0)+(race.observations?.length??0)
+  let eventCount=0
   for(const race of bundle.races){
     if(Buffer.byteLength(JSON.stringify({...base,races:[race]}))>limit)throw new Error('1レースの同期データが上限を超えました。ローカル記録は保持されています。')
-    if(current.races.length&&Buffer.byteLength(JSON.stringify({...current,races:[...current.races,race]}))>limit){chunks.push(current);current={...base,races:[]}}
-    current.races.push(race)
+    if(current.races.length&&(current.races.length>=4||eventCount+events(race)>100||Buffer.byteLength(JSON.stringify({...current,races:[...current.races,race]}))>limit)){chunks.push(current);current={...base,races:[]};eventCount=0}
+    current.races.push(race);eventCount+=events(race)
   }
   if(current.races.length||!chunks.length)chunks.push(current)
   return chunks
@@ -50,11 +52,14 @@ export async function synchronizePending(bundle,config,state,{changed=false,now=
   await persistState(state)
   const full=state.pendingFullSync
   if(!full&&Date.parse(now)-Date.parse(state.lastSyncAt??'1970-01-01')<5*60000)return {state:'unchanged'}
+  const raceHashes=Object.fromEntries(bundle.races.map(race=>[`${race.raceDate}:${race.raceId}`,hash(race)]))
+  // Skip entire unchanged races after a successful sync. Changed races retain all immutable evidence.
+  const changedRaces=bundle.races.filter(race=>state.raceHashes?.[`${race.raceDate}:${race.raceId}`]!==raceHashes[`${race.raceDate}:${race.raceId}`])
   // The pending bit is durable before network I/O and clears only after a complete successful batch.
-  const result=await send(full?bundle:{...bundle,races:[],models:null},config)
+  const result=await send(full?{...bundle,races:changedRaces}:{...bundle,races:[],models:null},config)
   if(result.state==='synced'){
     state.lastSyncAt=now
-    if(full){state.pendingFullSync=false;state.lastFullSyncAt=now}
+    if(full){state.pendingFullSync=false;state.lastFullSyncAt=now;state.raceHashes={...state.raceHashes,...raceHashes}}
     await persistState(state)
   }
   return result
