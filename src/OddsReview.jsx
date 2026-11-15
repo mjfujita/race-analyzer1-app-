@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { buildInitialForecast } from './initialForecast.js'
 import { allocateTickets, reviewTicket } from './oddsReview.js'
 
 const oddsFields = [
@@ -11,7 +12,7 @@ const input = 'min-w-0 w-full rounded border border-slate-300 p-2'
 const numeric = (value, digits = 2) => value === null ? '—' : value.toFixed(digits)
 const percent = (value) => value === null ? '—' : `${(100 * value).toFixed(1)}%`
 
-export default function OddsReview({ raceInfo, userId }) {
+export default function OddsReview({ raceInfo, userId, horses = [] }) {
   const storageKey = `race-review:v1:${userId}:${raceInfo?.raceDate}:${raceInfo?.id}`
   const [record, setRecord] = useState(() => {
     try {
@@ -25,7 +26,7 @@ export default function OddsReview({ raceInfo, userId }) {
   const [revisionReason, setRevisionReason] = useState('')
   const [storageError, setStorageError] = useState('')
   const { budget = '10000', tickets = [newTicket(1)], oddsTime = '', observations = [],
-    final = null, payouts = {}, changes = [] } = record
+    final = null, payouts = {}, changes = [], initialForecast = null } = record
   const save = (patch) => {
     const next = { ...record, ...patch }
     try {
@@ -77,6 +78,20 @@ export default function OddsReview({ raceInfo, userId }) {
     sum + Number(payouts[ticket.id]) * Number(ticket.stake) / 100, 0) : null
   if (!raceInfo?.id) return <p>レース一覧から対象レースを選んでください。</p>
 
+  const initial = initialForecast ?? buildInitialForecast(raceInfo, horses)
+  const missingComparisons = initial.comparison.filter(candidate => !tickets.some(ticket =>
+    candidate.type === ticket.type && candidate.pair === ticket.pair.trim()))
+  const initialSnapshot = () => initialForecast ?? { ...initial, savedAt: new Date().toISOString(), version: 1 }
+  const saveInitial = () => save({ initialForecast: initialSnapshot() })
+  const addComparisons = () => {
+    const start = tickets.reduce((last, ticket) => Math.max(last, ticket.id), 0)
+    const existing = tickets.filter(ticket => ticket.pair.trim() || ticket.reason.trim()
+      || oddsFields.some(([key]) => ticket[key] !== ''))
+    save({ initialForecast: initialSnapshot(), tickets: [...existing, ...missingComparisons.map((candidate, index) => ({
+      ...newTicket(start + index + 1), ...candidate,
+    }))] })
+  }
+
   return (
     <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
       <h2 className="text-lg font-bold">買い目の回収率比較</h2>
@@ -84,6 +99,28 @@ export default function OddsReview({ raceInfo, userId }) {
       <p className="text-sm text-slate-600">発走10分前のオッズと、根拠のある的中率・締切オッズ下限を入力してください。ワイドは表示レンジの下限を比較に使います。</p>
       {storageError && <p role="alert" className="text-sm text-rose-700">{storageError}</p>}
       <p className="text-xs text-slate-500">記録はこのブラウザに保存します。</p>
+      <section className="space-y-3 rounded border border-slate-200 p-3 text-sm">
+        <h3 className="font-semibold">初回予想（レースデータ）</h3>
+        {initialForecast && <p className="text-slate-600">保存時刻 {new Date(initialForecast.savedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</p>}
+        {initial.candidates.length === 0 ? <p>このレースのJRDB IDM順位が未取得です。</p> : <>
+          <p className="text-slate-600">JRDBの出走時IDM順位から能力候補を抽出。距離実績は同じ馬場種別の前後200mの近走を参照します。</p>
+          <div className="overflow-x-auto"><table className="w-full text-left">
+            <thead className="bg-slate-50"><tr><th className="p-2">評価</th><th className="p-2">IDM順位</th><th className="p-2">馬番・馬名</th><th className="p-2">近い距離での3着内／出走数</th></tr></thead>
+            <tbody>{initial.candidates.map(horse => <tr key={horse.no} className="border-t">
+              <td className="p-2">{horse.rank === initial.candidates[0].rank ? '軸候補' : '相手候補'}</td><td className="p-2">{horse.rank}位</td><td className="p-2">{horse.no} {horse.name}</td>
+              <td className="p-2">{horse.similarRuns ? `${horse.similarTopThree}／${horse.similarRuns}` : '該当データなし'}</td>
+            </tr>)}</tbody>
+          </table></div>
+          <p><strong>レースの見立て </strong>{initial.scenario || initial.scenarioTags.join('・') || '既存のシナリオデータなし'}</p>
+          <p><strong>オッズ比較候補 </strong>{initial.comparison.map(candidate => `${candidate.type} ${candidate.pair}`).join(' ／ ') || '単独の軸候補を決められないため保留'}</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={Boolean(initialForecast || final)} className="rounded border px-3 py-2 disabled:opacity-50"
+              onClick={saveInitial}>初回予想を保存</button>
+            <button type="button" disabled={Boolean(final) || missingComparisons.length === 0} className="rounded border px-3 py-2 disabled:opacity-50"
+              onClick={addComparisons}>買い目比較に追加</button>
+          </div>
+        </>}
+      </section>
       <aside className="space-y-2 rounded border border-slate-200 p-3 text-sm">
         <h3 className="font-semibold">当日の会場メモ</h3>
         {observations.map(entry => <p key={entry.at} className="whitespace-pre-wrap break-words">
@@ -178,7 +215,7 @@ export default function OddsReview({ raceInfo, userId }) {
       </p>
       <button type="button" disabled={!canFinalize} className="rounded bg-[#0B2545] px-3 py-2 text-sm text-white disabled:opacity-50"
         onClick={() => save({ final: { at: new Date().toISOString(), budget: Number(budget),
-          tickets: staked, candidates: reviewed, oddsTime, observations, changes, total, version: 2 } })}>
+          tickets: staked, candidates: reviewed, oddsTime, observations, changes, initialForecast: initial.candidates.length ? initialSnapshot() : null, total, version: 3 } })}>
         {total > 0 ? '買い目と予算を確定' : '見送りを確定'}
       </button>
       </fieldset>

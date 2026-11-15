@@ -1942,7 +1942,7 @@ function MainApp({ session, onLogout }) {
           {tab === 'races' && <TabRaces />}
           {tab === 'analysis' && <TabAnalysis />}
           {tab === 'scenario' && <TabScenario />}
-          {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} userId={session.user.id} />}
+          {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}
           {tab === 'philosophy' && <TabPhilosophy />}
         </div>
       </main>
