@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronsUpDown, Gauge } from 'lucide-react'
+import { oddsStorageKey, readOddsHistory } from './oddsHistory.js'
 import { nearDistanceRecord } from './initialForecast.js'
 
 function recordText(topThree, runs) {
@@ -28,20 +29,13 @@ function recordRate(topThree, runs) {
 }
 
 export default function AbilityPage({ race, horses, statistics, userId, onSelectRace, onSelectHorse }) {
-  const storageKey = `race-ability-odds:v1:${userId}:${race?.raceDate}:${race?.id}`
+  const storageKey = oddsStorageKey(userId, race)
   return <AbilityTable key={storageKey} {...{ race, horses, statistics, storageKey, onSelectRace, onSelectHorse }} />
 }
 
 function AbilityTable({ race, horses, statistics, storageKey, onSelectRace, onSelectHorse }) {
   const [sort, setSort] = useState({ key: 'rank', ascending: true })
-  const [history, setHistory] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(storageKey))
-      return Array.isArray(saved) ? saved : saved?.time && saved?.odds ? [saved] : []
-    } catch {
-      return []
-    }
-  })
+  const [history, setHistory] = useState(() => readOddsHistory(storageKey))
   const [selectedTime, setSelectedTime] = useState('')
   const snapshotIndex = Math.max(0, history.findIndex(item => item.time === selectedTime))
   const snapshot = history[snapshotIndex]
