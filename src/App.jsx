@@ -1,3 +1,11 @@
+import FinalForecastPage from './FinalForecastPage.jsx'
+import WinOddsPage from './WinOddsPage.jsx'
+import PacePage from './PacePage.jsx'
+import AbilityPage from './AbilityPage.jsx'
+import OddsReview from './OddsReview.jsx'
+import AutomationPanel from './AutomationPanel.jsx'
+import { useCompanion } from './useCompanion.js'
+import { applyCloudData, fetchCloudRace, enrichCloudHorses, syncLedgerToCloud, requestRaceCapture } from './cloudStore.js'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ChevronRight, Search, Target, TrendingUp, AlertTriangle,
@@ -8,7 +16,7 @@ import {
 import { supabase } from './supabase'
 import { loadDb, queryAll, dbMeta } from './lib/db'
 
-const UI_VERSION = 'v0.2'
+const UI_VERSION = 'v0.4'
 const COMMIT_HASH = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'dev'
 
 // ================================================================
@@ -576,6 +584,21 @@ const dataApi = {
       ...r, place: PLACE_NAMES[r.place_code] || r.place_code, surface: SURFACE_NAMES[r.surface_code] || r.surface_code,
     }))
   },
+  getEarlierPace(db, raceKey) {
+    return queryAll(db, `
+      SELECT earlier.race_no, earlier.post_time, earlier.distance, earlier.field_size, earlier.surface_code
+      FROM jrdb_races target
+      JOIN jrdb_races earlier ON earlier.race_date = target.race_date
+        AND earlier.place_code = target.place_code AND earlier.surface_code IN ('1', '2')
+        AND earlier.race_no < target.race_no AND earlier.post_time < target.post_time
+      WHERE target.race_key = ? AND length(earlier.post_time) = 4 AND length(target.post_time) = 4
+      ORDER BY earlier.post_time
+    `, [raceKey])
+  },
+  getAbility(db, raceKey) {
+    const [table] = queryAll(db, "SELECT name FROM sqlite_master WHERE type='table' AND name='race_ability'")
+    return table ? queryAll(db, 'SELECT * FROM race_ability WHERE race_key = ?', [raceKey]) : []
+  },
   getEvaluation(db, raceKey) {
     const rows = queryAll(db, 'SELECT payload FROM race_evaluations WHERE race_key = ?', [raceKey])
     if (rows.length === 0) return null
@@ -612,7 +635,7 @@ function LoginPage({ onLogin }) {
             </div>
             <div className="text-left">
               <p className="text-[#0B2545] font-black text-lg leading-none">Race Condition Analyzer</p>
-              <p className="text-[10px] font-medium text-slate-500 tracking-wider mt-1">PROTOTYPE v0.2 / 個人専用</p>
+              <p className="text-[10px] font-medium text-slate-500 tracking-wider mt-1">レース分析 / 個人専用</p>
             </div>
           </div>
         </div>
@@ -679,6 +702,20 @@ function MainApp({ session, onLogout }) {
   const [horses, setHorses] = useState([])
   const [summary, setSummary] = useState({})
   const [currentRaceKey, setCurrentRaceKey] = useState(null)
+  const { sync, refresh: refreshCompanion } = useCompanion({ userId: session.user.id, race: raceInfo, horses })
+  const [captureMessage, setCaptureMessage] = useState('')
+  const [capturePending, setCapturePending] = useState(false)
+  async function requestLatestCapture() {
+    if (!raceInfo || capturePending) return
+    setCapturePending(true); setCaptureMessage('')
+    try { await requestRaceCapture(raceInfo); setCaptureMessage('最新取得を依頼しました。PCの取得ワーカーが順次確認し、この画面へ自動同期します。'); await refreshCompanion() }
+    catch (error) { setCaptureMessage(error.message) }
+    finally { setCapturePending(false) }
+  }
+  const cloudRace = String(sync.data?.race?.id ?? sync.data?.race?.raceId) === String(raceInfo?.id) && String(sync.data?.race?.raceDate).replaceAll('-', '') === String(raceInfo?.raceDate).replaceAll('-', '') ? sync.data?.race : null
+  const analysisRace = useMemo(() => raceInfo ? { ...raceInfo, surface: raceInfo.surface === 'ダ' ? 'ダート' : raceInfo.surface } : null, [raceInfo])
+  const analysisHorses = useMemo(() => enrichCloudHorses(horses, cloudRace), [horses, cloudRace])
+  const analysisStatistics = useMemo(() => cloudRace?.statistics?.length ? cloudRace.statistics : db && raceInfo ? dataApi.getAbility(db, raceInfo.id) : [], [cloudRace, db, raceInfo])
 
   // 本日の日付・一覧
   const [selectedDate, setSelectedDate] = useState(null)
@@ -752,10 +789,30 @@ function MainApp({ session, onLogout }) {
     try {
       const data = dataApi.getEvaluation(db, raceKey)
       if (!data) { alert('このレースには評価データがありません（evaluate_all.py の再実行が必要かも）'); return }
-      setRaceInfo(data.race); setHorses(data.horses); setSummary(data.summary)
+      const [metadata] = queryAll(db, 'SELECT race_date, post_time, field_size, place_code, lr_code FROM jrdb_races WHERE race_key = ?', [raceKey])
+      setRaceInfo({ ...data.race, id: raceKey, raceDate: metadata?.race_date ?? data.race.raceDate,
+        postTime: metadata?.post_time ?? data.race.postTime, fieldSize: metadata?.field_size ?? data.race.fieldSize,
+        placeCode: metadata?.place_code ?? data.race.placeCode, lr: ({ '1': '右', '2': '左', '3': '直線', '9': '直線' })[metadata?.lr_code] ?? '' })
+      setHorses(data.horses); setSummary(data.summary)
       setCurrentRaceKey(raceKey); setSelectedId(data.horses[0]?.id || null)
       setRoleFilter('all'); setSortKey('aiRecommend'); setTab(goTab)
     } catch (err) { console.error(err); alert('評価データの読み込みに失敗: ' + err.message) }
+  }
+
+  const loadCollectedRace = async (item) => {
+    const raceKey = item.id ?? item.raceId
+    if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, 'finalForecast'); return }
+    try {
+      const metadata = { ...item, id: raceKey }
+      const payload = await fetchCloudRace(metadata)
+      const received = payload.race
+      if (!received?.horses?.length) throw new Error('このレースは出走馬を取得中です。')
+      await applyCloudData(session.user.id, metadata, received.horses, payload)
+      setRaceInfo({ ...received, id: raceKey, liveOnly: true, place: received.place ?? PLACE_NAMES[received.placeCode],
+        surface: received.surface ?? SURFACE_NAMES[received.surfaceCode] })
+      setHorses(received.horses.map(horse => ({ ...horse, id: horse.id ?? `${raceKey}-${horse.no}`, pastRuns: horse.pastRuns ?? [] })))
+      setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab('finalForecast')
+    } catch (error) { alert(error.message) }
   }
 
   // ---- 出走馬一覧の表示用ソート/フィルタ ----
@@ -983,7 +1040,7 @@ function MainApp({ session, onLogout }) {
         </div>
 
         <div className="bg-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl px-4 py-2.5 text-xs text-[#2B6CB0] flex items-center gap-2">
-          <Info className="w-4 h-4 shrink-0" /> AIは買い目を断定せず、妙味が出そうな構造を整理します。当日オッズは別アプリで最終確認してください。
+          <Info className="w-4 h-4 shrink-0" /> 能力・展開・市場評価を確認し、最終予想で予算内の買い目と配分を比較できます。実購入前に最新の価格を確認してください。
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
@@ -1104,7 +1161,7 @@ function MainApp({ session, onLogout }) {
                   '調教・騎手相性は補正材料',
                   '新馬戦は基本除外、未勝利の初出走は要注意',
                   '地方実績は中央換算の参考評価',
-                  '当日オッズは別アプリで最終確認',
+                  '最終予想で予算内の買い目を比較し、実購入前に価格を確認',
                 ].map((t, i) => (
                   <li key={i} className="flex gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#4A90E2] shrink-0 mt-0.5" /><span>{t}</span></li>
                 ))}
@@ -1808,13 +1865,13 @@ function MainApp({ session, onLogout }) {
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pb-12 items-stretch">
       <div className="bg-gradient-to-br from-[#0B2545] to-[#1a365d] rounded-2xl p-8 text-white shadow-md relative overflow-hidden">
         <Zap className="absolute -right-8 -bottom-8 w-48 h-48 text-white/5" />
-        <h2 className="text-2xl font-black mb-4 relative z-10">AIは予想者ではない</h2>
+        <h2 className="text-2xl font-black mb-4 relative z-10">根拠を比較し、買い方を判断する</h2>
         <p className="text-slate-300 text-sm leading-relaxed mb-8 relative z-10">
-          当システムは「当たるAI」を目指していません。買い目は断定せず、当日オッズも取り込みません。
-          クラス実績・過去人気・着順・直近状態・調教・騎手相性を整理し、朝の時点で見るべきレースと妙味が出そうな馬を抽出する判断支援コックピットです。
+          能力・適性を土台に、取得できた展開・天候・パドックとオッズを確認し、予算内の買い目・配分を比較します。
+          条件の補正や最終オッズの推定は、学習データと時点の条件が揃った場合に使用します。確率と回収率は試算で、的中や利益を保証するものではありません。購入は利用者が行い、実購入と払戻を記録して検証します。
         </p>
         <div className="space-y-4 relative z-10">
-          {['能力順は入口。最終判断はクラス・人気履歴・着順で確認', '調教・騎手相性は補正材料', '新馬戦は基本除外、未勝利の初出走は要注意', '当日オッズは別アプリで人間が最終判断'].map((t, i) => (
+          {['能力・適性、当日条件、市場の評価差を順に確認', '発走10分前までに取得できた情報で予想を固定', '学習データが足りない条件は補正を保留', '実購入前に価格を確認し、購入内容と払戻を記録'].map((t, i) => (
             <div key={i} className="flex items-center gap-3 bg-white/10 p-3 rounded-lg border border-white/5">
               <CheckCircle2 className="w-5 h-5 text-[#4A90E2] shrink-0" /><span className="font-medium text-sm">{t}</span>
             </div>
@@ -1822,12 +1879,19 @@ function MainApp({ session, onLogout }) {
         </div>
       </div>
       <div className="bg-white rounded-2xl p-8 border border-slate-200/80 shadow-sm">
-        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2"><Activity className="w-5 h-5 text-[#4A90E2]" /> 拡張機能 (Coming Soon)</h2>
+        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2"><Activity className="w-5 h-5 text-[#4A90E2]" /> 分析機能と利用条件</h2>
         <div className="grid grid-cols-2 gap-4">
-          {['当日オッズ連携', '馬体重変化追跡', '天候連動シミュレート', 'EV(期待値)計算', '買い目(フォーメーション)提案', '当日トラックバイアス補正'].map((t, i) => (
-            <div key={i} className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between h-24 bg-slate-50/50">
-              <span className="font-bold text-slate-700 text-sm">{t}</span>
-              <div className="text-right"><span className="text-[9px] font-black tracking-wider text-slate-400 bg-slate-200 px-2 py-0.5 rounded-sm">SOON</span></div>
+          {[
+            ['当日オッズ・直前情報', 'PCの巡回・同期が必要'],
+            ['天候・パドックの補正', '学習データ不足の間は保留'],
+            ['期待回収率・リスク比較', '取得済み価格で試算'],
+            ['予算内の買い目・配分', '価格未取得の馬券は保留'],
+            ['当日の芝・ダート傾向', '取得済みの先行レースを集計'],
+            ['実購入・払戻の検証', '購入記録と正式払戻が必要'],
+          ].map(([title, condition]) => (
+            <div key={title} className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between gap-3 min-h-24 bg-slate-50/50">
+              <span className="font-bold text-slate-700 text-sm">{title}</span>
+              <p className="text-xs leading-relaxed text-slate-500">{condition}</p>
             </div>
           ))}
         </div>
@@ -1839,15 +1903,15 @@ function MainApp({ session, onLogout }) {
   // ヘッダ・レース概要・タブナビ
   // ================================================================
   const GlobalHeader = () => (
-    <header className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm px-8 py-3 flex justify-between items-center">
+    <header className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm px-4 py-3 flex flex-wrap justify-between items-center gap-2 sm:px-8">
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#0B2545] to-[#4A90E2] flex items-center justify-center"><Target className="w-5 h-5 text-white" /></div>
-        <div><h1 className="text-lg font-bold text-[#0B2545] leading-tight">Race Condition Analyzer</h1><p className="text-[10px] font-medium text-slate-500 tracking-wider">PROTOTYPE v0.2</p></div>
+        <div><h1 className="text-lg font-bold text-[#0B2545] leading-tight">Race Condition Analyzer</h1><p className="text-[10px] font-medium text-slate-500 tracking-wider">レース分析</p></div>
       </div>
       <div className="flex items-center gap-3">
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input type="text" placeholder="馬名・騎手で検索..." className="pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-full text-sm w-56 focus:outline-none focus:ring-2 focus:ring-[#4A90E2]/30"
+          <input type="text" placeholder="馬名・騎手で検索..." className="pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-full text-sm w-36 sm:w-56 focus:outline-none focus:ring-2 focus:ring-[#4A90E2]/30"
             value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <button onClick={() => setTab('today')} className="text-sm font-medium text-slate-600 px-4 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50">本日のレース</button>
@@ -1869,19 +1933,19 @@ function MainApp({ session, onLogout }) {
   const RaceInfoHeader = () => {
     if (!raceInfo) return null
     return (
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm mb-6">
+      <div className="rounded-2xl bg-gradient-to-br from-[#091b32] to-[#153a60] p-5 text-white shadow-sm mb-4">
         <div className="flex justify-between items-start gap-4 flex-wrap">
           <div className="space-y-2">
             <div className="text-sm font-bold text-[#4A90E2] tracking-wide tabular-nums">{fmtDate(raceInfo.raceDate)}</div>
             <div className="flex items-center gap-3 flex-wrap">
               <span className="w-8 h-8 rounded bg-[#0B2545] text-white flex items-center justify-center font-black tabular-nums">{raceInfo.raceNo}</span>
-              <h2 className="text-2xl font-black text-slate-900">{raceInfo.name || '—'}</h2>
+              <h2 className="text-2xl font-black text-white">{raceInfo.name || '—'}</h2>
               {raceInfo.grade && <Pill className="bg-rose-50 text-rose-700 border-rose-200">{raceInfo.classLabel}</Pill>}
             </div>
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-600 flex-wrap">
-              <span>{raceInfo.course}</span><span className="text-slate-300">•</span>
-              <span>{raceInfo.distance}</span>{raceInfo.lr && <><span className="text-slate-300">•</span><span>{raceInfo.lr}</span></>}
-              <span className="text-slate-300">•</span><span>{raceInfo.weather} ・ {raceInfo.going}</span>
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-200 flex-wrap">
+              <span>{raceInfo.course ?? raceInfo.place ?? PLACE_NAMES[raceInfo.placeCode]}</span><span className="text-slate-300">•</span>
+              <span>{typeof raceInfo.distance === 'number' ? `${analysisRace.surface}${raceInfo.distance}m` : raceInfo.distance}</span>{raceInfo.lr && <><span className="text-slate-300">•</span><span>{raceInfo.lr}</span></>}
+              <span className="text-slate-300">•</span><span>{sync.data?.context?.weather ?? raceInfo.weather ?? '天候未取得'} ・ {sync.data?.context?.going ?? raceInfo.going ?? '馬場未取得'}{cloudRace ? '（取得情報）' : '（登録情報）'}</span>
               <span className="text-slate-300">•</span><span>{raceInfo.fieldSize}頭</span>
             </div>
           </div>
@@ -1893,58 +1957,82 @@ function MainApp({ session, onLogout }) {
           </div>
         </div>
         {/* シナリオバッジ */}
-        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2 flex-wrap">
+        <div className="mt-4 pt-3 border-t border-white/15 flex items-center gap-2 flex-wrap">
           <Pill className={(PRIORITY_STYLES[raceInfo.racePriority] || PRIORITY_STYLES.C).cls}>{(PRIORITY_STYLES[raceInfo.racePriority] || PRIORITY_STYLES.C).label}</Pill>
           {(raceInfo.raceScenarioTags || []).map((t) => <Pill key={t} className={tagStyle(t)}>{t}</Pill>)}
-          <span className="text-xs text-slate-500 ml-1">{raceInfo.raceScenarioComment}</span>
+          <span className="text-xs text-slate-200 ml-1">{raceInfo.raceScenarioComment}</span>
         </div>
       </div>
     )
   }
 
-  const TabNav = () => {
-    const tabs = [
-      { id: 'today', label: '本日注目レース', icon: Star },
-      { id: 'races', label: 'レース一覧', icon: Layers },
-      { id: 'analysis', label: '出走馬分析', icon: Users },
-      { id: 'scenario', label: 'レースシナリオ', icon: Flag },
-      { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
-    ]
-    return (
-      <div className="flex gap-6 border-b border-slate-200 mb-6 overflow-x-auto">
-        {tabs.map((t) => {
-          const Icon = t.icon, isActive = tab === t.id
-          return (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 pb-3 px-1 border-b-2 font-bold transition-colors text-sm whitespace-nowrap ${
-                isActive ? 'border-[#0B2545] text-[#0B2545]' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
-              <Icon className="w-4 h-4" /> {t.label}
-            </button>
-          )
-        })}
-      </div>
-    )
-  }
+  const overviewTabs = [
+    { id: 'today', label: '本日注目レース', icon: Star },
+    { id: 'races', label: 'レース一覧', icon: Layers },
+    { id: 'automation', label: '自動取得・学習', icon: Activity },
+    { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
+  ]
+  const raceTabs = [
+    { id: 'analysis', label: '出走馬分析', icon: Users },
+    { id: 'ability', label: '能力・適性', icon: Gauge },
+    { id: 'pace', label: '展開・天候', icon: Flag },
+    { id: 'winOdds', label: '単勝オッズ分析', icon: TrendingUp },
+    { id: 'finalForecast', label: '最終予想・買い目', icon: Target },
+    { id: 'scenario', label: 'レースシナリオ', icon: Flag },
+    { id: 'oddsReview', label: '買い目比較', icon: Layers2 },
+  ].filter(item => !raceInfo?.liveOnly || ['ability', 'pace', 'winOdds', 'finalForecast'].includes(item.id))
 
-  const showRaceHeader = (tab === 'analysis' || tab === 'scenario') && raceInfo
+  const showRaceHeader = raceInfo && raceTabs.some(item => item.id === tab)
+  const renderNav = (items, label) => (
+    <nav aria-label={label} className="mb-4 flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+      {items.map(({ id, label, icon: Icon }) => (
+        <button key={id} type="button" onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined}
+          className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold sm:text-sm ${tab === id
+            ? 'bg-[#0B2545] text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-[#0B2545]'}`}>
+          <Icon aria-hidden="true" className="h-4 w-4" />{label}
+        </button>
+      ))}
+    </nav>
+  )
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-8"
       style={{ fontFamily: "'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" }}>
       <GlobalHeader />
-      <main className="max-w-[1480px] mx-auto px-8 pt-8">
-        {showRaceHeader && <RaceInfoHeader />}
-        <TabNav />
+      <main className="max-w-[1480px] mx-auto px-3 pt-4 sm:px-8 sm:pt-8">
+        {renderNav(overviewTabs, '開催メニュー')}
+        {showRaceHeader && <><RaceInfoHeader /><div className="mb-4 flex flex-wrap items-center gap-3 text-xs"><button type="button" disabled={capturePending} onClick={requestLatestCapture} className="rounded-lg bg-[#0B2545] px-3 py-2 font-semibold text-white disabled:opacity-50">{capturePending ? '取得を依頼中…' : 'JRDBへ最新取得を依頼'}</button><button type="button" onClick={refreshCompanion} disabled={sync.loading} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold disabled:opacity-50">保存済みデータと同期</button>{captureMessage && <span role="status" className="text-slate-600">{captureMessage}</span>}{sync.error && <span role="alert" className="text-rose-700">{sync.error}</span>}</div></>}
+        {raceInfo && renderNav(raceTabs, '選択中のレースの分析')}
         <div>
           {tab === 'today' && <TabToday />}
           {tab === 'races' && <TabRaces />}
+          {tab === 'automation' && <AutomationPanel sync={sync} onRefresh={refreshCompanion} onSelectRace={loadCollectedRace} />}
           {tab === 'analysis' && <TabAnalysis />}
+          {tab === 'ability' && <AbilityPage race={analysisRace} horses={analysisHorses} userId={session.user.id}
+            cloudRevision={sync.revision} statistics={analysisStatistics}
+            onSelectRace={() => setTab('races')}
+            onSelectHorse={id => { setSelectedId(id); setTab('analysis') }} />}
+          {tab === 'pace' && (raceInfo ? <PacePage race={analysisRace} horses={analysisHorses}
+            key={`${session.user.id}:${raceInfo.id}:${raceInfo.raceDate}`} userId={session.user.id}
+            earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
+            cloudRevision={sync.revision} statistics={analysisStatistics} /> : <EmptyRace />)}
           {tab === 'scenario' && <TabScenario />}
+          {tab === 'winOdds' && (raceInfo ? <WinOddsPage
+            key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`}
+            race={analysisRace} horses={analysisHorses} userId={session.user.id} cloudRevision={sync.revision}
+            statistics={analysisStatistics}
+            onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
+          {tab === 'finalForecast' && (raceInfo ? <FinalForecastPage
+            key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={analysisRace} horses={analysisHorses}
+            userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
+            earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
+            onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
+          {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}
           {tab === 'philosophy' && <TabPhilosophy />}
         </div>
       </main>
       <footer className="fixed bottom-0 w-full bg-white border-t border-slate-200 px-8 py-2 text-[10px] text-slate-500 flex justify-between items-center z-40 gap-4">
-        <div className="truncate">朝の時点で注目レースを選定し、当日オッズは別アプリで最終確認。</div>
+        <div className="truncate">レースを選んで能力・展開・オッズ・買い目を比較</div>
         <div className="flex items-center gap-3 shrink-0 tabular-nums text-slate-400">
           <span title="フロントUIバージョン / commit">UI {UI_VERSION} · {COMMIT_HASH}</span>
           {diag && <>
