@@ -29,12 +29,18 @@ export default function AutomationPanel({ sync, onRefresh, onSelectRace }) {
   const available = payload.availableRaces ?? []
   const last = status.lastRunAt ?? status.updatedAt ?? status.generatedAt
   const stale = last && Date.now() - Date.parse(last) > 10 * 60000
+  const syncFailed = status.sync?.code === 'sync_failed' || status.sync?.state === 'failed' || status.state === 'sync_failed'
+    || (Array.isArray(status.failures) && status.failures.some(item => item?.code === 'sync_failed'))
+  const lastState = syncFailed ? 'データ送信失敗・再試行待ち' : stale ? 'しばらく応答がありません' : stateNames[status.state] ?? (last ? status.state : '未接続')
   return <div className="space-y-5">
     <section className="rounded-2xl bg-[#0B2545] p-6 text-white"><p className="font-mono text-xs tracking-widest text-cyan-300">OBSERVE → PREDICT → RECORD → LEARN</p><h2 className="mt-2 flex items-center gap-2 text-xl font-bold"><Activity />自動取得と学習</h2><p className="mt-3 max-w-3xl text-sm text-slate-200">PCの取得ワーカーがJRDBを巡回し、時刻付きの情報と学習結果をこの画面へ同期します。発走10分前の情報で判断し、結果と払戻は検証用に蓄積します。</p></section>
     <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
       <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="flex items-center gap-2 font-bold"><Database size={18} />収集と同期の状態</h3><button type="button" className="flex items-center gap-2 rounded-lg bg-[#0B2545] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={sync?.loading} onClick={onRefresh}><RefreshCw size={16} className={sync?.loading ? 'animate-spin' : ''} />{sync?.loading ? '同期中…' : '今すぐ同期'}</button></div>
       {sync?.error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{sync.error} ブラウザの記録は保持しています。</p>}
-      <div className="grid gap-3 sm:grid-cols-3">{[['取得ワーカー', stale ? 'しばらく応答がありません' : stateNames[status.state] ?? (last ? status.state : '未接続')], ['最終取得', formatRaceTime(last)], ['画面への同期', formatRaceTime(sync?.syncedAt)]].map(([title,value])=><div key={title} className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">{title}</p><p className="mt-2 text-sm font-semibold">{value ?? '—'}</p></div>)}</div>
+      <div className="grid gap-3 sm:grid-cols-3">{[['最後に届いた取得状態', lastState], ['最終稼働', formatRaceTime(last)], ['画面への同期', formatRaceTime(sync?.syncedAt)]].map(([title,value])=><div key={title} className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">{title}</p><p className="mt-2 text-sm font-semibold">{value ?? '—'}</p></div>)}</div>
+      {syncFailed && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">取得データのクラウド送信が完了していません。画面に表示されているのは、最後に送信できたデータです。</p>}
+      {stale && <p className="text-xs text-amber-800">最後の稼働記録から10分以上経過しています。現在の取得・送信状態は確認できていません。</p>}
+      <p className="text-xs text-slate-500">取得データの最終送信成功：{formatRaceTime(status.lastFullSyncAt ?? status.lastSuccessfulDataSyncAt)}。状態通知や画面の同期時刻とは区別します。</p>
       <p className="text-xs leading-relaxed text-slate-500">PCが起動し、ネットワークとJRDB認証が有効な間に取得します。時刻は取得の証拠として保存し、ログイン切れ・取得失敗・古い情報を成功扱いにはしません。購入操作は行いません。</p>
       {status.message && <p className="text-sm text-amber-800">{status.message}</p>}
       <div className="flex flex-wrap gap-2 text-xs">{[60,30,20,15,12,11,10].map(min=><span key={min} className="flex items-center gap-1 rounded-full bg-cyan-50 px-3 py-2 text-cyan-900"><Clock size={12} />発走{min}分前</span>)}<span className="rounded-full bg-slate-100 px-3 py-2">締切後も結果・最終価格・払戻を追跡</span></div>
