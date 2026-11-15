@@ -169,7 +169,10 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
           if (remote?.ledger) setLedger(await writeLedgerExclusive(globalThis.localStorage, importLedger(saved, JSON.stringify(remote.ledger))))
           setMessage(`${success} クラウドにも保存しました。`)
         }
-        catch (error) { setMessage(`${success} クラウドへの同期は再試行待ちです。${error.message}`) }
+        catch (error) {
+          if (error.status === 409) { setStorageError('訂正記録が別端末の記録と競合しています。表示中の集計はこの端末の内容で、クラウドへの確定同期は未完了です。JSONを書き出して元記録を保管してください。'); setMessage('ローカル記録を保持しました。競合した訂正は自動で上書きしません。') }
+          else setMessage(`${success} クラウドへの同期は再試行待ちです。${error.message}`)
+        }
       }
       return true
     } catch (error) {

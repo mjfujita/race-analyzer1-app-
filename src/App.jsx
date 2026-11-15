@@ -789,10 +789,10 @@ function MainApp({ session, onLogout }) {
     try {
       const data = dataApi.getEvaluation(db, raceKey)
       if (!data) { alert('このレースには評価データがありません（evaluate_all.py の再実行が必要かも）'); return }
-      const [metadata] = queryAll(db, 'SELECT race_date, post_time, field_size, place_code FROM jrdb_races WHERE race_key = ?', [raceKey])
+      const [metadata] = queryAll(db, 'SELECT race_date, post_time, field_size, place_code, lr_code FROM jrdb_races WHERE race_key = ?', [raceKey])
       setRaceInfo({ ...data.race, id: raceKey, raceDate: metadata?.race_date ?? data.race.raceDate,
         postTime: metadata?.post_time ?? data.race.postTime, fieldSize: metadata?.field_size ?? data.race.fieldSize,
-        placeCode: metadata?.place_code ?? data.race.placeCode })
+        placeCode: metadata?.place_code ?? data.race.placeCode, lr: ({ '1': '右', '2': '左', '3': '直線', '9': '直線' })[metadata?.lr_code] ?? '' })
       setHorses(data.horses); setSummary(data.summary)
       setCurrentRaceKey(raceKey); setSelectedId(data.horses[0]?.id || null)
       setRoleFilter('all'); setSortKey('aiRecommend'); setTab(goTab)
@@ -1936,9 +1936,9 @@ function MainApp({ session, onLogout }) {
               {raceInfo.grade && <Pill className="bg-rose-50 text-rose-700 border-rose-200">{raceInfo.classLabel}</Pill>}
             </div>
             <div className="flex items-center gap-2 text-sm font-medium text-slate-200 flex-wrap">
-              <span>{raceInfo.course}</span><span className="text-slate-300">•</span>
-              <span>{raceInfo.distance}</span>{raceInfo.lr && <><span className="text-slate-300">•</span><span>{raceInfo.lr}</span></>}
-              <span className="text-slate-300">•</span><span>{raceInfo.weather} ・ {raceInfo.going}</span>
+              <span>{raceInfo.course ?? raceInfo.place ?? PLACE_NAMES[raceInfo.placeCode]}</span><span className="text-slate-300">•</span>
+              <span>{typeof raceInfo.distance === 'number' ? `${analysisRace.surface}${raceInfo.distance}m` : raceInfo.distance}</span>{raceInfo.lr && <><span className="text-slate-300">•</span><span>{raceInfo.lr}</span></>}
+              <span className="text-slate-300">•</span><span>{sync.data?.context?.weather ?? raceInfo.weather ?? '天候未取得'} ・ {sync.data?.context?.going ?? raceInfo.going ?? '馬場未取得'}{cloudRace ? '（取得情報）' : '（登録情報）'}</span>
               <span className="text-slate-300">•</span><span>{raceInfo.fieldSize}頭</span>
             </div>
           </div>

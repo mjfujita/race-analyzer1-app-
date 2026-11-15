@@ -26,7 +26,7 @@ async function request(path, { body, signal } = {}) {
     ...(body ? { body: JSON.stringify(body) } : {}) })
   let payload
   try { payload = await response.json() } catch { throw new Error('同期サーバーから有効な応答を取得できませんでした。') }
-  if (!response.ok) throw new Error(payload.error?.message ?? payload.error ?? `同期できませんでした（${response.status}）。`)
+  if (!response.ok) throw Object.assign(new Error(payload.error?.message ?? payload.error ?? `同期できませんでした（${response.status}）。`), { status: response.status, code: payload.error?.code })
   return payload
 }
 

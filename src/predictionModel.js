@@ -159,7 +159,7 @@ export function applyPredictionModels({ field = [], race, odds = {}, history = [
     && (key === 'paceFit' || key === 'dayBias' || availableAt(context.source, cutoffAt, 60))) : []
   const contextLogits = field.map(h => Math.log(baseProbability(h)) + enabled.reduce((sum, key) => sum + context.features[h.no][key] * bundle.contextModel.coefficients[key], 0))
   const pContext = softmax(contextLogits), shares = normalizedMarketShares(field, odds)
-  const eligibleHistory = history.filter(row => row.kind !== 'baseline' && String(row.raceId) === String(race.id) && availableAt(row, cutoffAt, 140)
+  const eligibleHistory = [...history].reverse().filter(row => row.kind !== 'baseline' && String(row.raceId) === String(race.id) && availableAt(row, cutoffAt, 140)
     && validTimestamp(row.observedAt) && field.every(h => finite(row.odds?.[h.no]) && row.odds[h.no] >= 1))
     .sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt) || Date.parse(b.retrievedAt) - Date.parse(a.retrievedAt))
   const current = eligibleHistory.find(row => (Date.parse(cutoffAt) - Date.parse(row.observedAt)) / 60000 <= 20)

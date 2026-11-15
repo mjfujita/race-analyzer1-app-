@@ -11,7 +11,7 @@ const live = (extra = {}) => ({ ...snapshot(25), winOdds: { 1: 3, 2: 4 }, going:
   paddock: [{ horseNo: 1, paddockIndex: 3 }, { horseNo: 2, paddockIndex: 1 }], ...extra })
 const model = () => {
   const common = { status: 'ready', baseModelId: 'synthetic-base', trainedThrough: '2025-01-01', generatedAt: '2025-01-02T00:00:00Z', id: 'synthetic' }
-  return { schemaVersion: 1, kind: 'race-prediction-models', generatedAt: common.generatedAt, baseModel: { id: common.baseModelId },
+  return { id: 'synthetic-bundle', schemaVersion: 1, kind: 'race-prediction-models', generatedAt: common.generatedAt, baseModel: { id: common.baseModelId },
     contextModel: { ...common, modelType: 'context-logit-v1', features: ['paddock'], coefficients: { paddock: .2 } },
     marketModel: { ...common, modelType: 't10-market-blend-v1', gamma: 1.1, abilityWeight: .5 },
     closingOddsModel: { ...common, modelType: 'closing-logratio-v1', coefficients: [0, 0, .5, 0, 0], residualLower: -.1, residualUpper: .1 } }
@@ -76,6 +76,7 @@ test('insufficient data abstains; invalid coefficients and model dates are rejec
   const empty = applyPredictionModels({ field, race, cutoffAt })
   assert.deepEqual(empty.field.map(h => h.probability), [.6, .4])
   assert.equal(empty.prices[1].median, null)
+  assert.throws(() => validateRuntimeModels({ ...model(), id: undefined }))
   const invalid = model(); invalid.contextModel.coefficients.paddock = Infinity
   assert.throws(() => validateRuntimeModels(invalid))
   const future = model(); future.marketModel.generatedAt = '2026-01-01T06:31:00Z'
