@@ -1,3 +1,4 @@
+import OddsReview from './OddsReview.jsx'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ChevronRight, Search, Target, TrendingUp, AlertTriangle,
@@ -1908,6 +1909,7 @@ function MainApp({ session, onLogout }) {
       { id: 'races', label: 'レース一覧', icon: Layers },
       { id: 'analysis', label: '出走馬分析', icon: Users },
       { id: 'scenario', label: 'レースシナリオ', icon: Flag },
+      { id: 'oddsReview', label: '買い目比較', icon: Target },
       { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
     ]
     return (
@@ -1940,6 +1942,7 @@ function MainApp({ session, onLogout }) {
           {tab === 'races' && <TabRaces />}
           {tab === 'analysis' && <TabAnalysis />}
           {tab === 'scenario' && <TabScenario />}
+          {tab === 'oddsReview' && <OddsReview key={raceInfo?.id ?? 'manual'} raceInfo={raceInfo} />}
           {tab === 'philosophy' && <TabPhilosophy />}
         </div>
       </main>
