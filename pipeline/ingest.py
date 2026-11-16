@@ -16,6 +16,8 @@ from contextlib import nullcontext
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from .jrdb_files import MEMBER_RE, supplemental_records
+
 JST = timezone(timedelta(hours=9))
 MAX_BYTES = 50_000_000
 TYPES = {'単勝': 1, '複勝': 1, '枠連': 2, '馬連': 2, 'ワイド': 2, '馬単': 2, '3連複': 3, '3連単': 3}
@@ -169,15 +171,19 @@ def read_zip(path):
             raise ValueError('Archive exceeds size limit')
         for member in members:
             name = Path(member.filename).name
-            match = re.fullmatch(r'(TYB|HJC)(\d{6})\.txt', name, re.I)
+            match = MEMBER_RE.fullmatch(name)
             if not match:
                 continue
             if member.file_size > MAX_BYTES or member.file_size / max(1, member.compress_size) > 500:
                 raise ValueError('Archive expansion ratio exceeds limit')
             kind, suffix = match.groups()
-            date = race_date('20' + suffix)
+            date = race_date(('19' if suffix[:2] >= '98' else '20') + suffix)
             data = archive.read(member)
-            parser = parse_hjc if kind.upper() == 'HJC' else parse_tyb
+            kind = kind.upper()
+            if kind not in ('TYB', 'HJC'):
+                output.extend(supplemental_records(kind, date, data, name))
+                continue
+            parser = parse_hjc if kind == 'HJC' else parse_tyb
             for index, line in enumerate(data.splitlines(), 1):
                 if not line.strip():
                     continue
@@ -187,7 +193,7 @@ def read_zip(path):
                     raise ValueError(f'{name}: line {index}: {exc}') from exc
                 output.append((kind.upper(), payload, digest(line), name))
     if not output:
-        raise ValueError('No supported TYB/HJC dated file found in ZIP')
+        raise ValueError('No supported dated JRDB records found in ZIP')
     return output
 
 

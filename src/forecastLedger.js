@@ -1,3 +1,4 @@
+import { validCalibrationEvidence } from './forecastReview.js'
 export const LEDGER_VERSION = 1
 const MAX_RECORDS = 500
 const MAX_BYTES = 4_000_000
@@ -123,6 +124,7 @@ export function validateLedger(value, scope) {
       numbers.add(horse.no)
     }
     if (record.field.length < 2 || Math.abs(record.field.reduce((sum, horse) => sum + horse.probability, 0) - 1) > 1e-6) fail('予想確率の合計が1になっていません。')
+    if (record.inputs.probabilityStack != null && !validCalibrationEvidence(record)) fail('校正前後の予想確率が一致しません。')
     if (record.parameters.anchor !== null && !numbers.has(record.parameters.anchor)) fail('軸馬が出走馬にありません。')
     const keys = new Set()
     for (const ticket of record.allocations) {

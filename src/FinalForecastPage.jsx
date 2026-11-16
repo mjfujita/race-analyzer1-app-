@@ -5,6 +5,7 @@ import { decisionCutoff, raceTimestamp, snapshotTiming, formatRaceTime } from '.
 import { loadModel } from './modelStore.js'
 import { loadRuntimeModel, readCloudRace } from './cloudStore.js'
 import { buildRaceContext, applyPredictionModels } from './predictionModel.js'
+import { calibrateForecast, reviewStack } from './forecastReview.js'
 import RuntimeModelPanel from './RuntimeModelPanel.jsx'
 import RaceDataPanel, { readRaceData } from './RaceDataPanel.jsx'
 import { buildAbilityField, analyzeMarket } from './marketModel.js'
@@ -54,7 +55,7 @@ export default function FinalForecastPage(props) {
   return <ForecastWorkspace key={`${scope.userId}:${scope.raceDate}:${scope.raceId}`} {...props} scope={scope} />
 }
 
-function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger }) {
+function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger, review }) {
   const [loaded] = useState(() => storedLedger(scope))
   const [ledger, setLedger] = useState(loaded.ledger)
   const [storageError, setStorageError] = useState(loaded.error)
@@ -109,9 +110,16 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const ability = useMemo(() => buildAbilityField({ horses, statistics, race, model }), [horses, statistics, race, model])
   const context = useMemo(() => buildRaceContext({ race, horses, field: ability.field, statistics,
     observations: cloud?.observations ?? [], earlierResults: cloud?.race?.earlierResults ?? [], cutoffAt }), [race, horses, ability.field, statistics, cloud, cutoffAt])
-  const prediction = useMemo(() => applyPredictionModels({ field: ability.field, race, odds: current?.odds ?? {},
+  const initialPrediction = useMemo(() => applyPredictionModels({ field: ability.field, race, odds: current?.odds ?? {},
     history: records.events, context, models: runtimeModels, cutoffAt, abilityModelId: ability.model.id }),
   [ability.field, ability.model.id, race, current, records.events, context, runtimeModels, cutoffAt])
+  const features = initialPrediction.appliedFeatures?.filter(key => runtimeModels?.contextModel?.coefficients[key] !== 0) ?? []
+  const marketModel = initialPrediction.field.some(h => h.pM != null) && runtimeModels?.marketModel
+  const stack = reviewStack({ ability: ability.model.id,
+    context: features.length ? features.map(key => runtimeModels.contextModel.coefficients[key]) : null, features,
+    market: marketModel && marketModel.abilityWeight < 1 ? [marketModel.gamma, marketModel.abilityWeight] : null })
+  const prediction = useMemo(() => calibrateForecast(initialPrediction, { review, stack, race, current, cutoffAt }),
+    [initialPrediction, review, stack, race, current, cutoffAt])
   const predictedByNo = new Map(prediction.field.map(horse => [horse.no, horse]))
   const frames = useMemo(() => officialFrames(ability.field), [ability.field])
   const parsed = useMemo(() => parseQuotes(pairs, ability.field, frames), [pairs, ability.field, frames])
@@ -168,7 +176,10 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
         try {
           const remote = await onSyncLedger(saved)
           if (remote?.ledger) setLedger(await writeLedgerExclusive(globalThis.localStorage, importLedger(saved, JSON.stringify(remote.ledger))))
-          setMessage(`${success} クラウドにも保存しました。`)
+          const id = next.forecasts.at(-1)?.id
+          const latest = next.forecasts.at(-1)
+          const receipt = remote?.receipts?.[latest?.parentId ?? id]
+          setMessage(`${success} クラウドにも保存しました。${receipt ? ' 締切前の受領を確認しました。' : ''}`)
         }
         catch (error) {
           if (error.status === 409) { setStorageError('訂正記録が別端末の記録と競合しています。表示中の集計はこの端末の内容で、クラウドへの確定同期は未完了です。JSONを書き出して元記録を保管してください。'); setMessage('ローカル記録を保持しました。競合した訂正は自動で上書きしません。') }
@@ -187,7 +198,8 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     if (!ready || !cutoffAt) return
     try {
       const common = { mode: actualLive && Date.now() <= Date.parse(cutoffAt) ? 'live' : 'replay', cutoffAt, modelVersion: ability.model.id,
-        modelStatus: ability.model.status, inputs: { sourceId: current.id, observedAt: current.observedAt ?? null,
+        modelStatus: ability.model.status, inputs: { probabilityStack: stack, probabilityCalibration: prediction.calibrationId ?? null,
+          probabilityTemperature: prediction.calibrationTemperature ?? null, sourceId: current.id, observedAt: current.observedAt ?? null,
           sourcePublishedAt: current.sourcePublishedAt ?? null, timingEvidence: current.timingEvidence ?? null, availabilityAt: current.availabilityAt ?? null, retrievedAt: current.retrievedAt ?? null, winOdds: current.odds,
           baselineOdds: baseline?.odds ?? null, baselineSnapshot: baseline ?? null, previousSnapshot: previous ?? null, quotes, quoteObservedAt: pairs.trim() ? raceTimestamp(race, pairTime) : automaticQuotes.length ? context.source.observedAt : null,
           quoteRetrievedAt: pairs.trim() ? pairRetrievedAt : automaticQuotes.length ? context.source.retrievedAt : null, model: effectiveModel, runtimeModels, context, closingPrices: prediction.prices, pricingQuotes, weather: race.weather ?? null, going: race.going ?? null,
@@ -254,6 +266,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
       <p className="text-xs text-slate-500">購入境界は計算用確率p*を仮定した損益分岐オッズです。未学習の条件は固定点で上乗せしません。<button type="button" onClick={onOpenPace} className="ml-1 font-semibold text-cyan-800 underline">展開・当日の傾向を確認</button></p>
     </section>
 
+    {prediction.calibrationId && <p className="text-sm text-cyan-800">買い目の勝率に校正版 {prediction.calibrationId} を使用中</p>}
     <RuntimeModelPanel prediction={prediction} context={context} observations={cloud?.observations} />
 
     <section className={`${panel} space-y-4`}>

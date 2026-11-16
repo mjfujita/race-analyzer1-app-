@@ -41,7 +41,7 @@ test('unknown publication is not forged; observed availability is explicit',()=>
 test('final price labels never become pre-race snapshots, and visible payouts stay distinct',()=>{
   const input=raw();input.oddsLabel='単勝最終オッズ';input.rows[0].se_tyakujun='1';input.rows[1].se_tyakujun='2'
   input.resultTables=[['1','1','架空馬A','','1.00.0','34.5','1','','1','1','1','2']]
-  input.payoutTables=[['単勝','1番','300円','1人気'],['馬単','01－02','1,500円','1人気']]
+  input.payoutTables=[['単勝','1番','300円','1人気','馬単','01－02','1,500円','1人気']]
   const out=parseVisibleRace(input,race,{retrievedAt:'2026-11-15T07:00:00Z'})
   assert.equal(out.snapshots.filter(row=>row.kind==='observed').length,0)
   assert.equal(out.observation.payload.finalWinOdds[1],3)

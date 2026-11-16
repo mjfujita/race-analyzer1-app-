@@ -101,15 +101,31 @@ export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString
   const sourceHash=hash(raw)
   const cornerPass4={...raw.cornerPass4}
   for(const row of raw.resultTables??[])if(row.length===12&&Number.isInteger(numeric(row[1]))&&numeric(row[11])>=1)cornerPass4[numeric(row[1])]=numeric(row[11])
-  const payouts=[];let payoutType=null
-  const typeCounts={'単勝':1,'複勝':1,'枠連':2,'馬連':2,'馬単':2,'ワイド':2,'3連複':3,'3連単':3}
-  for(const row of raw.payoutTables??[]){
-    const values=row.map(normalize);if(typeCounts[values[0]])payoutType=values.shift()
-    if(!payoutType||values.length<2)continue
-    const numbers=(values[0].match(/\d+/g)??[]).map(Number),per100=Number(values[1].replace(/[円,]/g,''))
-    if(numbers.length!==typeCounts[payoutType]||!Number.isSafeInteger(per100)||per100<=0)continue
-    if(!['馬単','3連単'].includes(payoutType))numbers.sort((a,b)=>a-b)
-    payouts.push({type:payoutType,numbers,key:`${payoutType}:${numbers.join('-')}`,per100})
+  const payouts = new Map(), previousTypes = new Map()
+  const typeCounts = { '単勝': 1, '複勝': 1, '枠連': 2, '馬連': 2, '馬単': 2, 'ワイド': 2, '3連複': 3, '3連単': 3 }
+  for (const row of raw.payoutTables ?? []) {
+    const values = row.map(normalize)
+    // Each payout has a heading, selection, amount and popularity. The page may put two groups in one row.
+    for (let column = 0; column + 2 < values.length; column += 4) {
+      const heading = values[column]
+      const type = Object.hasOwn(typeCounts, heading) ? heading : previousTypes.get(column)
+      let start = column + 1
+      if (heading && !Object.hasOwn(typeCounts, heading)) {
+        if (column !== 0 || values.length !== 3) continue
+        start = 0  // HTML omits a repeated heading when it uses rowspan.
+      }
+      if (!type) continue
+      previousTypes.set(column, type)
+      const numbers = (values[start]?.match(/\d+/g) ?? []).map(Number)
+      const amount = values[start + 1] ?? ''
+      const per100 = /^\d[\d,]*円?$/.test(amount) ? Number(amount.replace(/[円,]/g, '')) : null
+      if (numbers.length !== typeCounts[type] || !Number.isSafeInteger(per100) || per100 <= 0
+        || numbers.some(n => n < 1 || n > (type === '枠連' ? 8 : 18))) continue
+      if (!['馬単', '3連単'].includes(type)) numbers.sort((a, b) => a - b)
+      const key = `${type}:${numbers.join('-')}`
+      // Keep inconsistent amounts visible so review can flag the conflict.
+      payouts.set(`${key}:${per100}`, { type, numbers, key, per100 })
+    }
   }
   const finalPrice=/単勝最終オッズ|確定オッズ/.test(raw.oddsLabel??'')
   const clock=/([01]?\d|2[0-3]):([0-5]\d)\s*現在/.exec(raw.oddsLabel??'')
@@ -125,7 +141,7 @@ export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString
   const payload={...race,horses,fieldSize:active.length,releaseFieldSize:race.fieldSize,activeHorseNumbers:active.map(h=>h.horseNo),
     winOdds,baselineOdds,paddock:horses.map(h=>({horseNo:h.horseNo,paddockIndex:h.paddockIndex,horseWeight:h.horseWeight,horseWeightDelta:h.horseWeightDelta})),
     weather,going,observedAt,sourcePublishedAt,retrievedAt,availabilityAt:retrievedAt,timingEvidence:'observed-visible-at',source,sourceHash,
-    results,payouts,refunds:null,refundStatus:'not-provided-by-screen',resultsPublishedAt:null,resultsRetrievedAt:resultKnown?retrievedAt:null,
+    results,payouts:[...payouts.values()],refunds:null,refundStatus:'not-provided-by-screen',resultsPublishedAt:null,resultsRetrievedAt:resultKnown?retrievedAt:null,
     finalWinOdds:finalPrice&&Object.keys(winOdds).length===active.length?winOdds:null,
     closingPublishedAt:null,closingRetrievedAt:finalPrice?retrievedAt:null,
     priceStatus:finalPrice?'final-visible':sourcePublishedAt?'timestamped':'publication-time-unverified',

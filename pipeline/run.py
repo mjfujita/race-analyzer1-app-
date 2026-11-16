@@ -4,26 +4,33 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sqlite3
 import sys
+import tempfile
 import zipfile
 from contextlib import closing
 from pathlib import Path
 
 from .ingest import append_observations, digest, export_store, import_snapshots, now_iso, open_store, read_zip
+from .jrdb_files import ARCHIVE_RE, PACI_RE
 from .ledger import import_ledger, payout_suggestions, saved_ledgers, summarize_ledger
 from .train import load_complete_races, open_source, train_conditions, train_model
 from .prediction import train_runtime_models
+from .review import run_review
 
 
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, prefix=f'.{path.name}.',
+                                     suffix='.tmp', delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            stream.write(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+            stream.close()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def read_json(path):
@@ -37,7 +44,7 @@ def default_source():
     return str(Path.home() / 'projects/backend/race.db')
 
 
-def input_zips(explicit, inbox=None):
+def input_zips(explicit, inbox=None, include_paci=False):
     """Only the named directory, no recursion or followed inbox symlinks."""
     paths = [Path(value).expanduser() for value in explicit]
     if inbox:
@@ -46,7 +53,7 @@ def input_zips(explicit, inbox=None):
             raise ValueError('Inbox must be an existing non-symlink directory')
         for path in sorted(directory.iterdir()):
             if (not path.is_symlink() and path.is_file()
-                    and re.fullmatch(r'(?:TYB|HJC)\d{6}[^/]*\.zip', path.name, re.I)):
+                    and (ARCHIVE_RE.fullmatch(path.name) or include_paci and PACI_RE.fullmatch(path.name))):
                 paths.append(path)
     unique = list(dict.fromkeys(path.resolve(strict=True) for path in paths))
     if len(unique) > 1000:
@@ -56,11 +63,12 @@ def input_zips(explicit, inbox=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Local JRDB append-only data and research pipeline (no production writes)')
-    parser.add_argument('action', choices=['run', 'audit', 'train', 'import-zip', 'import-snapshots', 'import-ledger', 'export'])
+    parser.add_argument('action', choices=['run', 'audit', 'train', 'import-zip', 'import-snapshots', 'import-ledger', 'export', 'review'])
     parser.add_argument('--source-db', default=default_source())
     parser.add_argument('--output', default=str(Path(__file__).parent / 'output'))
     parser.add_argument('--zip', action='append', default=[])
-    parser.add_argument('--inbox', help='Scan this directory only for dated TYB/HJC ZIP files (no recursive or symlink traversal)')
+    parser.add_argument('--inbox', help='Scan this directory only for dated JRDB supplemental ZIP files (no recursive or symlink traversal)')
+    parser.add_argument('--include-paci', action='store_true', help='Also inventory BAC, KAB and masters inside PACI ZIPs in the inbox')
     parser.add_argument('--snapshots', action='append', default=[])
     parser.add_argument('--manifest', help='JSON object mapping raceId to official active horse numbers')
     parser.add_argument('--ledger', action='append', default=[])
@@ -81,7 +89,7 @@ def main(argv=None):
         report = {'schemaVersion': 1, 'generatedAt': now_iso(), 'mode': 'local-research', 'imports': {}}
         # All ZIP parsing is validated before any archive records are committed.
         items = []
-        zip_paths = input_zips(args.zip, args.inbox)
+        zip_paths = input_zips(args.zip, args.inbox, args.include_paci)
         report['imports']['zipFiles'] = len(zip_paths)
         for zip_path in zip_paths:
             items.extend(read_zip(zip_path))
@@ -103,6 +111,10 @@ def main(argv=None):
             if ledgers:
                 write_json(output / 'payout-suggestions.json', {'schemaVersion': 1,
                            'ledgers': [payout_suggestions(store, ledger) for ledger in ledgers]})
+            if args.action in ('run', 'train', 'review'):
+                review = run_review(store)
+                write_json(output / 'forecast-review.json', review)
+                report['forecastReview'] = {key: review[key] for key in ('totalForecasts', 'eligibleRaces', 'states', 'sourceCounts')}
             if args.action in ('run', 'audit', 'train'):
                 with closing(open_source(source)) as connection:
                     races, audit = load_complete_races(connection)

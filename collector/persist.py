@@ -115,7 +115,7 @@ def bundle(source, output, date, status):
                 'timingEvidence':observed['timingEvidence'],'modelVersion':ability['id'] if compatible else 'idm-baseline-uncalibrated'})
         target['race']['earlierResults']=earlier
     return {'schemaVersion':1,'kind':'race-companion-bundle','generatedAt':status['lastRunAt'],'status':status,
-            'models':{'abilityModel':ability,'runtimeModel':runtime},'races':result}
+            'models':{'abilityModel':ability,'runtimeModel':runtime},'forecastReview':model('forecast-review.json'),'races':result}
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('action',choices=['persist','bundle','ledger']);p.add_argument('--output',required=True)
@@ -126,10 +126,16 @@ if __name__=='__main__':
         print(json.dumps({'added':persist(output/'market.sqlite',json.loads(Path(a.input).read_text()))}))
     elif a.action=='ledger':
         from pipeline.ledger import import_ledger
+        from pipeline.review import import_receipts
         incoming=json.loads(Path(a.input).read_text())
         if not isinstance(incoming,list) or len(incoming)>72:raise ValueError('Ledger batch limit')
         with closing(open_store(output/'market.sqlite')) as db:
-            print(json.dumps({'added':sum(import_ledger(db,record) for record in incoming)}))
+            added = 0
+            for record in incoming:
+                ledger = record.get('ledger', record)
+                added += import_ledger(db, ledger)
+                added += import_receipts(db, ledger, record.get('receipts', []))
+            print(json.dumps({'added': added}))
     else:
         status=json.loads(Path(a.status).read_text());data=bundle(a.source_db,output,a.date,status)
         write_json(output/'companion.bundle.json',data);print(json.dumps({'races':len(data['races']),'file':str(output/'companion.bundle.json')}))
