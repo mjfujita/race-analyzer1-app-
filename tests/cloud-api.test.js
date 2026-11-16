@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createCompanionService, createCompanionHandler, MAX_BODY_BYTES, ApiError } from '../server/companion.js'
 import { createSupabaseObjectStore } from '../server/supabaseStore.js'
+import { jraSchedule } from '../server/jraCalendar.js'
 import { emptyLedger, appendForecast, appendPurchase, appendSettlement, summarizeLedger } from '../src/forecastLedger.js'
 import { memoryStore, request } from './fixtures/companion.js'
 
@@ -58,6 +59,66 @@ test('collector bundle reaches owner GET with availability, models and immutable
   assert.equal(response.status, 200); assert.equal(response.body.snapshots.length, 1)
   assert.equal(response.body.observations[0].kind, 'LIVE_RACE'); assert.equal(response.body.ledger.forecasts.length, 0)
   assert.equal(JSON.stringify(response.body).includes('companion-only-secret'), false)
+})
+
+test('dashboard returns only owner-scoped evidence for the current JST day', async () => {
+  const { service, handler, store } = setup()
+  const data = bundle()
+  data.status.lastFullSyncAt = at
+  data.races[0].race.horses = [{ no: 1 }, { no: 2 }]
+  await service.ingestBundle(data)
+  const query = { dashboard: '1' }
+  assert.equal((await request(handler, { query, token: null })).status, 401)
+  assert.equal((await request(handler, { query, token: 'other-token' })).status, 403)
+  assert.equal((await request(handler, { query: { ...query, raceDate: scope.raceDate } })).status, 400)
+  const before = store.files.size
+  const summary = await request(handler, { query })
+  assert.equal(summary.status, 200)
+  assert.match(summary.headers['Cache-Control'], /private, no-store/)
+  assert.deepEqual(summary.body, {
+    schemaVersion: 1, date: scope.raceDate, lastMeeting: null, lastDataSentAt: at, schedule: 'scheduled',
+    races: [{ id: scope.raceId, raceDate: scope.raceDate, name: 'Synthetic', postTime: '1540', fieldSize: 2,
+      oddsRetrievedAt: at, hasForecast: false, receipt: null, review: null }],
+  })
+  assert.equal(store.files.size, before)
+  const saved = appendForecast(emptyLedger(scope), proposal(), at)
+  await service.saveLedger(saved.ledger)
+  const { races } = await service.getDashboard()
+  assert.equal(races[0].hasForecast, true)
+  assert.equal(races[0].receipt, null)
+})
+
+test('empty dashboard distinguishes the published calendar and the absence of programme data', async () => {
+  const atMidnight = Date.parse('2026-11-16T15:00:00.000Z')
+  const store = memoryStore()
+  for (const schedule of ['no-races', 'scheduled', 'unconfirmed']) {
+    const service = createCompanionService({ store, ownerId, now: () => atMidnight, schedule: async day => {
+      assert.equal(day, '20261117')
+      return schedule
+    } })
+    const summary = await service.getDashboard()
+    assert.equal(summary.date, '20261117')
+    assert.equal(summary.schedule, schedule)
+    assert.equal(summary.lastDataSentAt, null)
+    assert.deepEqual(summary.races, [])
+  }
+})
+
+test('JRA calendar separates JRA races from local simulcasts and rejects invalid responses', async () => {
+  let calls = 0
+  const feed = async url => {
+    calls++
+    assert.equal(url, 'https://www.jra.go.jp/keiba/common/calendar/json/202611.json')
+    return Response.json([{ month: '11', data: [
+      { date: '15', info: [{ race: [{ name: '5回京都' }] }] },
+      { date: '17', info: [{ option: [{ local: true }] }] },
+    ] }])
+  }
+  assert.equal(await jraSchedule('20261115', feed), 'scheduled')
+  assert.equal(await jraSchedule('20261117', feed), 'no-races')
+  assert.equal(calls, 1)
+  assert.equal(await jraSchedule('20261201', async () => Response.json([{ month: '11', data: [] }])), 'unconfirmed')
+  assert.equal(await jraSchedule('20270101', async () => new Response('', { status: 404 })), 'unconfirmed')
 })
 
 test('worker can pull one owner-bound ledger without broader reads, writes or cross-owner scope', async () => {
@@ -334,6 +395,9 @@ test('server attests only matching live forecasts submitted before the official 
   const history = await service.pullLedger(scope)
   assert.equal(history.ledger.forecasts.length, 3)
   assert.deepEqual(history.receipts.map(receipt => receipt.forecastId), [valid.record.id])
+  const dashboard = await service.getDashboard()
+  assert.deepEqual(dashboard.races[0].receipt, { ownerId, raceId: scope.raceId, raceDate: scope.raceDate,
+    forecastId: valid.record.id, receivedAt: saved.receipts[valid.record.id].receivedAt })
 })
 
 test('a later report stopping calibration wins over a replayed older companion bundle', async () => {

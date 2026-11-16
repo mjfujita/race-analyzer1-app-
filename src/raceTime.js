@@ -7,6 +7,10 @@ export function raceDateISO(race) {
   return new Date(parsed.getTime() + 9 * 3600000).toISOString().slice(0, 10) === date ? date : null
 }
 
+export function japanRaceDay(now = Date.now()) {
+  return new Date(now + 9 * 3600000).toISOString().slice(0, 10).replaceAll('-', '')
+}
+
 export function raceTimestamp(race, time, dateOverride) {
   const date = dateOverride ? raceDateISO({ raceDate: dateOverride }) : raceDateISO(race)
   const raw = String(time ?? '').replace(':', '')

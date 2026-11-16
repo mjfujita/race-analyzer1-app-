@@ -3,7 +3,7 @@ import { validateForecastReview } from '../src/forecastReview.js'
 import { validateModel } from '../src/modelStore.js'
 import { validateLedger, emptyLedger, importLedger, parseRaceObservations } from '../src/forecastLedger.js'
 import { importOddsSnapshots } from '../src/oddsHistory.js'
-import { decisionCutoff, raceDateISO, snapshotTiming, validTimestamp } from '../src/raceTime.js'
+import { decisionCutoff, japanRaceDay, raceDateISO, snapshotTiming, validTimestamp } from '../src/raceTime.js'
 
 export const MAX_BODY_BYTES = 3_000_000
 const MAX_RACE_FILES = 2000
@@ -137,7 +137,7 @@ export function validateBundle(input, { ownerId, runtimeValidator, now = Date.no
 }
 
 // Dependencies are injected for deterministic tests. Storage must offer atomic create-only writes.
-export function createCompanionService({ store, ownerId, runtimeValidator, now = () => Date.now() }) {
+export function createCompanionService({ store, ownerId, runtimeValidator, now = () => Date.now(), schedule = async () => 'unconfirmed' }) {
   if (!/^[A-Za-z0-9_-]{1,100}$/.test(ownerId ?? '')) throw new ApiError(503, 'not_configured', '同期サービスの設定が必要です。')
   const prefix = `${ownerId}/v1`
   const racePrefix = (id, date) => `${prefix}/races/${date}/${id}`
@@ -172,16 +172,60 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     const result = []
     for (const day of dates) {
       const rows = await list(`${prefix}/race-index/${day}`, { limit: 72, order: 'desc' })
-      for (const row of rows) {
-        if (!row.name.endsWith('.json')) continue
+      const records = new Map()
+      await forEachBounded(rows.filter(row => row.name.endsWith('.json')), 8, async row => {
         const item = await store.get(row.path)
-        if (!item) continue
+        if (!item) return
         validateRaceKey(item.id, item.raceDate)
-        result.push(item)
-      }
+        if (item.raceDate !== day || row.name !== `${item.id}.json`) conflict('保存済みの開催情報が一致しません。')
+        records.set(row.path, item)
+      })
+      result.push(...records.values())
       if (result.length >= 36) break
     }
     return result.sort((a, b) => b.raceDate.localeCompare(a.raceDate) || String(a.postTime ?? '').localeCompare(String(b.postTime ?? '')) || a.id.localeCompare(b.id)).slice(0, 36)
+  }
+  async function dashboardRace(item, reviewRow, timestamp) {
+    const { id, raceDate } = item, base = racePrefix(id, raceDate)
+    const [observations, forecasts, receipts] = await Promise.all([
+      list(`${base}/observations`, { limit: 1, column: 'created_at', order: 'desc' }),
+      list(`${base}/ledger/forecasts`, { limit: 1 }),
+      list(`${base}/ledger/receipts`, { limit: 1 }),
+    ])
+    // Collector updates carry cumulative snapshots for the race. Use one published payload.
+    const [stored, receipt] = await Promise.all([
+      observations[0] ? store.get(observations[0].path) : null,
+      receipts[0] ? store.get(receipts[0].path) : null,
+    ])
+    if (observations.length && (!stored || stored.ownerId !== ownerId || stored.race?.raceId !== id
+      || stored.race?.raceDate !== raceDate)) conflict('開催情報の観測範囲が一致しません。')
+    if (receipts.length && (!receipt || receipt.ownerId !== ownerId || receipt.raceId !== id || receipt.raceDate !== raceDate
+      || typeof receipt.forecastId !== 'string' || !validTimestamp(receipt.receivedAt) || !validTimestamp(receipt.cutoffAt)
+      || Date.parse(receipt.receivedAt) > Math.min(timestamp, Date.parse(receipt.cutoffAt)))) conflict('予想の受領記録を確認できません。')
+    const race = stored ? raceMeta(stored.race) : item
+    const horses = stored?.race.race.horses ?? []
+    const field = horses.filter(horse => !horse.cancelled).map(horse => Number(horse.no))
+    const odds = (stored?.race.snapshots ?? []).filter(row => row.kind === 'observed' && field.length >= 2
+      && Object.keys(row.odds).length === field.length && field.every(no => Object.hasOwn(row.odds, no))
+      && snapshotTiming(row, race).eligible && Date.parse(row.retrievedAt) <= timestamp)
+      .sort((a, b) => Date.parse(b.retrievedAt) - Date.parse(a.retrievedAt))[0]
+    return { ...race, oddsRetrievedAt: odds?.retrievedAt ?? null, hasForecast: forecasts.length > 0 || Boolean(receipt),
+      receipt: receipt ? { ownerId, raceId: id, raceDate, forecastId: receipt.forecastId, receivedAt: receipt.receivedAt } : null,
+      review: reviewRow ? { forecastId: reviewRow.forecastId, state: reviewRow.state } : null }
+  }
+  async function getDashboard() {
+    const timestamp = now(), date = japanRaceDay(timestamp)
+    const [meta, review, races, days] = await Promise.all([
+      latestMeta(), latestReview(), availableRaces(date), list(`${prefix}/race-index`, { limit: 8, order: 'desc' }),
+    ])
+    const reviewByRace = new Map((review?.races ?? []).filter(row => row.raceDate === date).map(row => [row.raceId, row]))
+    const rows = new Map()
+    await forEachBounded(races, 6, async race => { rows.set(race.id, await dashboardRace(race, reviewByRace.get(race.id), timestamp)) })
+    const lastMeeting = days.find(row => /^\d{8}$/.test(row.name) && row.name < date)?.name ?? null
+    const lastDataSentAt = [meta?.status.lastFullSyncAt, meta?.status.lastSuccessfulDataSyncAt]
+      .filter(value => validTimestamp(value) && Date.parse(value) <= timestamp).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null
+    return { schemaVersion: 1, date, lastMeeting, lastDataSentAt,
+      schedule: races.length ? 'scheduled' : await schedule(date), races: races.map(race => rows.get(race.id)) }
   }
   function checkCommand(command) {
     if (!plain(command) || command.ownerId !== ownerId || !/^\d{1,12}-[a-f0-9]{64}$/.test(command.id ?? '')
@@ -404,7 +448,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       .map(row => validateRaceKey(row.name.slice(0, -5), raceDate))))
     return { schemaVersion: 1, races: races.flat() }
   }
-  return { ingestBundle, get, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand }
+  return { ingestBundle, get, getDashboard, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand }
 }
 
 export function safeTokenEqual(left, right) {
@@ -446,6 +490,7 @@ export function createCompanionHandler({ service, authenticateUser, ownerId, com
       }
       if (req.method === 'GET') {
         const query = req.query ?? Object.fromEntries(new URL(req.url, 'https://local.invalid').searchParams)
+        if (query.dashboard === '1' && Object.keys(query).length === 1) return res.status(200).json(await service.getDashboard())
         if (Object.keys(query).some(key => !['raceId', 'raceDate'].includes(key)) || Object.values(query).some(value => typeof value !== 'string')) invalid('取得条件が不正です。')
         return res.status(200).json(await service.get(query))
       }

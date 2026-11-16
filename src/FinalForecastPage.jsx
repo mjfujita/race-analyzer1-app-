@@ -55,7 +55,7 @@ export default function FinalForecastPage(props) {
   return <ForecastWorkspace key={`${scope.userId}:${scope.raceDate}:${scope.raceId}`} {...props} scope={scope} />
 }
 
-function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger, syncedReceipts, review }) {
+function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger, syncedReceipts, review, initialForecastId }) {
   const [loaded] = useState(() => storedLedger(scope))
   const [ledger, setLedger] = useState(loaded.ledger)
   const [savedReceipts, setSavedReceipts] = useState({})
@@ -97,7 +97,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const [opinion, setOpinion] = useState('')
   const [sort, setSort] = useState('expectedReturn')
   const [limit, setLimit] = useState(30)
-  const [selectedForecastId, setSelectedForecastId] = useState(latestSaved?.id ?? '')
+  const [selectedForecastId, setSelectedForecastId] = useState(initialForecastId || latestSaved?.id || '')
   const [importing, setImporting] = useState(false)
   const current = usableHistory.find(item => item.id === snapshotId) ?? usableHistory[0]
   const asOfRecords = useMemo(() => {

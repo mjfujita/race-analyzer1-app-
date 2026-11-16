@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { createCompanionHandler, createCompanionService } from '../server/companion.js'
 import { createSupabaseObjectStore } from '../server/supabaseStore.js'
+import { jraSchedule } from '../server/jraCalendar.js'
 import { validatePredictionModels } from '../src/predictionModel.js'
 import { validateModel } from '../src/modelStore.js'
 
@@ -17,7 +18,7 @@ export default async function handler(req, res) {
   if (!cached) {
     const client = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } })
     const store = createSupabaseObjectStore(client)
-    const service = createCompanionService({ store, ownerId, runtimeValidator: model => {
+    const service = createCompanionService({ store, ownerId, schedule: jraSchedule, runtimeValidator: model => {
       validatePredictionModels(model)
       if (model.baseModel != null) validateModel(model.baseModel)
     } })
