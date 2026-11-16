@@ -244,7 +244,7 @@ export async function main(){
     sourceDb:resolve(options['source-db']??privateConfig.sourceDb??join(homedir(),'projects/backend/race.db')),
     stateDir:resolve(options['state-dir']??privateConfig.stateDir??join(ROOT,'collector/state')),
     output:resolve(options.output??privateConfig.output??join(ROOT,'pipeline/output')),
-    profile:resolve(options.profile??privateConfig.profile??join(ROOT,'collector/profile'))}
+    profile:resolve(options.profile??privateConfig.chromiumProfile??privateConfig.profile??join(ROOT,'collector/chromium-profile'))}
   config.downloads=join(config.stateDir,'downloads');await mkdir(config.downloads,{recursive:true,mode:0o700})
   config.originalSourceDb=config.sourceDb
   const prepared=await json(join(config.stateDir,'derived/prepared-source.json'),null)
@@ -254,7 +254,8 @@ export async function main(){
   if(localModified>Date.parse(state.lastFullSyncAt??'1970-01-01'))state.pendingFullSync=true
   if(options.mode==='sync'){console.log(JSON.stringify(await synchronize(await json(join(config.output,'companion.bundle.json')),config)));return}
   const httpCredentials=config.jrdbUser&&config.jrdbPassword?{username:config.jrdbUser,password:config.jrdbPassword,origin:'https://jrdb.com'}:undefined
-  const context=await chromium.launchPersistentContext(config.profile,{channel:'chrome',headless:options.mode!=='login'&&!options.headful,httpCredentials,acceptDownloads:true})
+  // A separate macOS app bundle keeps background collection from intercepting normal Chrome launches.
+  const context=await chromium.launchPersistentContext(config.profile,{channel:'chromium',headless:options.mode!=='login'&&!options.headful,httpCredentials,acceptDownloads:true})
   const page=context.pages()[0]??await context.newPage()
   let stopped=false;process.once('SIGTERM',()=>{stopped=true});process.once('SIGINT',()=>{stopped=true})
   try{
