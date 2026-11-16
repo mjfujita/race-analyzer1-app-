@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { CloudSun, Flag } from 'lucide-react'
-import { decisionCutoff, formatRaceTime, raceTimestamp } from './raceTime.js'
+import { decisionCutoff, formatRaceTime } from './raceTime.js'
 import { capturedPaceRows, readPaceResults, recordedPaceRows } from './paceHistory.js'
 import { loadModel } from './modelStore.js'
 import { buildAbilityField } from './marketModel.js'
@@ -43,8 +43,6 @@ function positionProfile(race, horse, style) {
 }
 
 export default function PacePage({ race, horses, statistics = [], earlierRaces = [], userId }) {
-  const [recorded, setRecorded] = useState(() => readPaceResults(userId, race))
-  const [error, setError] = useState('')
   const [asofOnly, setAsofOnly] = useState(true)
   const cloud = readCloudRace(userId, race)
   const models = loadRuntimeModel(userId)
@@ -56,36 +54,8 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
   const history = readOddsHistory(oddsStorageKey(userId, race), { asOf: modelCutoff })
   const prediction = applyPredictionModels({ race, field: ability.field, odds: history[0]?.odds ?? {}, history, context, models,
     cutoffAt: modelCutoff, abilityModelId: ability.model.id })
-  function saveResult(event) {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    const raceNo = Number(form.get('raceNo'))
-    const field = Number(form.get('field'))
-    const positions = ['first', 'second', 'third'].map(key => Number(form.get(key)))
-    const publishedAt = raceTimestamp(race, form.get('publishedTime'))
-    const earlier = earlierRaces.find(row => Number(row.race_no) === raceNo)
-    const startAt = earlier && raceTimestamp(race, earlier.post_time)
-    if (!earlierRaces.some(row => row.race_no === raceNo)
-      || !Number.isInteger(field) || field < 6 || field > 18
-      || positions.some(pos => !Number.isInteger(pos) || pos < 1 || pos > field)
-      || !publishedAt || !startAt || publishedAt <= startAt || Date.parse(publishedAt) > Date.now()) {
-      setError('実出走頭数と4角順位を確認してください。')
-      return
-    }
-    try {
-      const eventsKey = `pace-events:v2:${userId}:${race.raceDate}:${race.placeCode}`
-      const events = JSON.parse(localStorage.getItem(eventsKey) ?? '[]')
-      if (!Array.isArray(events)) throw new Error('保存記録の形式を確認できません。')
-      const entry = { id: crypto.randomUUID(), raceNo, field, positions, publishedAt, retrievedAt: new Date().toISOString(),
-        revisionOf: recorded[raceNo]?.id ?? null }
-      localStorage.setItem(eventsKey, JSON.stringify([...events, entry]))
-      setRecorded({ ...recorded, [raceNo]: entry })
-      setError('')
-    } catch (err) { setError(err.message || 'このブラウザに保存できませんでした。') }
-  }
-
   const cutoffAt = asofOnly ? decisionCutoff(race) ?? 'unknown' : null
-  const manualResults = recordedPaceRows(earlierRaces, cutoffAt ? readPaceResults(userId, race, { cutoffAt }) : recorded, { cutoffAt })
+  const manualResults = recordedPaceRows(earlierRaces, readPaceResults(userId, race, { cutoffAt }), { cutoffAt })
   const observations = cloud?.race?.earlierPaceResults ?? cloud?.race?.earlierResults ?? []
   const capturedResults = capturedPaceRows(race, observations, { cutoffAt })
   const excluded = asofOnly ? capturedPaceRows(race, observations).length - capturedResults.length : 0
@@ -165,22 +135,6 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
           </ul>}
         </div>)}
       </div>
-      {earlierRaces.length > 0 && <details className="mt-3 text-sm text-slate-700">
-        <summary className="cursor-pointer font-semibold text-[#2B6CB0]">手入力で結果を補う</summary>
-        <p className="mt-1 text-xs text-slate-500">4角で同じ集団にいた馬は、集団の先頭順位を入力してください。</p>
-        <form onSubmit={saveResult} className="mt-2 flex flex-wrap items-end gap-2">
-          <label>対象レース<select name="raceNo" className="ml-1 rounded border border-slate-300 p-1">
-            {earlierRaces.map(row => <option key={row.race_no} value={row.race_no}>{row.race_no}R {surfaceLabels[row.surface_code]}</option>)}
-          </select></label>
-          <label>結果の公開時刻<input type="time" name="publishedTime" required className="ml-1 rounded border border-slate-300 p-1" /></label>
-          {[['field', '実出走頭数', 6], ['first', '1着馬の4角', 1], ['second', '2着馬の4角', 1], ['third', '3着馬の4角', 1]]
-            .map(([name, label, min]) => <label key={name}>{label}
-              <input className="ml-1 w-16 rounded border border-slate-300 p-1" type="number" name={name} min={min} max="18" required />
-            </label>)}
-          <button type="submit" className="rounded bg-[#0B2545] px-3 py-1.5 text-white">このブラウザに保存</button>
-          {error && <p role="alert" className="text-red-700">{error}</p>}
-        </form>
-      </details>}
     </section>
     <section className={card}>
       <h3 className="font-bold text-[#0B2545]">出走馬ごとの根拠</h3>

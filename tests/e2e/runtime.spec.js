@@ -192,6 +192,7 @@ test('track tendency counts JRDB turf and dirt results and separates late retrie
   await applySyntheticSync(page, payload)
   await page.getByRole('button', { name: '展開・天候', exact: true }).click()
   const panel = page.locator('section').filter({ has: page.getByRole('heading', { name: '当日開催の傾向' }) })
+  await expect(panel.getByRole('button', { name: 'このブラウザに保存' })).toHaveCount(0)
   await expect(panel).toContainText('JRDB自動取得 1レース')
   await expect(panel).toContainText('8R 1800m　4角前方 2/3頭')
   await expect(panel).toContainText('対象外の1レース')
