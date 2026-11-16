@@ -1,0 +1,124 @@
+import { expect, test } from '@playwright/test'
+import { race, horses, demoSnapshots } from '../../dev/fixtures.js'
+import { createCompanionHandler, createCompanionService } from '../../server/companion.js'
+import { memoryStore, request } from '../fixtures/companion.js'
+
+const now = '2026-11-15T06:25:00.000Z'
+const ownerId = 'synthetic-dashboard-owner'
+const token = 'synthetic-dashboard-access'
+
+async function connect(page, handler, stamp = now) {
+  await page.clock.setFixedTime(new Date(stamp))
+  await page.addInitScript(({ ownerId, token }) => {
+    localStorage.setItem('sb-ojolpyqetwqqnlzhsrgq-auth-token', JSON.stringify({
+      access_token: token, refresh_token: 'fixture-refresh-token',
+      expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: ownerId, email: 'dashboard@example.invalid' },
+    }))
+  }, { ownerId, token })
+  // The dashboard uses the private companion API independently of the PACI database.
+  await page.route('https://*.supabase.co/storage/**', route => route.fulfill({ status: 503, json: { message: 'fixture database unavailable' } }))
+  await page.route('**/api/companion*', async route => {
+    const incoming = route.request()
+    const response = await request(handler, {
+      method: incoming.method(), token: incoming.headers().authorization?.slice(7) ?? null,
+      query: Object.fromEntries(new URL(incoming.url()).searchParams), body: incoming.postData() ?? undefined,
+    })
+    await route.fulfill({ status: response.status, headers: response.headers, json: response.body })
+  })
+}
+
+function setup(stamp = now, schedule) {
+  const service = createCompanionService({ store: memoryStore(), ownerId, now: () => Date.parse(stamp), schedule })
+  const handler = createCompanionHandler({ service, ownerId, authenticateUser: async incoming => incoming === token ? { id: ownerId } : null })
+  return { service, handler }
+}
+
+test('the signed-in home shows race progress, opens the correct forecast, and links to its review', async ({ page }) => {
+  const { service, handler } = setup()
+  const nextRace = { ...race, name: '予想を開く対象', horses }
+  const missing = { ...race, id: 'DEMO260511', placeCode: '05', name: 'データ不足のレース', postTime: '1536', horses }
+  const completed = { ...race, id: 'DEMO260809', name: '照合済みのレース', raceNo: 9, postTime: '1420', horses }
+  const currentOdds = demoSnapshots().find(item => item.time === '15:20')
+  const partialOdds = { ...currentOdds, id: 'partial', raceId: missing.id, odds: { 1: 3, 2: 4 } }
+  const reviewRow = item => ({ forecastId: `review-${item.id}`, raceDate: item.raceDate, raceId: item.id,
+    state: 'matched', verified: true, modelVersion: 'synthetic', topPick: 2, winnerNo: 2,
+    field: [{ no: 1, probability: 0.4, rank: 2 }, { no: 2, probability: 0.6, rank: 1 }] })
+  await service.ingestBundle({
+    schemaVersion: 1, kind: 'race-companion-bundle', generatedAt: now,
+    status: { state: 'ready', lastRunAt: now, lastFullSyncAt: '2026-11-15T06:24:00.000Z' },
+    races: [[nextRace, [currentOdds]], [missing, [partialOdds]], [completed, []]].map(([item, snapshots]) => ({
+      raceId: item.id, raceDate: item.raceDate, race: item, snapshots, observations: [],
+    })),
+    forecastReview: { schemaVersion: 1, ownerId, generatedAt: now, totalForecasts: 2, eligibleRaces: 2,
+      statesByStack: [], active: [], versions: [], races: [reviewRow({ ...completed, id: 'other-race' }), reviewRow(completed)] },
+  })
+  await connect(page, handler)
+  const problems = []
+  page.on('pageerror', error => problems.push(error.message))
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: '開催ダッシュボード' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '最初にやること' })).toBeVisible()
+  await expect(page.getByText('最終受信 11/15 15:24')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '京都11R 予想を開く対象' })).toBeVisible()
+  await expect(page.getByText('判断締切 15:30')).toBeVisible()
+  await expect(page.getByText('単勝オッズ取得待ち')).toBeVisible()
+  await expect(page.getByText('着順照合済み')).toBeVisible()
+  await expect(page.getByText('人気落ち実力馬あり')).toHaveCount(0)
+  await page.screenshot({ path: '.qa/race-day-dashboard-desktop.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: '.qa/race-day-dashboard-mobile.png', fullPage: true })
+
+  await page.getByRole('button', { name: '最終予想を開く', exact: true }).click()
+  await expect(page.getByRole('button', { name: '最終予想・買い目' })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByLabel('オッズの観測時刻').locator('option')).toContainText(['最新を自動表示', '15:20'])
+  await page.getByRole('button', { name: '10分前の予想を固定保存' }).click()
+  await expect(page.getByText(/クラウドにも保存しました。.*締切前の受領を確認しました。/)).toBeVisible()
+  const dashboardButton = page.getByRole('navigation', { name: '開催メニュー' }).getByRole('button', { name: '開催ダッシュボード' })
+  await dashboardButton.click()
+  const saved = page.getByRole('button', { name: '京都11Rの保存した予想を見る' })
+  await expect(saved).toBeVisible()
+  await expect(page.getByText('予想を締切前に受領済み')).toBeVisible()
+  await saved.click()
+  await expect(page.getByText('締切前受領 11/15 15:25', { exact: true })).toBeVisible()
+
+  await dashboardButton.click()
+  await page.getByRole('button', { name: '京都9Rの振り返る' }).click()
+  await expect(page.getByLabel('対象レース')).toHaveValue(`review-${completed.id}`)
+  await dashboardButton.click()
+  await page.getByRole('button', { name: 'レース一覧を開く', exact: true }).last().click()
+  await expect(page.getByRole('button', { name: /データ不足のレース/ })).toBeVisible()
+  await dashboardButton.click()
+  await page.getByRole('button', { name: '同期状況を確認' }).click()
+  await expect(page.getByRole('heading', { name: '収集と同期の状態' })).toBeVisible()
+  expect(problems).toEqual([])
+})
+
+test('the home distinguishes no meeting, an unconfirmed schedule, and API errors', async ({ page }) => {
+  let state = 'no-races'
+  const stamp = '2026-11-17T00:00:00.000Z'
+  const { handler } = setup(stamp, async () => state)
+  await connect(page, handler, stamp)
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: '本日の開催なし' })).toBeVisible()
+  await page.getByRole('button', { name: '予想の振り返りを開く' }).click()
+  await expect(page.getByRole('heading', { name: '予想の振り返り' })).toBeVisible()
+  state = 'unconfirmed'
+  await page.getByRole('navigation', { name: '開催メニュー' }).getByRole('button', { name: '開催ダッシュボード' }).click()
+  await expect(page.getByRole('heading', { name: '開催情報を確認中' })).toBeVisible()
+  state = 'scheduled'
+  await page.reload()
+  await expect(page.getByRole('heading', { name: '開催情報の取得待ち' })).toBeVisible()
+  await page.route('**/api/companion?dashboard=1', route => route.fulfill({
+    status: 403, json: { error: { message: 'このデータへのアクセス権がありません。' } },
+  }))
+  await page.reload()
+  await expect(page.getByRole('alert')).toContainText('このデータへのアクセス権がありません。')
+  await expect(page.getByRole('heading', { name: '本日の開催なし' })).toHaveCount(0)
+})
+
+test('signed-out visitors see the login screen before the dashboard', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'ログイン', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '開催ダッシュボード' })).toHaveCount(0)
+})

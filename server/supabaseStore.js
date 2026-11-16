@@ -25,12 +25,12 @@ export function createSupabaseObjectStore(client, bucket = 'race-research') {
     }
     throw new ApiError(503, 'storage_unavailable', '保存を完了できませんでした。再送できます。')
   }
-  async function list(prefix, { limit = 2000, order = 'asc', complete = false } = {}) {
+  async function list(prefix, { limit = 2000, order = 'asc', complete = false, column = 'name' } = {}) {
     ensurePath(prefix)
     const total = limit + (complete ? 1 : 0)
     const rows = [], pageSize = Math.min(total, 1000)
     for (let offset = 0; offset < total; offset += pageSize) {
-      const { data, error } = await storage.list(prefix, { limit: Math.min(pageSize, total - offset), offset, sortBy: { column: 'name', order } })
+      const { data, error } = await storage.list(prefix, { limit: Math.min(pageSize, total - offset), offset, sortBy: { column, order } })
       if (error) throw new ApiError(503, 'storage_unavailable', '保存記録の一覧を取得できませんでした。')
       rows.push(...data.map(item => ({ name: item.name, path: `${prefix}/${item.name}`, folder: item.id === null })))
       if (data.length < pageSize) break

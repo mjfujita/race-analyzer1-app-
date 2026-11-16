@@ -19,10 +19,10 @@ function ScoreTable({ comparison, caption }) {
   </table></div>
 }
 
-export default function ForecastReviewPage({ review, loading, error, onRefresh }) {
-  const [selected, setSelected] = useState('')
+export default function ForecastReviewPage({ review, loading, error, onRefresh, initialForecastId = '' }) {
+  const [selected, setSelected] = useState(initialForecastId)
   const [versionId, setVersionId] = useState('')
-  const race = review?.races.find(row => row.forecastId === selected) ?? review?.races[0]
+  const race = selected ? review?.races.find(row => row.forecastId === selected) : review?.races[0]
   const version = review?.versions.find(item => item.id === versionId) ?? review?.versions[0]
   const bins = version?.evaluation?.after?.bins ?? []
   return <div className="space-y-4">
@@ -39,7 +39,8 @@ export default function ForecastReviewPage({ review, loading, error, onRefresh }
             ['実際に保存した予想の1位的中率', percent(review.actual?.topPickRate)], ['集計時刻', formatRaceTime(review.generatedAt)]].map(([name, value]) =>
             <div key={name} className="rounded-xl bg-slate-50 p-3"><dt className="text-xs text-slate-600">{name}</dt><dd className="mt-1 font-semibold text-[#0B2545]">{value}</dd></div>)}
         </dl>
-        {!race && <p className="mt-4 text-sm text-slate-600">最終予想・買い目でACE原案を固定保存すると、ここで着順と照合できます。</p>}
+        {!race && <p className="mt-4 text-sm text-slate-600">{selected ? '選んだ予想の振り返りを確認中です。' : '最終予想・買い目でACE原案を固定保存すると、ここで着順と照合できます。'}</p>}
+        {!race && selected && review.races.length > 0 && <button type="button" className="mt-2 text-sm font-semibold text-sky-800 underline" onClick={() => setSelected('')}>取り込み済みの振り返りを見る</button>}
         {Object.keys(review.sourceCounts ?? {}).length > 0 && <p className="mt-3 text-xs text-slate-600">取込済みの記録数 {Object.entries(review.sourceCounts).map(([name, count]) => `${name} ${count}`).join(' ／ ')}</p>}
       </>}
     </section>

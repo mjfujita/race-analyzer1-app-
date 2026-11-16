@@ -5,14 +5,15 @@ import AbilityPage from './AbilityPage.jsx'
 import OddsReview from './OddsReview.jsx'
 import ForecastReviewPage from './ForecastReviewPage.jsx'
 import AutomationPanel from './AutomationPanel.jsx'
+import RaceDayDashboard from './RaceDayDashboard.jsx'
 import { useCompanion } from './useCompanion.js'
-import { applyCloudData, fetchCloudRace, enrichCloudHorses, syncLedgerToCloud, requestRaceCapture } from './cloudStore.js'
+import { applyCloudData, fetchCloudRace, fetchRaceDashboard, enrichCloudHorses, syncLedgerToCloud, requestRaceCapture } from './cloudStore.js'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ChevronRight, Search, Target, TrendingUp, AlertTriangle,
   CheckCircle2, Sparkles, ArrowUpDown, Star, Flame, Layers2,
   Activity, Info, Zap, Layers, Clock, LogOut, MapPin, Flag,
-  Eye, Lightbulb, ListFilter, Gauge, Users, Wand2,
+  Eye, Gauge, Users, Wand2, LayoutDashboard,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import { loadDb, queryAll, dbMeta } from './lib/db'
@@ -84,16 +85,6 @@ const ROLE_STYLES = {
 const roleStyle = (r) => ROLE_STYLES[r] || 'bg-slate-100 text-slate-600'
 const UPGRADE_ROLES = new Set(['昇級妙味', '昇級確認', '昇級後通用', '昇級注意'])
 const isUpgradeCategory = (t) => t && (t.startsWith('昇級') || t === '昇級初戦')
-
-// 本日一覧: バッジ/シナリオタグ → フィルタキーの対応
-const tagToDayFilter = (t) => {
-  if (!t) return null
-  if (t === '人気落ち実力馬あり' || t === '妙味軸') return 'value'
-  if (t === '未勝利・初出走注意' || t === '未勝利注意' || t === '初出走注意') return 'maiden'
-  if (t === '地方馬注意' || t === '地方注意') return 'local'
-  if (t === 'A優先' || t === 'B優先') return 'notable'
-  return null
-}
 
 const ABILITY_COLORS = {
   S: 'text-[#0B2545] font-black',
@@ -555,28 +546,6 @@ const dataApi = {
     return queryAll(db,
       'SELECT race_date AS date, COUNT(*) AS race_count FROM jrdb_races GROUP BY race_date ORDER BY race_date DESC LIMIT 60')
   },
-  // 本日注目レース画面用: jrdb_races と race_summaries を結合した軽量一覧
-  getDaySummaries(db, date) {
-    const hasSummary = queryAll(db,
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='race_summaries'").length > 0
-    const rows = queryAll(db, `
-      SELECT r.race_key, r.place_code, r.race_no, r.post_time, r.distance, r.surface_code,
-             r.grade, r.field_size, r.race_name${hasSummary ? ', s.summary_json' : ''}
-      FROM jrdb_races r
-      ${hasSummary ? 'LEFT JOIN race_summaries s ON r.race_key = s.race_key' : ''}
-      WHERE r.race_date = ?
-      ORDER BY r.place_code, r.race_no`, [date])
-    return rows.map((r) => {
-      let summary = null
-      if (r.summary_json) { try { summary = JSON.parse(r.summary_json) } catch { summary = null } }
-      return {
-        ...r,
-        place: PLACE_NAMES[r.place_code] || r.place_code,
-        surface: SURFACE_NAMES[r.surface_code] || r.surface_code,
-        summary,
-      }
-    })
-  },
   getRacesOfDate(db, date) {
     const rows = queryAll(db,
       `SELECT race_key, place_code, race_no, post_time, distance, surface_code, grade, field_size, race_name
@@ -723,6 +692,32 @@ function MainApp({ session, onLogout }) {
   const [dates, setDates] = useState([])
 
   const [tab, setTab] = useState('today')
+  const [dashboard, setDashboard] = useState({ data: null, loading: true, error: null })
+  const [reviewForecastId, setReviewForecastId] = useState('')
+  const [initialForecastId, setInitialForecastId] = useState('')
+  const dashboardReceipt = dashboard.data?.races.find(item => item.id === raceInfo?.id
+    && item.raceDate === String(raceInfo?.raceDate).replaceAll('-', ''))?.receipt
+  const receipts = dashboardReceipt
+    ? { [dashboardReceipt.forecastId]: dashboardReceipt, ...sync.data?.receipts } : sync.data?.receipts
+  useEffect(() => {
+    if (tab !== 'today') return
+    const controller = new AbortController()
+    let active = false
+    async function refresh() {
+      if (active || document.hidden) return
+      active = true
+      try {
+        const data = await fetchRaceDashboard(controller.signal)
+        if (!controller.signal.aborted) setDashboard({ data, loading: false, error: null })
+      } catch (error) {
+        if (!controller.signal.aborted) setDashboard(previous => ({ ...previous, loading: false, error: error.message }))
+      } finally { active = false }
+    }
+    void refresh()
+    const timer = setInterval(refresh, 60_000)
+    document.addEventListener('visibilitychange', refresh)
+    return () => { controller.abort(); clearInterval(timer); document.removeEventListener('visibilitychange', refresh) }
+  }, [tab, session.user.id])
   const [selectedId, setSelectedId] = useState(null)
   const [sortKey, setSortKey] = useState('ability')
   const [roleFilter, setRoleFilter] = useState('all')
@@ -785,14 +780,15 @@ function MainApp({ session, onLogout }) {
   const resetWidth = () => { setListWidthPct(46); localStorage.setItem(LIST_WIDTH_KEY, '46') }
 
   // レース選択 → 評価ロード → 出走馬分析へ
-  const loadAsTarget = (raceKey, goTab = 'analysis') => {
+  const loadAsTarget = (raceKey, goTab = 'analysis', currentMetadata = null) => {
     if (!db) return
     try {
       const data = dataApi.getEvaluation(db, raceKey)
       if (!data) { alert('このレースには評価データがありません（evaluate_all.py の再実行が必要かも）'); return }
+      if (!currentMetadata) setInitialForecastId('')
       const [metadata] = queryAll(db, 'SELECT race_date, post_time, field_size, place_code, lr_code FROM jrdb_races WHERE race_key = ?', [raceKey])
       setRaceInfo({ ...data.race, id: raceKey, raceDate: metadata?.race_date ?? data.race.raceDate,
-        postTime: metadata?.post_time ?? data.race.postTime, fieldSize: metadata?.field_size ?? data.race.fieldSize,
+        postTime: currentMetadata?.postTime ?? metadata?.post_time ?? data.race.postTime, fieldSize: metadata?.field_size ?? data.race.fieldSize,
         placeCode: metadata?.place_code ?? data.race.placeCode, lr: ({ '1': '右', '2': '左', '3': '直線', '9': '直線' })[metadata?.lr_code] ?? '' })
       setHorses(data.horses); setSummary(data.summary)
       setCurrentRaceKey(raceKey); setSelectedId(data.horses[0]?.id || null)
@@ -800,10 +796,11 @@ function MainApp({ session, onLogout }) {
     } catch (err) { console.error(err); alert('評価データの読み込みに失敗: ' + err.message) }
   }
 
-  const loadCollectedRace = async (item) => {
+  const loadCollectedRace = async (item, { fromDashboard = false } = {}) => {
     const raceKey = item.id ?? item.raceId
-    if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, 'finalForecast'); return }
     try {
+      setInitialForecastId(fromDashboard ? item.receipt?.forecastId ?? '' : '')
+      if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, 'finalForecast', fromDashboard ? item : null); return }
       const metadata = { ...item, id: raceKey }
       const payload = await fetchCloudRace(metadata)
       const received = payload.race
@@ -813,7 +810,10 @@ function MainApp({ session, onLogout }) {
         surface: received.surface ?? SURFACE_NAMES[received.surfaceCode] })
       setHorses(received.horses.map(horse => ({ ...horse, id: horse.id ?? `${raceKey}-${horse.no}`, pastRuns: horse.pastRuns ?? [] })))
       setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab('finalForecast')
-    } catch (error) { alert(error.message) }
+    } catch (error) {
+      if (fromDashboard) throw error
+      alert(error.message)
+    }
   }
 
   // ---- 出走馬一覧の表示用ソート/フィルタ ----
@@ -880,12 +880,22 @@ function MainApp({ session, onLogout }) {
     return list
   }, [roleFilter, sortKey, search, horses])
 
-  // ---------- DB ロード中 ----------
-  if (!db) {
+  const openRaceList = (day = dashboard.data?.date) => {
+    if (day && (dashboard.data?.races.some(race => race.raceDate === day) || dates.some(item => item.date === day))) setSelectedDate(day)
+    setTab('races')
+  }
+  const openForecastReview = (forecastId = '') => {
+    setReviewForecastId(forecastId)
+    setTab('forecastReview')
+    void refreshCompanion()
+  }
+
+  // The local PACI database is loaded independently of the cloud dashboard.
+  const renderDbStatus = () => {
     const pct = dbProgress.total ? Math.round((dbProgress.loaded / dbProgress.total) * 100) : 0
     const mb = (n) => (n / 1024 / 1024).toFixed(1)
     return (
-      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-4">
+      <div className="flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-8 w-full max-w-md text-center">
           {dbError ? (
             <>
@@ -914,310 +924,34 @@ function MainApp({ session, onLogout }) {
   }
 
   // ================================================================
-  // タブ: 本日注目レース
-  // ================================================================
-  const TabToday = () => {
-    const [daySummaries, setDaySummaries] = useState([])
-    const [dayFilter, setDayFilter] = useState('all')
-
-    useEffect(() => {
-      if (!selectedDate) return
-      try { setDaySummaries(dataApi.getDaySummaries(db, selectedDate)) } catch (e) { console.error(e) }
-    }, [selectedDate])
-
-    const prio = (r) => r.summary?.racePriority || 'C'
-    const prioRank = { A: 4, B: 3, C: 2, D: 1 }
-
-    // サマリーカード集計
-    const counts = useMemo(() => {
-      let notable = 0, valueAxis = 0, maiden = 0, local = 0
-      for (const r of daySummaries) {
-        const s = r.summary
-        if (!s) continue
-        if (s.racePriority === 'A' || s.racePriority === 'B') notable++
-        if ((s.counts?.valueAxis || 0) >= 1) valueAxis++
-        if ((s.raceScenarioTags || []).includes('未勝利・初出走注意')) maiden++
-        if ((s.counts?.localCaution || 0) >= 1) local++
-      }
-      return { notable, valueAxis, maiden, local }
-    }, [daySummaries])
-
-    // フィルタ（会場別・まず見るべき 共通で連動）
-    const filtered = useMemo(() => {
-      let list = [...daySummaries]
-      switch (dayFilter) {
-        case 'notable': list = list.filter((r) => ['A', 'B'].includes(prio(r))); break
-        case 'value': list = list.filter((r) => (r.summary?.counts?.valueAxis || 0) >= 1); break
-        case 'maiden': list = list.filter((r) => (r.summary?.raceScenarioTags || []).includes('未勝利・初出走注意')); break
-        case 'local': list = list.filter((r) => (r.summary?.counts?.localCaution || 0) >= 1); break
-        case 'exclude': list = list.filter((r) => prio(r) !== 'D' && !r.summary?.isShinba); break
-        default: break
-      }
-      return list
-    }, [daySummaries, dayFilter])
-
-    // まず見るべきレース（フィルタ連動・優先度＋注目数で上位）
-    const topRaces = useMemo(() => {
-      return [...filtered]
-        .filter((r) => r.summary && !r.summary.isShinba && prio(r) !== 'D')
-        .sort((a, b) => {
-          const pr = prioRank[prio(b)] - prioRank[prio(a)]
-          if (pr) return pr
-          return (b.summary?.counts?.notable || 0) - (a.summary?.counts?.notable || 0)
-        }).slice(0, 6)
-    }, [filtered])
-
-    // 会場別グループ
-    const groups = []
-    const idx = new Map()
-    for (const r of filtered) {
-      const key = r.place_code
-      if (!idx.has(key)) { idx.set(key, groups.length); groups.push({ place: r.place, place_code: key, items: [] }) }
-      groups[idx.get(key)].items.push(r)
-    }
-
-    // KPIカード → フィルタ連動（クリックで該当条件に絞り込み）
-    const SummaryCard = ({ icon: Icon, color, label, value, filterKey }) => {
-      const active = dayFilter === filterKey
-      return (
-        <button onClick={() => setDayFilter(active ? 'all' : filterKey)}
-          className={`bg-white border rounded-2xl p-4 shadow-sm flex items-center gap-3 text-left transition-all hover:shadow ${
-            active ? 'border-[#0B2545] ring-1 ring-[#0B2545]/20' : 'border-slate-200/80 hover:border-[#4A90E2]/50'}`}>
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${color}`}><Icon className="w-5 h-5" /></div>
-          <div className="min-w-0">
-            <div className="text-[11px] text-slate-500 font-medium truncate">{label}</div>
-            <div className="text-2xl font-black tabular-nums text-[#0B2545] leading-none mt-0.5">{value}</div>
-          </div>
-        </button>
-      )
-    }
-
-    // 行/カード内のバッジ → クリックでフィルタ（行クリックの遷移とは分離）
-    // 親が <button> のため span(role=button) を使い、ボタンのネストを避ける
-    const FilterPill = ({ tag, className }) => {
-      const fk = tagToDayFilter(tag)
-      if (!fk) return <Pill className={className}>{tag}</Pill>
-      const onClick = (e) => { e.stopPropagation(); setDayFilter(dayFilter === fk ? 'all' : fk) }
-      return (
-        <span role="button" tabIndex={0} onClick={onClick}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick(e) }}
-          className="hover:brightness-95 transition cursor-pointer" title={`${tag}で絞り込み`}>
-          <Pill className={className}>{tag}</Pill>
-        </span>
-      )
-    }
-
-    const DAY_FILTERS = [
-      ['all', 'すべて'], ['notable', '注目のみ'], ['value', '人気落ち実力馬あり'],
-      ['maiden', '未勝利注意'], ['local', '地方馬注意'], ['exclude', '見送り除外'],
-    ]
-
-    return (
-      <div className="space-y-6 pb-16">
-        {/* ヘッダ */}
-        <div className="flex items-end justify-between flex-wrap gap-3">
-          <div>
-            <div className="text-sm font-bold text-[#4A90E2] tracking-wide tabular-nums">{fmtDate(selectedDate)}</div>
-            <h1 className="text-3xl font-black text-[#0B2545] mt-1">本日のレース一覧</h1>
-            <p className="text-sm text-slate-500 mt-1">朝の時点で、見るべきレースを絞り込む</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-500">開催日</span>
-            <select value={selectedDate || ''} onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-white border border-slate-200 text-sm font-medium text-slate-800 py-1.5 px-3 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#4A90E2]">
-              {dates.map((d) => (
-                <option key={d.date} value={d.date}>{fmtDate(d.date)} ({d.race_count}R)</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <section aria-labelledby="race-day-guide" className="rounded-2xl border border-sky-200 bg-white px-4 py-4 sm:px-5">
-          <h2 id="race-day-guide" className="text-base font-bold text-[#0B2545]">最初にやること</h2>
-          <ol className="mt-3 grid list-inside list-decimal gap-3 text-sm text-slate-800 marker:font-bold marker:text-sky-700 md:grid-cols-3 md:gap-5">
-            <li>
-              <strong>MacでJRDBにログイン</strong>
-              <p className="mt-1 text-xs leading-relaxed text-slate-600">取得用のMacを起動し、専用ChromiumでJRDBの会員ページにログインします。</p>
-            </li>
-            <li>
-              <strong>取得データの同期を確認</strong>
-              <p className="mt-1 text-xs leading-relaxed text-slate-600">取得データの最終送信時刻を確認し、画面を更新するときは「今すぐ同期」を押します。</p>
-              <button type="button" onClick={() => setTab('automation')} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">自動取得・学習を開く</button>
-            </li>
-            <li>
-              <strong>レースを選び、予想を固定保存</strong>
-              <p className="mt-1 text-xs leading-relaxed text-slate-600">開催日とレースを選び、発走10分前までに「最終予想・買い目」で予想を固定保存します。</p>
-              <button type="button" onClick={() => setTab('races')} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">レース一覧を開く</button>
-            </li>
-          </ol>
-          <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-600">
-            結果の取込後は <button type="button" onClick={() => setTab('forecastReview')} className="font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">予想の振り返り</button> で保存した予想と着順を確認できます。
-          </p>
-        </section>
-
-        {/* サマリーカード（クリックで絞り込み） */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <SummaryCard icon={Star} color="bg-rose-50 text-rose-600" label="注目レース" value={counts.notable} filterKey="notable" />
-          <SummaryCard icon={Flame} color="bg-orange-50 text-orange-600" label="人気落ち実力馬あり" value={counts.valueAxis} filterKey="value" />
-          <SummaryCard icon={AlertTriangle} color="bg-emerald-50 text-emerald-600" label="未勝利・初出走注意" value={counts.maiden} filterKey="maiden" />
-          <SummaryCard icon={MapPin} color="bg-purple-50 text-purple-600" label="地方馬注意" value={counts.local} filterKey="local" />
-        </div>
-
-        <div className="bg-[#4A90E2]/5 border border-[#4A90E2]/20 rounded-xl px-4 py-2.5 text-xs text-[#2B6CB0] flex items-center gap-2">
-          <Info className="w-4 h-4 shrink-0" /> 能力・展開・市場評価を確認し、最終予想で予算内の買い目と配分を比較できます。実購入前に最新の価格を確認してください。
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
-          <div className="space-y-6">
-            {/* まず見るべきレース */}
-            <div>
-              <h2 className="text-lg font-bold text-[#0B2545] mb-3 flex items-center gap-2"><Eye className="w-5 h-5 text-[#4A90E2]" /> まず見るべきレース</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                {topRaces.length === 0 && (
-                  <div className="col-span-full text-sm text-slate-400 bg-white border border-dashed border-slate-200 rounded-xl p-6 text-center">
-                    注目レースの評価がまだありません（evaluate_all.py の再計算が必要かも）。
-                  </div>
-                )}
-                {topRaces.map((r) => {
-                  const s = r.summary || {}
-                  const p = PRIORITY_STYLES[s.racePriority] || PRIORITY_STYLES.C
-                  const headTag = (s.raceScenarioTags || []).find((t) => SCENARIO_TAG_STYLES[t]) || (s.raceScenarioTags || [])[0]
-                  return (
-                    <button key={r.race_key} onClick={() => loadAsTarget(r.race_key)}
-                      className="text-left bg-white border border-slate-200/80 rounded-xl p-4 shadow-sm hover:border-[#4A90E2]/50 hover:shadow transition-all group">
-                      <div className="flex items-center gap-2 text-xs font-bold text-slate-500 mb-2">
-                        <span className="px-1.5 py-0.5 bg-slate-100 rounded text-slate-700">{r.place}</span>
-                        <span className="text-[#0B2545] tabular-nums">{r.race_no}R</span>
-                        <span className="text-slate-400 font-medium truncate">{s.classLabel || ''}</span>
-                        <ChevronRight className="w-4 h-4 text-slate-300 ml-auto group-hover:text-[#4A90E2]" />
-                      </div>
-                      <div className="flex flex-wrap gap-1 mb-2">
-                        <FilterPill tag={p.label} className={p.cls} />
-                        {headTag && <FilterPill tag={headTag} className={tagStyle(headTag)} />}
-                      </div>
-                      <div className="text-sm font-bold text-slate-900 truncate">{r.race_name}</div>
-                      <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{s.raceScenarioComment || '—'}</p>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* フィルタ */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <ListFilter className="w-4 h-4 text-slate-400" />
-              {DAY_FILTERS.map(([k, label]) => (
-                <button key={k} onClick={() => setDayFilter(k)}
-                  className={`px-3 py-1 text-xs font-bold rounded-full border transition-all ${
-                    dayFilter === k ? 'bg-[#0B2545] text-white border-[#0B2545]' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
-                  {label}
-                </button>
-              ))}
-              <span className="ml-auto text-xs text-slate-400">並び順: 優先度順</span>
-            </div>
-
-            {/* 会場別レース一覧 */}
-            <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(groups.length, 1)}, minmax(0, 1fr))` }}>
-              {groups.map((g) => {
-                const items = [...g.items].sort((a, b) => a.race_no - b.race_no)
-                return (
-                  <div key={g.place_code} className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden flex flex-col">
-                    <div className="px-4 py-2.5 bg-[#0B2545] text-white flex items-center justify-between">
-                      <span className="font-bold tracking-wide">{g.place}</span>
-                      <span className="text-xs font-medium text-slate-300">{items.length}R</span>
-                    </div>
-                    <div className="divide-y divide-slate-100">
-                      {items.map((r) => {
-                        const s = r.summary || {}
-                        const p = s.racePriority
-                        const isHot = p === 'A'
-                        const excluded = s.isShinba || p === 'D'
-                        const tags = (s.raceScenarioTags || []).filter((t) => SCENARIO_TAG_STYLES[t]).slice(0, 2)
-                        return (
-                          <button key={r.race_key} onClick={() => loadAsTarget(r.race_key)}
-                            className={`w-full text-left px-3 py-2.5 flex items-start gap-2.5 transition-colors ${
-                              isHot ? 'bg-rose-50/40 hover:bg-rose-50' : 'hover:bg-slate-50'}`}>
-                            <div className="shrink-0 w-9 text-center">
-                              <div className="text-sm font-bold text-[#0B2545] tabular-nums">{r.race_no}R</div>
-                              <div className="text-[10px] text-slate-400 tabular-nums">{fmtTime(r.post_time)}</div>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-sm font-medium text-slate-800 truncate flex items-center gap-1.5">
-                                {r.grade && <Pill className="bg-rose-50 text-rose-700 border-rose-100">{r.grade === '1' ? 'G1' : r.grade === '2' ? 'G2' : r.grade === '3' ? 'G3' : r.grade === '5' ? '特' : 'L'}</Pill>}
-                                <span className="truncate">{r.race_name}</span>
-                              </div>
-                              <div className="text-[11px] text-slate-500 tabular-nums mt-0.5">{r.surface}{r.distance}m ・ {r.field_size}頭</div>
-                              <div className="flex flex-wrap items-center gap-1 mt-1">
-                                {excluded ? (
-                                  <Pill className="bg-slate-100 text-slate-400 border-slate-200">{s.isShinba ? '除外対象' : '見送り'}</Pill>
-                                ) : tags.map((t) => <FilterPill key={t} tag={t} className={tagStyle(t)} />)}
-                              </div>
-                              {s.raceScenarioComment && (
-                                <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{s.excludeReason || s.raceScenarioComment}</p>
-                              )}
-                            </div>
-                            <div className="shrink-0 self-center flex flex-col items-end gap-1">
-                              {p && <FilterPill tag={(PRIORITY_STYLES[p] || PRIORITY_STYLES.C).label} className={(PRIORITY_STYLES[p] || PRIORITY_STYLES.C).cls} />}
-                              <ChevronRight className="w-4 h-4 text-slate-300" />
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
-              })}
-              {groups.length === 0 && (
-                <div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-400 text-sm">
-                  該当するレースがありません。
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 今日の見方 */}
-          <aside className="space-y-4">
-            <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm sticky top-24">
-              <h3 className="text-sm font-bold text-[#0B2545] mb-3 flex items-center gap-2"><Lightbulb className="w-4 h-4 text-amber-500" /> 今日の見方</h3>
-              <ul className="space-y-2.5 text-xs text-slate-600 leading-relaxed">
-                {[
-                  '能力順は入口。最終判断はクラス・人気履歴・着順で確認',
-                  '調教・騎手相性は補正材料',
-                  '新馬戦は基本除外、未勝利の初出走は要注意',
-                  '地方実績は中央換算の参考評価',
-                  '最終予想で予算内の買い目を比較し、実購入前に価格を確認',
-                ].map((t, i) => (
-                  <li key={i} className="flex gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#4A90E2] shrink-0 mt-0.5" /><span>{t}</span></li>
-                ))}
-              </ul>
-            </div>
-          </aside>
-        </div>
-      </div>
-    )
-  }
-
-  // ================================================================
   // タブ: レース一覧（シンプルな全レース開閉）
   // ================================================================
   const TabRaces = () => {
     const [races, setRaces] = useState([])
     const [stats, setStats] = useState(null)
     useEffect(() => {
-      if (!selectedDate) return
+      if (!selectedDate || !db) return
       try { setRaces(dataApi.getRacesOfDate(db, selectedDate)); setStats(dataApi.getStats(db)) } catch (e) { console.error(e) }
     }, [selectedDate])
 
+    const currentCloudRaces = (dashboard.data?.races ?? []).filter(race => race.raceDate === selectedDate)
+    const allRaces = [...races, ...currentCloudRaces.filter(race => !races.some(row => row.race_key === race.id)).map(race => ({
+      race_key: race.id, place_code: race.placeCode, place: race.place ?? PLACE_NAMES[race.placeCode],
+      race_no: race.raceNo, race_name: race.name, post_time: race.postTime,
+      surface: race.surface, distance: race.distance, field_size: race.fieldSize, cloudRace: race,
+    }))].sort((a, b) => a.race_no - b.race_no)
+    const listDates = dashboard.data?.races.length && !dates.some(item => item.date === dashboard.data.date)
+      ? [{ date: dashboard.data.date, race_count: dashboard.data.races.length }, ...dates] : dates
     const groups = []
     const idx = new Map()
-    for (const r of races) {
+    for (const r of allRaces) {
       const key = r.place_code
       if (!idx.has(key)) { idx.set(key, groups.length); groups.push({ place: r.place, place_code: key, items: [] }) }
       groups[idx.get(key)].items.push(r)
     }
     return (
       <div className="space-y-6 pb-12">
-        {stats && (
+        {(stats || listDates.length > 0) && (
           <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
             <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
               <span className="text-xs font-bold tracking-widest text-[#4A90E2] uppercase">JRDB 取り込みデータ</span>
@@ -1225,21 +959,21 @@ function MainApp({ session, onLogout }) {
                 <span className="text-xs font-bold text-slate-500">開催日</span>
                 <select value={selectedDate || ''} onChange={(e) => setSelectedDate(e.target.value)}
                   className="bg-white border border-slate-200 text-sm font-medium text-slate-800 py-1.5 px-3 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#4A90E2]">
-                  {dates.map((d) => <option key={d.date} value={d.date}>{fmtDate(d.date)} ({d.race_count}R)</option>)}
+                  {listDates.map((d) => <option key={d.date} value={d.date}>{fmtDate(d.date)} ({d.race_count}R)</option>)}
                 </select>
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-4">
+            {stats && <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               {[['レース総数', stats.race_count.toLocaleString()], ['登録馬数', stats.horse_count.toLocaleString()],
                 ['過去走レコード', stats.result_count.toLocaleString()]].map(([l, v]) => (
                 <div key={l}><div className="text-xs text-slate-500 font-medium mb-1">{l}</div><div className="text-2xl font-bold tabular-nums text-[#0B2545]">{v}</div></div>
               ))}
               <div><div className="text-xs text-slate-500 font-medium mb-1">対象期間</div>
                 <div className="text-sm font-bold tabular-nums text-slate-700 mt-1">{stats.date_range.earliest} 〜 {stats.date_range.latest}</div></div>
-            </div>
+            </div>}
           </div>
         )}
-        <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.max(groups.length, 1)}, minmax(0, 1fr))` }}>
+        <div className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(230px,1fr))]">
           {groups.map((g) => (
             <div key={g.place_code} className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden">
               <div className="px-4 py-3 bg-[#0B2545] text-white flex items-center justify-between">
@@ -1247,7 +981,7 @@ function MainApp({ session, onLogout }) {
               </div>
               <div className="divide-y divide-slate-100">
                 {g.items.map((r) => (
-                  <button key={r.race_key} onClick={() => loadAsTarget(r.race_key)} className="w-full text-left px-3 py-2.5 hover:bg-slate-50 flex items-start gap-2.5">
+                  <button key={r.race_key} onClick={() => r.cloudRace ? loadCollectedRace(r.cloudRace) : loadAsTarget(r.race_key)} className="w-full text-left px-3 py-2.5 hover:bg-slate-50 flex items-start gap-2.5">
                     <div className="shrink-0 w-9 text-center">
                       <div className="text-sm font-bold text-[#0B2545] tabular-nums">{r.race_no}R</div>
                       <div className="text-[10px] text-slate-400 tabular-nums">{fmtTime(r.post_time)}</div>
@@ -1263,6 +997,7 @@ function MainApp({ session, onLogout }) {
             </div>
           ))}
         </div>
+        {!db && renderDbStatus()}
       </div>
     )
   }
@@ -1878,7 +1613,7 @@ function MainApp({ session, onLogout }) {
 
   const EmptyRace = () => (
     <div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-400 text-sm">
-      上部の「本日注目レース」または「レース一覧」からレースを選んでください。
+      上部の「開催ダッシュボード」または「レース一覧」からレースを選んでください。
     </div>
   )
 
@@ -1932,15 +1667,15 @@ function MainApp({ session, onLogout }) {
         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#0B2545] to-[#4A90E2] flex items-center justify-center"><Target className="w-5 h-5 text-white" /></div>
         <div><h1 className="text-lg font-bold text-[#0B2545] leading-tight">Race Condition Analyzer</h1><p className="text-[10px] font-medium text-slate-500 tracking-wider">レース分析</p></div>
       </div>
-      <div className="flex items-center gap-3">
-        <div className="relative">
+      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-3">
+        <div className="relative min-w-32 flex-1 sm:flex-none">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input type="text" placeholder="馬名・騎手で検索..." className="pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-full text-sm w-36 sm:w-56 focus:outline-none focus:ring-2 focus:ring-[#4A90E2]/30"
+          <input type="text" placeholder="馬名・騎手で検索..." className="pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-full text-sm w-full sm:w-56 focus:outline-none focus:ring-2 focus:ring-[#4A90E2]/30"
             value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <button onClick={() => setTab('today')} className="text-sm font-medium text-slate-600 px-4 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50">本日のレース</button>
-        <button onClick={refreshDb} title="race.db を Supabase から再取得" className="text-xs font-medium text-slate-500 px-3 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50">DB再取得</button>
-        <button onClick={onLogout} title="ログアウト" className="text-xs font-medium text-slate-500 px-3 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50 flex items-center gap-1"><LogOut className="w-3 h-3" /> {session.user?.email?.split('@')[0]}</button>
+        <button onClick={() => setTab('today')} className="whitespace-nowrap text-sm font-medium text-slate-600 px-4 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50">ホーム</button>
+        <button onClick={refreshDb} title="race.db を Supabase から再取得" className="whitespace-nowrap text-xs font-medium text-slate-500 px-3 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50">DB再取得</button>
+        <button onClick={onLogout} title="ログアウト" className="max-w-40 text-xs font-medium text-slate-500 px-3 py-1.5 border border-slate-200 rounded-full hover:bg-slate-50 flex items-center gap-1"><LogOut className="w-3 h-3 shrink-0" /> <span className="truncate">{session.user?.email?.split('@')[0]}</span></button>
       </div>
     </header>
   )
@@ -1991,7 +1726,7 @@ function MainApp({ session, onLogout }) {
   }
 
   const overviewTabs = [
-    { id: 'today', label: '本日注目レース', icon: Star },
+    { id: 'today', label: '開催ダッシュボード', icon: LayoutDashboard },
     { id: 'races', label: 'レース一覧', icon: Layers },
     { id: 'forecastReview', label: '予想の振り返り', icon: Activity },
     { id: 'automation', label: '自動取得・学習', icon: Activity },
@@ -2011,7 +1746,7 @@ function MainApp({ session, onLogout }) {
   const renderNav = (items, label) => (
     <nav aria-label={label} className="mb-4 flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
       {items.map(({ id, label, icon: Icon }) => (
-        <button key={id} type="button" onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined}
+        <button key={id} type="button" onClick={id === 'forecastReview' ? () => openForecastReview() : () => setTab(id)} aria-current={tab === id ? 'page' : undefined}
           className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold sm:text-sm ${tab === id
             ? 'bg-[#0B2545] text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-[#0B2545]'}`}>
           <Icon aria-hidden="true" className="h-4 w-4" />{label}
@@ -2029,9 +1764,36 @@ function MainApp({ session, onLogout }) {
         {showRaceHeader && <><RaceInfoHeader /><div className="mb-4 flex flex-wrap items-center gap-3 text-xs"><button type="button" disabled={capturePending} onClick={requestLatestCapture} className="rounded-lg bg-[#0B2545] px-3 py-2 font-semibold text-white disabled:opacity-50">{capturePending ? '取得を依頼中…' : 'JRDBへ最新取得を依頼'}</button><button type="button" onClick={refreshCompanion} disabled={sync.loading} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold disabled:opacity-50">保存済みデータと同期</button>{captureMessage && <span role="status" className="text-slate-600">{captureMessage}</span>}{sync.error && <span role="alert" className="text-rose-700">{sync.error}</span>}</div></>}
         {raceInfo && renderNav(raceTabs, '選択中のレースの分析')}
         <div>
-          {tab === 'today' && <TabToday />}
+          {tab === 'today' && <RaceDayDashboard userId={session.user.id} dashboard={dashboard} placeNames={PLACE_NAMES}
+            onNavigate={setTab} onOpenRace={race => loadCollectedRace(race, { fromDashboard: true })}
+            onOpenReview={openForecastReview}
+            onOpenList={openRaceList}>
+            <section aria-labelledby="race-day-guide" className="rounded-2xl border border-sky-200 bg-white px-4 py-4 sm:px-5">
+              <h2 id="race-day-guide" className="text-base font-bold text-[#0B2545]">最初にやること</h2>
+              <ol className="mt-3 grid list-inside list-decimal gap-3 text-sm text-slate-800 marker:font-bold marker:text-sky-700 md:grid-cols-3 md:gap-5">
+                <li>
+                  <strong>MacでJRDBにログイン</strong>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">取得用のMacを起動し、専用ChromiumでJRDBの会員ページにログインします。</p>
+                </li>
+                <li>
+                  <strong>取得データの同期を確認</strong>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">取得データの最終送信時刻を確認し、画面を更新するときは「今すぐ同期」を押します。</p>
+                  <button type="button" onClick={() => setTab('automation')} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">自動取得・学習を開く</button>
+                </li>
+                <li>
+                  <strong>レースを選び、予想を固定保存</strong>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">開催日とレースを選び、発走10分前までに「最終予想・買い目」で予想を固定保存します。</p>
+                  <button type="button" onClick={() => openRaceList()} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">レース一覧を開く</button>
+                </li>
+              </ol>
+              <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-600">
+                結果の取込後は <button type="button" onClick={() => openForecastReview()} className="font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">予想の振り返り</button> で保存した予想と着順を確認できます。
+              </p>
+            </section>
+          </RaceDayDashboard>}
           {tab === 'races' && <TabRaces />}
-          {tab === 'forecastReview' && <ForecastReviewPage review={sync.data?.forecastReview} loading={sync.loading} error={sync.error} onRefresh={refreshCompanion} />}
+          {tab === 'forecastReview' && <ForecastReviewPage key={reviewForecastId} initialForecastId={reviewForecastId}
+            review={sync.data?.forecastReview} loading={sync.loading} error={sync.error} onRefresh={refreshCompanion} />}
           {tab === 'automation' && <AutomationPanel sync={sync} onRefresh={refreshCompanion} onSelectRace={loadCollectedRace} />}
           {tab === 'analysis' && <TabAnalysis />}
           {tab === 'ability' && <AbilityPage race={analysisRace} horses={analysisHorses} userId={session.user.id}
@@ -2050,16 +1812,17 @@ function MainApp({ session, onLogout }) {
             onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
           {tab === 'finalForecast' && (raceInfo ? <FinalForecastPage
             key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={analysisRace} horses={analysisHorses}
-            userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud} syncedReceipts={sync.data?.receipts} review={sync.error ? null : sync.data?.forecastReview}
+            userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud} syncedReceipts={receipts} review={sync.error ? null : sync.data?.forecastReview}
+            initialForecastId={initialForecastId}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
             onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
           {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}
           {tab === 'philosophy' && <TabPhilosophy />}
         </div>
       </main>
-      <footer className="fixed bottom-0 w-full bg-white border-t border-slate-200 px-8 py-2 text-[10px] text-slate-500 flex justify-between items-center z-40 gap-4">
+      <footer className="bottom-0 w-full bg-white border-t border-slate-200 px-4 py-2 text-[10px] text-slate-500 flex flex-wrap justify-between items-center z-40 gap-2 sm:fixed sm:px-8">
         <div className="truncate">レースを選んで能力・展開・オッズ・買い目を比較</div>
-        <div className="flex items-center gap-3 shrink-0 tabular-nums text-slate-400">
+        <div className="flex flex-wrap items-center gap-3 tabular-nums text-slate-400">
           <span title="フロントUIバージョン / commit">UI {UI_VERSION} · {COMMIT_HASH}</span>
           {diag && <>
             <span className="text-slate-300">|</span>
