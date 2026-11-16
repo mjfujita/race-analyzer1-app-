@@ -3,31 +3,12 @@ import assert from 'node:assert/strict'
 import { createCompanionService, createCompanionHandler, MAX_BODY_BYTES, ApiError } from '../server/companion.js'
 import { createSupabaseObjectStore } from '../server/supabaseStore.js'
 import { emptyLedger, appendForecast, appendPurchase, appendSettlement, summarizeLedger } from '../src/forecastLedger.js'
+import { memoryStore, request } from './fixtures/companion.js'
 
 const ownerId = 'test-owner'
 const at = '2026-01-01T06:20:00.000Z'
 const scope = { userId: ownerId, raceId: '08260111', raceDate: '20260101' }
 const clone = value => JSON.parse(JSON.stringify(value))
-function memoryStore() {
-  const files = new Map()
-  return {
-    files,
-    get: async path => files.has(path) ? clone(files.get(path)) : null,
-    putImmutable: async (path, value) => {
-      if (files.has(path)) return { created: false, existing: clone(files.get(path)) }
-      files.set(path, clone(value)); return { created: true }
-    },
-    list: async (prefix, { limit = 2000, order = 'asc', complete = false } = {}) => {
-      const entries = new Map()
-      for (const path of files.keys()) {
-        if (!path.startsWith(`${prefix}/`)) continue
-        const rest = path.slice(prefix.length + 1), name = rest.split('/')[0]
-        entries.set(name, { name, path: `${prefix}/${name}`, folder: rest.includes('/') })
-      }
-      return [...entries.values()].sort((a, b) => order === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)).slice(0, limit + (complete ? 1 : 0))
-    },
-  }
-}
 const model = () => ({ schemaVersion: 1, modelType: 'idm-temperature', id: 'test-model', temperature: 8, trainedThrough: '2025-01-01', status: 'research', generatedAt: at, validation: {} })
 const bundle = () => ({ schemaVersion: 1, kind: 'race-companion-bundle', generatedAt: at, status: { state: 'ready', lastRunAt: at },
   models: { abilityModel: model(), runtimeModel: null }, races: [{ raceId: scope.raceId, raceDate: scope.raceDate,
@@ -48,12 +29,6 @@ function setup() {
   const handler = createCompanionHandler({ service, ownerId, companionToken: 'companion-only-secret-for-tests-123456',
     authenticateUser: async token => token === 'owner-token' ? { id: ownerId } : token === 'other-token' ? { id: 'another-user' } : null })
   return { store, service, handler }
-}
-async function request(handler, { method = 'GET', token = 'owner-token', body, query = {}, headers = {} } = {}) {
-  const result = { status: null, body: null, headers: {} }
-  const res = { setHeader: (key, value) => { result.headers[key] = value }, status: code => { result.status = code; return res }, json: value => { result.body = value; return res } }
-  await handler({ method, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'content-type': 'application/json', ...headers }, body, query }, res)
-  return result
 }
 
 test('cloud API distinguishes unauthenticated, wrong owner, and collector-only privilege', async () => {
@@ -353,7 +328,9 @@ test('server attests only matching live forecasts submitted before the official 
   assert.deepEqual((await service.pullForecastRaces()).races, [{ raceId: scope.raceId, raceDate: scope.raceDate }])
   const replay = appendForecast(valid.ledger, snapshot, at)
   clock = Date.parse(cutoffAt) + 1
-  assert.deepEqual((await service.saveLedger(replay.ledger)).receipts, {})
+  const replayed = await service.saveLedger(replay.ledger)
+  assert.deepEqual(replayed.receipts, saved.receipts)
+  assert.equal(replayed.receipts[replay.record.id], undefined)
   const history = await service.pullLedger(scope)
   assert.equal(history.ledger.forecasts.length, 3)
   assert.deepEqual(history.receipts.map(receipt => receipt.forecastId), [valid.record.id])

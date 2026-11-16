@@ -2027,7 +2027,7 @@ function MainApp({ session, onLogout }) {
             onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
           {tab === 'finalForecast' && (raceInfo ? <FinalForecastPage
             key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={analysisRace} horses={analysisHorses}
-            userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud} review={sync.error ? null : sync.data?.forecastReview}
+            userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud} syncedReceipts={sync.data?.receipts} review={sync.error ? null : sync.data?.forecastReview}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
             onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
           {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}

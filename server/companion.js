@@ -352,11 +352,20 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
         await immutable(`${base}/${kind}/${keyHash(semanticId)}.json`, { schemaVersion: 1, ownerId, scope, kind, record })
       }
     }
-    const newForecasts = input.forecasts.filter(record => record.kind === 'ace' && record.mode === 'live'
-      && record.inputs.probabilityStack && Date.parse(record.createdAt) <= startedAt && startedAt <= Date.parse(record.cutoffAt))
+    const candidates = input.forecasts.filter(record => record.kind === 'ace' && record.mode === 'live'
+      && record.inputs.probabilityStack)
+    const receipts = Object.create(null)
+    await forEachBounded(candidates, 4, async record => {
+      const receipt = await store.get(`${base}/receipts/${keyHash(record.id)}.json`)
+      if (!receipt) return
+      if (receipt.ownerId !== ownerId || receipt.raceId !== scope.raceId || receipt.raceDate !== scope.raceDate
+        || receipt.forecastId !== record.id) conflict('予想の受領記録を確認できません。')
+      receipts[record.id] = receipt
+    })
+    const newForecasts = candidates.filter(record => !receipts[record.id] && Date.parse(record.createdAt) <= startedAt
+      && startedAt <= Date.parse(record.cutoffAt))
     const received = newForecasts.length ? await get(scope) : null
     const cutoffAt = decisionCutoff(received?.race)
-    const receipts = {}
     for (const record of newForecasts) {
       const calibration = received.forecastReview?.active.find(model => model.id === record.inputs.probabilityCalibration
         && model.stack === record.inputs.probabilityStack && model.temperature === record.inputs.probabilityTemperature
@@ -375,7 +384,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       const saved = await store.putImmutable(`${base}/receipts/${keyHash(record.id)}.json`, receipt)
       receipts[record.id] = saved.created ? receipt : saved.existing
     }
-    return { ok: true, ledger: await readLedger(scope), receipts }
+    return { ok: true, ledger: await readLedger(scope), receipts: { ...receipts } }
   }
   async function pullLedger({ raceId, raceDate }) {
     validateRaceKey(raceId, raceDate)
