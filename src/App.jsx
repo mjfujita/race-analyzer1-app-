@@ -1032,6 +1032,29 @@ function MainApp({ session, onLogout }) {
           </div>
         </div>
 
+        <section aria-labelledby="race-day-guide" className="rounded-2xl border border-sky-200 bg-white px-4 py-4 sm:px-5">
+          <h2 id="race-day-guide" className="text-base font-bold text-[#0B2545]">最初にやること</h2>
+          <ol className="mt-3 grid list-inside list-decimal gap-3 text-sm text-slate-800 marker:font-bold marker:text-sky-700 md:grid-cols-3 md:gap-5">
+            <li>
+              <strong>MacでJRDBにログイン</strong>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600">取得用のMacを起動し、専用ChromiumでJRDBの会員ページにログインします。</p>
+            </li>
+            <li>
+              <strong>取得データの同期を確認</strong>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600">取得データの最終送信時刻を確認し、画面を更新するときは「今すぐ同期」を押します。</p>
+              <button type="button" onClick={() => setTab('automation')} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">自動取得・学習を開く</button>
+            </li>
+            <li>
+              <strong>レースを選び、予想を固定保存</strong>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600">開催日とレースを選び、発走10分前までに「最終予想・買い目」で予想を固定保存します。</p>
+              <button type="button" onClick={() => setTab('races')} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">レース一覧を開く</button>
+            </li>
+          </ol>
+          <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-600">
+            結果の取込後は <button type="button" onClick={() => setTab('forecastReview')} className="font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">予想の振り返り</button> で保存した予想と着順を確認できます。
+          </p>
+        </section>
+
         {/* サマリーカード（クリックで絞り込み） */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <SummaryCard icon={Star} color="bg-rose-50 text-rose-600" label="注目レース" value={counts.notable} filterKey="notable" />
