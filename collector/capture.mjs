@@ -69,6 +69,29 @@ export function parseHistoryTable(rows, race, retrievedAt, source) {
 }
 
 
+function cornerPositions(rows, horses) {
+  const ranks = new Map(horses.filter(horse => !horse.cancelled).map(horse => [horse.horseNo, horse.rank]))
+  const positions = new Map()
+  let columns
+  for (const row of rows) {
+    const labels = row.map(normalize)
+    const rank = labels.indexOf('着順')
+    const horse = labels.indexOf('馬番')
+    if (rank >= 0 && horse >= 0) {
+      const corner = labels.findIndex(label => /^(?:4コ(?:ーナー)?|4角)$/.test(label))
+      columns = corner >= 0 ? { rank, horse, corner, width: row.length } : null
+      continue
+    }
+    if (!columns || row.length !== columns.width) continue
+    const number = numeric(row[columns.horse])
+    const position = numeric(row[columns.corner])
+    const finish = numeric(row[columns.rank])
+    if (Number.isInteger(finish) && finish >= 1 && ranks.get(number) === finish
+      && Number.isInteger(position) && position >= 1 && position <= ranks.size) positions.set(number, position)
+  }
+  return positions
+}
+
 /** Parses only observed named JRDB columns, never positional guesses. */
 export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString(), sourceUrl }={}) {
   if (!Number.isFinite(Date.parse(retrievedAt))) throw new Error('取得時刻が不正です。')
@@ -99,8 +122,7 @@ export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString
   const active=horses.filter(h=>!h.cancelled),winOdds=Object.fromEntries(active.filter(h=>h.winOdds!==null).map(h=>[h.horseNo,h.winOdds]))
   const baselineOdds=Object.fromEntries(active.filter(h=>h.baselineOdds!==null).map(h=>[h.horseNo,h.baselineOdds]))
   const sourceHash=hash(raw)
-  const cornerPass4={...raw.cornerPass4}
-  for(const row of raw.resultTables??[])if(row.length===12&&Number.isInteger(numeric(row[1]))&&numeric(row[11])>=1)cornerPass4[numeric(row[1])]=numeric(row[11])
+  const cornerPass4 = cornerPositions(raw.resultTables ?? [], horses)
   const payouts = new Map(), previousTypes = new Map()
   const typeCounts = { '単勝': 1, '複勝': 1, '枠連': 2, '馬連': 2, '馬単': 2, 'ワイド': 2, '3連複': 3, '3連単': 3 }
   for (const row of raw.payoutTables ?? []) {
@@ -136,7 +158,7 @@ export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString
   const weather=String(raw.weather??'').match(/小雨|小雪|晴|曇|雨|雪/)?.[0]??null
   const going=String(raw.weather??'').match(/不良|稍重|重|良/)?.[0]??null
   const results=horses.filter(h=>h.rank!==null&&Number.isInteger(h.rank)&&h.rank>=1&&h.rank<=race.fieldSize).map(h=>({horseNo:h.horseNo,rank:h.rank,
-    cornerPass4:cornerPass4[h.horseNo]??null}))
+    cornerPass4:cornerPass4.get(h.horseNo)??null}))
   const resultKnown=results.length>0&&results.some(h=>h.rank===1)
   const payload={...race,horses,fieldSize:active.length,releaseFieldSize:race.fieldSize,activeHorseNumbers:active.map(h=>h.horseNo),
     winOdds,baselineOdds,paddock:horses.map(h=>({horseNo:h.horseNo,paddockIndex:h.paddockIndex,horseWeight:h.horseWeight,horseWeightDelta:h.horseWeightDelta})),
@@ -160,11 +182,38 @@ export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString
   return {observation,snapshots,completeOdds:Object.keys(winOdds).length===active.length}
 }
 
+function showsExpectedField(expected) {
+  const normalize = name => String(name ?? '').normalize('NFKC').replace(/[\s　＊*]/g, '')
+  const rows = [...document.querySelectorAll('#horse_grid0 tr[id]')]
+  const displayed = rows.map(row => {
+    const number = row.querySelector('[aria-describedby="horse_grid0_umaban"]')
+    const name = row.querySelector('[aria-describedby="horse_grid0_bamei9m"]')
+    return number ? [Number(normalize(number.innerText)), normalize(name?.innerText)] : null
+  }).filter(Boolean)
+  const names = new Map(expected)
+  return displayed.length === names.size && new Set(displayed.map(([no]) => no)).size === names.size
+    && displayed.every(([no, name]) => name && name === names.get(no))
+}
+
 export async function capturePage(page, race) {
   const sourceUrl=`https://jrdb.com/member/n_live_${race.raceDate}_${race.raceId}.html`
   const response=await page.goto(sourceUrl,{waitUntil:'domcontentloaded',timeout:30000})
   if(response&&[401,403].includes(response.status())) { const error=new Error('JRDBの認証期限が切れています。');error.code='auth_required';throw error }
   try {await page.locator('#horse_grid0 tr[id] td[aria-describedby="horse_grid0_umaban"]').first().waitFor({timeout:12000})} catch {const e=new Error('対象馬柱を確認できません。ログイン状態を確認してください。');e.code='auth_required';throw e}
+  const expected = race.horses.map(horse => [Number(horse.horseNo), normalize(horse.name).replace(/[＊*]/g, '')])
+  if (!(await page.evaluate(showsExpectedField, expected))) {
+    // The member page can restore the last race even when the requested URL is different.
+    // Select the published entry and wait for its runner list before collecting any results.
+    if (!/^[0-9a-f]{8}$/i.test(race.raceId)) throw Object.assign(new Error('対象レースを特定できません。'), { code: 'wrong_race' })
+    const option = page.locator('[id="jqs_jo_' + race.raceId + '"]')
+    try {
+      if (!(await option.isVisible())) await page.locator('a.sctble_display:visible').first().click({ timeout: 3000 })
+      await option.click({ timeout: 3000 })
+      await page.waitForFunction(showsExpectedField, expected, { timeout: 6000 })
+    } catch {
+      throw Object.assign(new Error('対象レースの馬柱に切り替えられませんでした。'), { code: 'wrong_race' })
+    }
+  }
   const raw=await page.evaluate(()=>{
     const tableRows=selector=>Array.from(document.querySelectorAll(selector)).map(row=>Array.from(row.querySelectorAll(':scope > th,:scope > td')).map(cell=>cell.innerText.trim()))
     const rows=Array.from(document.querySelectorAll('#horse_grid0 tr[id]')).filter(row=>row.querySelector('[aria-describedby="horse_grid0_umaban"]')).map(row=>Object.fromEntries(Array.from(row.querySelectorAll('td[aria-describedby]')).map(cell=>[cell.getAttribute('aria-describedby').replace('horse_grid0_',''),cell.innerText.trim()])))

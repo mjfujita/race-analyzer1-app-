@@ -40,7 +40,8 @@ test('unknown publication is not forged; observed availability is explicit',()=>
 })
 test('final price labels never become pre-race snapshots, and visible payouts stay distinct',()=>{
   const input=raw();input.oddsLabel='単勝最終オッズ';input.rows[0].se_tyakujun='1';input.rows[1].se_tyakujun='2'
-  input.resultTables=[['1','1','架空馬A','','1.00.0','34.5','1','','1','1','1','2']]
+  input.resultTables=[['着順','馬番','馬名','着差','走破時計','後3F','後3F順位','展開記号','1コ','2コ','3コ','4コ'],
+    ['1','1','架空馬A','','1.00.0','34.5','1','','1','1','1','2']]
   input.payoutTables=[['単勝','1番','300円','1人気','馬単','01－02','1,500円','1人気']]
   const out=parseVisibleRace(input,race,{retrievedAt:'2026-11-15T07:00:00Z'})
   assert.equal(out.snapshots.filter(row=>row.kind==='observed').length,0)
@@ -49,6 +50,14 @@ test('final price labels never become pre-race snapshots, and visible payouts st
   assert.equal(out.observation.payload.results[0].cornerPass4,2)
   assert.equal(out.observation.payload.payouts[1].key,'馬単:1-2')
   assert.equal(out.observation.payload.payouts[1].per100,1500)
+})
+test('fourth-corner results follow the heading when first and second corners are absent',()=>{
+  const input=raw();input.oddsLabel='単勝最終オッズ';input.rows[0].se_tyakujun='1';input.rows[1].se_tyakujun='2'
+  input.resultTables=[['着\n順','馬\n番','馬名','着差','走破時計','後3F','後3F順位','展開記号','３\nコ','４\nコ'],
+    ['1','1','架空馬A','','1.00.0','34.5','1','','1','2'],
+    ['3','2','架空馬B','','1.01.0','34.7','2','','2','1']]
+  const out=parseVisibleRace(input,race,{retrievedAt:'2026-11-15T07:00:00Z'})
+  assert.deepEqual(out.observation.payload.results.map(row=>row.cornerPass4),[2,null])
 })
 test('wrong race, incomplete field and authentication failure stop capture',()=>{
   assert.throws(()=>parseVisibleRace({...raw(),rows:[]},race,{retrievedAt:at}),/ログイン/)

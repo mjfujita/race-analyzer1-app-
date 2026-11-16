@@ -52,6 +52,49 @@ def persist(path, captures):
                 db.execute('ROLLBACK TO capture_batch');db.execute('RELEASE capture_batch');raise
         return n
 
+def race_start(race):
+    time = str(race.get('postTime')).replace(':', '').zfill(4)
+    try:
+        return datetime.strptime(race['raceDate'] + time, '%Y%m%d%H%M').replace(tzinfo=timezone(timedelta(hours=9)))
+    except ValueError:
+        return None
+
+
+def pace_result(race, capture, start):
+    field = capture.get('fieldSize')
+    results = [row for row in capture.get('results', []) if row.get('rank') in (1, 2, 3)]
+    positions = [row.get('cornerPass4') for row in results]
+    retrieved_at = capture.get('resultsRetrievedAt')
+    if (race.get('surfaceCode') not in ('1', '2', 1, 2) or type(field) is not int or not 3 <= field <= 18
+            or sorted(row['rank'] for row in results) != [1, 2, 3]
+            or len({row.get('horseNo') for row in results}) != 3
+            or any(type(pos) is not int or not 1 <= pos <= field for pos in positions)
+            or not retrieved_at or retrieved_at != capture.get('retrievedAt')
+            or capture.get('timingEvidence') != 'observed-visible-at' or capture.get('availabilityAt') != retrieved_at
+            or iso(retrieved_at) <= start):
+        return None
+    return {key: race.get(key) for key in ('raceId', 'raceDate', 'raceNo', 'postTime', 'placeCode', 'surfaceCode', 'distance')} | {
+        'fieldSize': field, 'results': results, 'retrievedAt': retrieved_at,
+        'availabilityAt': retrieved_at, 'timingEvidence': capture['timingEvidence'],
+    }
+
+
+def earlier_pace_results(target, candidates):
+    start = race_start(target)
+    if start is None:
+        return []
+    cutoff = start - timedelta(minutes=10)
+    result = []
+    for previous, previous_start, samples in candidates:
+        if previous['placeCode'] != target['placeCode'] or previous_start >= start:
+            continue
+        known = [row for row in samples if iso(row['retrievedAt']) <= cutoff]
+        if known and known[-1] != samples[-1]:
+            result.append(known[-1])
+        result.append(samples[-1])
+    return result
+
+
 def bundle(source, output, date, status):
     output=Path(output)
     races=catalog(source,date);meta={row['raceId']:row for row in races}
@@ -68,10 +111,16 @@ def bundle(source, output, date, status):
         if payload.get('raceDate')!=date or race_id not in meta:continue
         group=grouped.setdefault(race_id,[]);group.append(event)
     result=[]
+    pace_candidates = []
     for race_id,race in meta.items():
         events=grouped.get(race_id,[])
         live=[event['payload'] for event in events if event['kind']=='LIVE_RACE']
         context=live[-1] if live else None
+        start = race_start(race) if live else None
+        if start:
+            samples = [row for capture in live if (row := pace_result(race, capture, start)) is not None]
+            if samples:
+                pace_candidates.append((race, start, sorted(samples, key=lambda row: iso(row['retrievedAt']))))
         result.append({'raceId':race_id,'raceDate':date,
             'race':{'id':race_id,'raceDate':date,'postTime':race['postTime'],'fieldSize':context['fieldSize'] if context else race['fieldSize'],
                     'releaseFieldSize':race['fieldSize'],'placeCode':race['placeCode'],'surface':race.get('surface'),'surfaceCode':race.get('surfaceCode'),'raceNo':race['raceNo'],
@@ -114,6 +163,7 @@ def bundle(source, output, date, status):
                 'results':observed.get('results',[]),'retrievedAt':observed['retrievedAt'],'availabilityAt':observed['availabilityAt'],
                 'timingEvidence':observed['timingEvidence'],'modelVersion':ability['id'] if compatible else 'idm-baseline-uncalibrated'})
         target['race']['earlierResults']=earlier
+        target['race']['earlierPaceResults'] = earlier_pace_results(meta[target['raceId']], pace_candidates) if pace_candidates else []
     return {'schemaVersion':1,'kind':'race-companion-bundle','generatedAt':status['lastRunAt'],'status':status,
             'models':{'abilityModel':ability,'runtimeModel':runtime},'forecastReview':model('forecast-review.json'),'races':result}
 

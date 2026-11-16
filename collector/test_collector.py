@@ -25,6 +25,38 @@ class CaptureTests(unittest.TestCase):
             with sqlite3.connect(Path(temp)/'market.sqlite') as db:
                 self.assertEqual(db.execute("SELECT count(*) FROM observations WHERE kind='LEDGER'").fetchone()[0],1)
 
+    def test_pace_bundle_keeps_both_surfaces_and_both_cutoff_versions_without_idm(self):
+        date = '20261115'
+        def race(no, time, surface, place='08'):
+            return {'raceId': f'{place}2654{no:02}', 'raceDate': date, 'postTime': time, 'fieldSize': 12,
+                    'placeCode': place, 'raceNo': no, 'surface': '芝' if surface == '1' else 'ダート',
+                    'surfaceCode': surface, 'distance': 1800, 'horses': [], 'statistics': []}
+        dirt, turf, target, later, other = [
+            race(1, '1300', '2'), race(2, '1330', '1'), race(3, '1430', '1'),
+            race(4, '1500', '2'), race(1, '1300', '1', '05')]
+        def capture(info, time, ranks):
+            row = {**info, 'fieldSize': 11, 'retrievedAt': time, 'resultsRetrievedAt': time, 'availabilityAt': time,
+                   'timingEvidence': 'observed-visible-at', 'results':
+                       [{'horseNo': rank + 2, 'rank': rank, 'cornerPass4': corner} for rank, corner in enumerate(ranks, 1)]}
+            return ('LIVE_RACE', row, f"{info['raceId']}:{time}", 'test')
+        with tempfile.TemporaryDirectory() as temp:
+            with open_store(Path(temp) / 'market.sqlite') as store:
+                append_observations(store, [
+                    capture(dirt, '2026-11-15T04:15:00Z', [1, 3, 7]),
+                    capture(dirt, '2026-11-15T05:22:00Z', [2, 3, 7]),
+                    capture(dirt, '2026-11-15T05:25:00Z', [None, 3, 7]),
+                    capture(turf, '2026-11-15T05:24:00Z', [4, 4, 5]),
+                    capture(later, '2026-11-15T06:15:00Z', [1, 3, 7]),
+                    capture(other, '2026-11-15T04:15:00Z', [1, 3, 7]),
+                ])
+            with patch('collector.persist.catalog', return_value=[dirt, turf, target, later, other]):
+                rows = bundle('unused', temp, date, {'lastRunAt': '2026-11-15T07:00:00Z'})['races']
+        selected = rows[2]['race']
+        self.assertEqual(selected['earlierResults'], [])
+        pace = selected['earlierPaceResults']
+        self.assertEqual([(r['raceNo'], r['surfaceCode'], r['fieldSize']) for r in pace], [(1, '2', 11), (1, '2', 11), (2, '1', 11)])
+        self.assertEqual([r['results'][0]['cornerPass4'] for r in pace], [1, 2, 4])
+
     def test_visible_snapshot_needs_explicit_available_at_evidence(self):
         s=snapshot_fixture();s['sourcePublishedAt']=None
         with self.assertRaises(ValueError):validate_snapshot(s,[1,2])

@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { CloudSun, Flag } from 'lucide-react'
 import { decisionCutoff, formatRaceTime, raceTimestamp } from './raceTime.js'
-import { readPaceResults, recordedPaceRows } from './paceHistory.js'
+import { capturedPaceRows, readPaceResults, recordedPaceRows } from './paceHistory.js'
 import { loadModel } from './modelStore.js'
 import { buildAbilityField } from './marketModel.js'
 import { loadRuntimeModel, readCloudRace, enrichCloudHorses } from './cloudStore.js'
-import { applyPredictionModels, availableAt, buildRaceContext } from './predictionModel.js'
+import { applyPredictionModels, buildRaceContext } from './predictionModel.js'
 import { oddsStorageKey, readOddsHistory } from './oddsHistory.js'
 import RuntimeModelPanel from './RuntimeModelPanel.jsx'
 
@@ -86,17 +86,11 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
 
   const cutoffAt = asofOnly ? decisionCutoff(race) ?? 'unknown' : null
   const manualResults = recordedPaceRows(earlierRaces, cutoffAt ? readPaceResults(userId, race, { cutoffAt }) : recorded, { cutoffAt })
-  const capturedResults = (cloud?.race?.earlierResults ?? []).filter(row => row.raceDate === race.raceDate && String(row.placeCode) === String(race.placeCode)
-    && (!cutoffAt || availableAt(row, cutoffAt)) && Array.isArray(row.results))
-    .map(row => {
-      const positions = row.results.filter(h => Number(h.rank) >= 1 && Number(h.rank) <= 3).map(h => Number(h.cornerPass4))
-      const fieldSize = Number(row.fieldSize ?? row.field?.length)
-      if (positions.length !== 3 || positions.some(p => !Number.isInteger(p) || p < 1 || p > fieldSize)) return null
-      return { race_no: Number(row.raceNo ?? String(row.raceId).slice(-2)), field_size: fieldSize, surface_code: row.surfaceCode ?? (row.surface === '芝' ? '1' : row.surface === 'ダート' ? '2' : null),
-        distance: row.distance, top_count: 3, front_top_count: positions.filter(p => p <= Math.ceil(fieldSize / 3)).length,
-        retrievedAt: row.retrievedAt, source: 'JRDB巡回' }
-    }).filter(Boolean)
-  const results = [...new Map([...manualResults, ...capturedResults.sort((a, b) => Date.parse(a.retrievedAt) - Date.parse(b.retrievedAt))].map(row => [row.race_no, row])).values()]
+  const observations = cloud?.race?.earlierPaceResults ?? cloud?.race?.earlierResults ?? []
+  const capturedResults = capturedPaceRows(race, observations, { cutoffAt })
+  const excluded = asofOnly ? capturedPaceRows(race, observations).length - capturedResults.length : 0
+  const results = [...new Map([...manualResults, ...capturedResults].map(row => [row.race_no, row])).values()]
+    .sort((a, b) => a.race_no - b.race_no)
   const styleByNumber = new Map(statistics.map(row => [Number(row.horse_no), Number(row.running_style)]))
   const displayedRace = { ...race, going: context.evidence.goingAffinity ?? race.going, weather: context.evidence.weatherAffinity ?? race.weather }
   const profiles = enriched.map(horse => positionProfile(displayedRace, horse, styleByNumber.get(Number(horse.no)) ?? horse.running_style))
@@ -152,6 +146,10 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
       <h3 className="font-bold text-[#0B2545]">当日開催の傾向</h3>
       <p className="mt-1 text-xs leading-relaxed text-slate-500">同日・同場の先行レースを芝・ダート別に集計。頭数だけの比較基準を使う記述集計です。能力・ペースを調整していないため、馬場の因果効果や確率への自動加点には使いません。</p>
       <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={asofOnly} onChange={e => setAsofOnly(e.target.checked)} />発走10分前までに取得した結果のみ（{formatRaceTime(decisionCutoff(race))}）</label>
+      <p className="mt-2 text-xs text-slate-600">
+        {capturedResults.length ? `JRDB自動取得 ${capturedResults.length}レースを集計しています。` : '集計対象のJRDB取得済み結果はありません。'}
+        {excluded > 0 && ` 対象外の${excluded}レースは、チェックを外すと確認できます。`}
+      </p>
       {!asofOnly && <p className="mt-2 text-xs text-amber-800">振り返り表示。時刻不明・後から取得した記録も含みます。</p>}
       <div className="mt-3 grid gap-3 md:grid-cols-2">
         {summaries.map(summary => <div key={summary.label} className="rounded-lg border border-slate-200 p-3 text-sm">
@@ -162,13 +160,13 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
           </p>}
           {summary.results.length > 0 && <ul className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
             {summary.results.map(row => <li key={row.race_no} className="rounded bg-slate-100 px-2 py-1">
-              {row.race_no}R {row.distance}m　4角前方 {row.front_top_count}/{row.top_count}頭
+              {row.race_no}R{row.distance ? ` ${row.distance}m` : ''}　4角前方 {row.front_top_count}/{row.top_count}頭{row.source ? ` · ${row.source}` : ''}
             </li>)}
           </ul>}
         </div>)}
       </div>
       {earlierRaces.length > 0 && <details className="mt-3 text-sm text-slate-700">
-        <summary className="cursor-pointer font-semibold text-[#2B6CB0]">確定したレース結果を記録</summary>
+        <summary className="cursor-pointer font-semibold text-[#2B6CB0]">手入力で結果を補う</summary>
         <p className="mt-1 text-xs text-slate-500">4角で同じ集団にいた馬は、集団の先頭順位を入力してください。</p>
         <form onSubmit={saveResult} className="mt-2 flex flex-wrap items-end gap-2">
           <label>対象レース<select name="raceNo" className="ml-1 rounded border border-slate-300 p-1">
