@@ -174,3 +174,31 @@ test('network failure keeps saved forecasts and purchases available after reload
   await expect(page.getByText('実購入の総額', { exact: true }).locator('..')).toContainText('300円')
   expect(attempts).toBe(2)
 })
+
+test('track tendency counts JRDB turf and dirt results and separates late retrieval', async ({ page }) => {
+  await page.goto('/market-preview.html')
+  const payload = runtimeFixture()
+  function earlier(no, surfaceCode, postTime, retrievedAt, positions) {
+    return { raceId: `earlier-${no}`, raceNo: no, raceDate: race.raceDate,
+      placeCode: race.placeCode, surfaceCode, postTime, distance: 1800, fieldSize: 8,
+      timingEvidence: 'observed-visible-at', retrievedAt, availabilityAt: retrievedAt,
+      results: positions.map((cornerPass4, i) => ({ horseNo: i + 1, rank: i + 1, cornerPass4 })) }
+  }
+  payload.race.earlierPaceResults = [
+    earlier(8, '1', '1440', '2026-11-15T06:21:00Z', [1, 2, 8]),
+    earlier(8, '1', '1440', '2026-11-15T06:41:00Z', [4, 5, 8]),
+    earlier(9, '2', '1510', '2026-11-15T06:35:00Z', [1, 6, 4]),
+  ]
+  await applySyntheticSync(page, payload)
+  await page.getByRole('button', { name: '展開・天候', exact: true }).click()
+  const panel = page.locator('section').filter({ has: page.getByRole('heading', { name: '当日開催の傾向' }) })
+  await expect(panel.getByRole('button', { name: 'このブラウザに保存' })).toHaveCount(0)
+  await expect(panel).toContainText('JRDB自動取得 1レース')
+  await expect(panel).toContainText('8R 1800m　4角前方 2/3頭')
+  await expect(panel).toContainText('対象外の1レース')
+  await expect(panel).not.toContainText('9R 1800m')
+  await panel.getByRole('checkbox').uncheck()
+  await expect(panel).toContainText('JRDB自動取得 2レース')
+  await expect(panel).toContainText('8R 1800m　4角前方 0/3頭')
+  await expect(panel).toContainText('9R 1800m　4角前方 1/3頭')
+})
