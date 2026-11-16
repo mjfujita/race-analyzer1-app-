@@ -5,6 +5,7 @@ import { decisionCutoff, raceTimestamp, snapshotTiming, formatRaceTime } from '.
 import { loadModel } from './modelStore.js'
 import { loadRuntimeModel, readCloudRace } from './cloudStore.js'
 import { buildRaceContext, applyPredictionModels } from './predictionModel.js'
+import { calibrateForecast, reviewStack } from './forecastReview.js'
 import RuntimeModelPanel from './RuntimeModelPanel.jsx'
 import RaceDataPanel, { readRaceData } from './RaceDataPanel.jsx'
 import { buildAbilityField, analyzeMarket } from './marketModel.js'
@@ -54,11 +55,13 @@ export default function FinalForecastPage(props) {
   return <ForecastWorkspace key={`${scope.userId}:${scope.raceDate}:${scope.raceId}`} {...props} scope={scope} />
 }
 
-function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger }) {
+function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger, syncedReceipts, review }) {
   const [loaded] = useState(() => storedLedger(scope))
   const [ledger, setLedger] = useState(loaded.ledger)
+  const [savedReceipts, setSavedReceipts] = useState({})
   const [storageError, setStorageError] = useState(loaded.error)
   const [message, setMessage] = useState('')
+  const [awaitingReceipt, setAwaitingReceipt] = useState(null)
   const [saving, setSaving] = useState(false)
   const savingRef = useRef(false)
   const [records, setRecords] = useState(() => oddsRecords(oddsStorageKey(userId, race), decisionCutoff(race)))
@@ -109,9 +112,16 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const ability = useMemo(() => buildAbilityField({ horses, statistics, race, model }), [horses, statistics, race, model])
   const context = useMemo(() => buildRaceContext({ race, horses, field: ability.field, statistics,
     observations: cloud?.observations ?? [], earlierResults: cloud?.race?.earlierResults ?? [], cutoffAt }), [race, horses, ability.field, statistics, cloud, cutoffAt])
-  const prediction = useMemo(() => applyPredictionModels({ field: ability.field, race, odds: current?.odds ?? {},
+  const initialPrediction = useMemo(() => applyPredictionModels({ field: ability.field, race, odds: current?.odds ?? {},
     history: records.events, context, models: runtimeModels, cutoffAt, abilityModelId: ability.model.id }),
   [ability.field, ability.model.id, race, current, records.events, context, runtimeModels, cutoffAt])
+  const features = initialPrediction.appliedFeatures?.filter(key => runtimeModels?.contextModel?.coefficients[key] !== 0) ?? []
+  const marketModel = initialPrediction.field.some(h => h.pM != null) && runtimeModels?.marketModel
+  const stack = reviewStack({ ability: ability.model.id,
+    context: features.length ? features.map(key => runtimeModels.contextModel.coefficients[key]) : null, features,
+    market: marketModel && marketModel.abilityWeight < 1 ? [marketModel.gamma, marketModel.abilityWeight] : null })
+  const prediction = useMemo(() => calibrateForecast(initialPrediction, { review, stack, race, current, cutoffAt }),
+    [initialPrediction, review, stack, race, current, cutoffAt])
   const predictedByNo = new Map(prediction.field.map(horse => [horse.no, horse]))
   const frames = useMemo(() => officialFrames(ability.field), [ability.field])
   const parsed = useMemo(() => parseQuotes(pairs, ability.field, frames), [pairs, ability.field, frames])
@@ -145,6 +155,13 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const ready = inputsReady && !ace?.issues.length && !selected?.issues.length
   const rows = useMemo(() => [...(selected?.evaluated ?? [])].sort((a, b) => (b[sort] ?? -Infinity) - (a[sort] ?? -Infinity)), [selected, sort])
   const forecast = ledger.forecasts.find(item => item.id === selectedForecastId) ?? ledger.forecasts.at(-1)
+  const originalId = forecast?.parentId ?? forecast?.id
+  const receipt = syncedReceipts?.[originalId] ?? savedReceipts[originalId]
+  const receivedAt = receipt?.raceId === scope.raceId && receipt.raceDate === scope.raceDate
+    && receipt.ownerId === scope.userId ? receipt.receivedAt : null
+  const restored = awaitingReceipt && syncedReceipts?.[awaitingReceipt.id]
+  const statusMessage = restored?.raceId === scope.raceId && restored.raceDate === scope.raceDate && restored.ownerId === scope.userId
+    ? `${awaitingReceipt.success} クラウドにも保存しました。 締切前の受領を確認しました。` : message
   const purchase = activePurchases(ledger).findLast(item => item.forecastId === forecast?.id)
   const totals = summarizeLedger(ledger)
   const queryIssues = [...ability.issues, ...(current ? market.issues : []), ...parsed.errors, ...pairErrors,
@@ -157,10 +174,10 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     || runtimeModels?.adoptedAt && Date.parse(runtimeModels.adoptedAt) <= Date.parse(cutoffAt)
   const actualLive = timing.eligible && !lateQuotes && modelTimeEligible && runtimeTimeEligible && cutoffAt && Date.now() <= Date.parse(cutoffAt)
 
-  async function persist(next, success) {
+  async function persist(next, success, liveForecastId) {
     if (loaded.error) { setStorageError(loaded.error); return false }
     if (savingRef.current) return false
-    savingRef.current = true; setSaving(true)
+    savingRef.current = true; setSaving(true); setAwaitingReceipt(null)
     try {
       const saved = await writeLedgerExclusive(globalThis.localStorage, next)
       setLedger(saved); setStorageError(null); setMessage(success)
@@ -168,11 +185,16 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
         try {
           const remote = await onSyncLedger(saved)
           if (remote?.ledger) setLedger(await writeLedgerExclusive(globalThis.localStorage, importLedger(saved, JSON.stringify(remote.ledger))))
-          setMessage(`${success} クラウドにも保存しました。`)
+          if (remote?.receipts) setSavedReceipts(previous => ({ ...previous, ...remote.receipts }))
+          const confirmed = liveForecastId && remote?.receipts?.[liveForecastId]
+          setMessage(`${success} クラウドにも保存しました。${confirmed ? ' 締切前の受領を確認しました。' : ''}`)
         }
         catch (error) {
           if (error.status === 409) { setStorageError('訂正記録が別端末の記録と競合しています。表示中の集計はこの端末の内容で、クラウドへの確定同期は未完了です。JSONを書き出して元記録を保管してください。'); setMessage('ローカル記録を保持しました。競合した訂正は自動で上書きしません。') }
-          else setMessage(`${success} クラウドへの同期は再試行待ちです。${error.message}`)
+          else {
+            if (liveForecastId) setAwaitingReceipt({ id: liveForecastId, success })
+            setMessage(`${success} クラウドへの同期は再試行待ちです。${error.message}`)
+          }
         }
       }
       return true
@@ -187,7 +209,8 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     if (!ready || !cutoffAt) return
     try {
       const common = { mode: actualLive && Date.now() <= Date.parse(cutoffAt) ? 'live' : 'replay', cutoffAt, modelVersion: ability.model.id,
-        modelStatus: ability.model.status, inputs: { sourceId: current.id, observedAt: current.observedAt ?? null,
+        modelStatus: ability.model.status, inputs: { probabilityStack: stack, probabilityCalibration: prediction.calibrationId ?? null,
+          probabilityTemperature: prediction.calibrationTemperature ?? null, sourceId: current.id, observedAt: current.observedAt ?? null,
           sourcePublishedAt: current.sourcePublishedAt ?? null, timingEvidence: current.timingEvidence ?? null, availabilityAt: current.availabilityAt ?? null, retrievedAt: current.retrievedAt ?? null, winOdds: current.odds,
           baselineOdds: baseline?.odds ?? null, baselineSnapshot: baseline ?? null, previousSnapshot: previous ?? null, quotes, quoteObservedAt: pairs.trim() ? raceTimestamp(race, pairTime) : automaticQuotes.length ? context.source.observedAt : null,
           quoteRetrievedAt: pairs.trim() ? pairRetrievedAt : automaticQuotes.length ? context.source.retrievedAt : null, model: effectiveModel, runtimeModels, context, closingPrices: prediction.prices, pricingQuotes, weather: race.weather ?? null, going: race.going ?? null,
@@ -201,14 +224,14 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
       const result = anchor || opinion.trim() ? appendForecast(base.ledger, { ...common, kind: 'user', parentId: base.record.id,
         parameters: { ...common.parameters, anchor: anchor ? Number(anchor) : null }, allocations: selected.allocations,
         metrics: selected.metrics, coverage: selected.coverage, method: selected.method, note: opinion.trim() || `${anchor}番を軸に指定` }) : base
-      if (await persist(result.ledger, 'ACE原案と入力条件を固定保存しました。購入した内容は別に記録してください。')) setSelectedForecastId(result.record.id)
+      if (await persist(result.ledger, 'ACE原案と入力条件を固定保存しました。購入した内容は別に記録してください。', common.mode === 'live' ? base.record.id : null)) setSelectedForecastId(result.record.id)
     } catch (error) { setStorageError(error.message) }
   }
 
   async function handleImport(event) {
     const file = event.target.files?.[0]
     if (!file) return
-    setImporting(true); setMessage('')
+    setImporting(true); setMessage(''); setAwaitingReceipt(null)
     try {
       if (file.size > 4_000_000) throw new Error('4MB以下の記録ファイルを指定してください。')
       const next = importLedger(ledger, await file.text())
@@ -233,7 +256,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     </section>
 
     {storageError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{storageError}</p>}
-    {message && <p role="status" className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-900">{message}</p>}
+    {statusMessage && <p role="status" className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-900">{statusMessage}</p>}
     {records.error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{records.error}</p>}
     <RaceDataPanel scope={scope} data={raceData} onChange={setRaceData} />
 
@@ -254,6 +277,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
       <p className="text-xs text-slate-500">購入境界は計算用確率p*を仮定した損益分岐オッズです。未学習の条件は固定点で上乗せしません。<button type="button" onClick={onOpenPace} className="ml-1 font-semibold text-cyan-800 underline">展開・当日の傾向を確認</button></p>
     </section>
 
+    {prediction.calibrationId && <p className="text-sm text-cyan-800">買い目の勝率に校正版 {prediction.calibrationId} を使用中</p>}
     <RuntimeModelPanel prediction={prediction} context={context} observations={cloud?.observations} />
 
     <section className={`${panel} space-y-4`}>
@@ -301,7 +325,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
       <p className="text-xs text-slate-500">ブラウザに保存し、ログイン中の本人専用クラウドへ同期します。予想は購入として計上せず、訂正も元記録を残します。通信できない間の記録は次の同期で再送します。JSONでも書き出せます。</p>
       {!ledger.forecasts.length ? <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">固定保存した予想はまだありません。</p> : <>
         <label className="flex flex-wrap items-center gap-2 text-sm">保存済み予想<select className={`${control} max-w-full`} value={forecast?.id ?? ''} onChange={event => setSelectedForecastId(event.target.value)}>{[...ledger.forecasts].reverse().map((item, i) => <option key={item.id} value={item.id}>#{ledger.forecasts.length - i} {item.kind === 'ace' ? 'ACE原案' : '利用者案'} · {formatRaceTime(item.createdAt)} · {item.mode === 'live' ? '締切前記録' : '過去検証'}</option>)}</select></label>
-        {forecast && <div className="rounded-xl border border-slate-200 p-4 text-sm"><p className="font-semibold">固定条件：予算 {yen(forecast.parameters.budget)} / 下落想定 {Math.round((1 - forecast.parameters.oddsFactor) * 100)}% / {forecast.parameters.anchor ? `軸 ${forecast.parameters.anchor}番` : '軸指定なし'}</p><p className="mt-2 text-xs text-slate-500">モデル {forecast.modelVersion} ・ 観測 {formatRaceTime(forecast.inputs.observedAt)} ・ 締切 {formatRaceTime(forecast.cutoffAt)}</p><p className="mt-2">{forecast.allocations.map(ticket => `${label(ticket)} ${yen(ticket.stake)}`).join(' ／ ') || '見送り'}</p>{forecast.note && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{forecast.note}</p>}</div>}
+        {forecast && <div className="rounded-xl border border-slate-200 p-4 text-sm"><p className="font-semibold">固定条件：予算 {yen(forecast.parameters.budget)} / 下落想定 {Math.round((1 - forecast.parameters.oddsFactor) * 100)}% / {forecast.parameters.anchor ? `軸 ${forecast.parameters.anchor}番` : '軸指定なし'}</p><p className="mt-2 text-xs text-slate-500">モデル {forecast.modelVersion} ・ 観測 {formatRaceTime(forecast.inputs.observedAt)} ・ 締切 {formatRaceTime(forecast.cutoffAt)}</p>{receivedAt && <p className="mt-2 text-xs font-semibold text-cyan-800">締切前受領 {formatRaceTime(receivedAt)}</p>}<p className="mt-2">{forecast.allocations.map(ticket => `${label(ticket)} ${yen(ticket.stake)}`).join(' ／ ') || '見送り'}</p>{forecast.note && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{forecast.note}</p>}</div>}
         {forecast && <PurchaseEditor key={`${forecast.id}:${purchase?.id ?? 'new'}`} forecast={forecast} purchase={purchase} disabled={Boolean(loaded.error) || saving} onSave={(tickets, note) => { const next = appendPurchase(ledger, { forecastId: forecast.id, tickets, note, replacesId: purchase?.id ?? null }); return persist(next.ledger, '実購入の記録を保存しました。') }} />}
         {activePurchases(ledger).map(item => <SettlementEditor key={`${item.id}:${latestSettlement(ledger, item.id)?.id ?? 'new'}`} purchase={item} settlement={latestSettlement(ledger, item.id)} payoutEvent={payoutEvent} disabled={Boolean(loaded.error) || saving} onSave={(payouts, note, source) => { const latest = latestSettlement(ledger, item.id); const next = appendSettlement(ledger, { purchaseId: item.id, payouts, note, source, replacesId: latest?.id ?? null }); return persist(next.ledger, '正式払戻の記録を保存しました。') }} />)}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric title="実購入の総額" value={yen(totals.invested)} detail={`未精算 ${totals.pendingCount}件`} /><Metric title="精算済みの払戻" value={yen(totals.payout)} detail={`精算した購入 ${yen(totals.settledInvested)}`} /><Metric title="精算済み損益" value={yen(totals.profit)} /><Metric title="実回収率" value={pct(totals.returnRate)} detail="未精算分は含みません" /></div>

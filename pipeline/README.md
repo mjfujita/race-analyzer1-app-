@@ -16,7 +16,7 @@ python3 -m pipeline.run run
 python3 -m pipeline.run run --inbox "$HOME/Downloads"
 ```
 
-指定フォルダ直下の `TYB年月日*.zip` と `HJC年月日*.zip` だけを対象にします。`(1)` 等が付いた重複ダウンロードも内容で重複排除します。サブフォルダ・シンボリックリンクは追いません。`--inbox` を指定しなければフォルダ走査は行いません。PACIはこの自動検出の対象外で、既存バックエンドでの取込みが必要です。
+指定フォルダ直下の日付付きJRDB追加ZIPを対象にします。`(1)` 等が付いた重複ダウンロードも内容で重複排除します。サブフォルダ・シンボリックリンクは追いません。`--inbox` を指定しなければフォルダ走査は行いません。PACIはこの自動検出の対象外で、既存バックエンドでの取込みが必要です。
 
 ZIPと画面から書き出した記録を同時に追加する場合：
 
@@ -28,7 +28,7 @@ python3 -m pipeline.run run \
   --ledger '/path/to/forecast-ledger.json'
 ```
 
-`--zip`、`--snapshots`、`--ledger` は複数指定できます。ZIP対応は日付付きTYB/HJC。PACI等の前日パックは既存バックエンドで取り込み、そのDBをこの処理で読みます。ログイン画面の巡回・ダウンロード・PACIの派生DB取込みは [JRDB companion](../collector/README.md) が担当し、この学習処理へ連携します。
+`--zip`、`--snapshots`、`--ledger` は複数指定できます。ZIP対応データの一覧は下記の振り返り資料に記載しています。PACI等の前日パックは既存バックエンドで取り込み、そのDBをこの処理で読みます。ログイン画面の巡回・ダウンロード・PACIの派生DB取込みは [JRDB companion](../collector/README.md) が担当し、この学習処理へ連携します。
 
 | 出力 | 用途 |
 |---|---|
@@ -87,6 +87,10 @@ python3 -m unittest pipeline.test_pipeline -v
 ```
 
 再取込みは同じ内容を重複登録しません。IDが同じで内容の異なるオッズ・購入記録は拒否します。訂正は新IDと元IDへの参照で追記します。古い購入記録を取り込んでも、新しい記録は削除されません。
+
+## 固定予想の振り返り
+
+SEC/SED・開催/番組/登録/マスターの追加ZIPと、固定予想の照合・勝率校正・再学習は [予想の振り返り](../docs/forecast-review.md) を参照。PACI同梱の追加記録も確認するときは `--include-paci` を付けます。
 
 ## 参照した公式仕様
 

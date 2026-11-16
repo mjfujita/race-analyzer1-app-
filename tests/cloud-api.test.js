@@ -3,31 +3,12 @@ import assert from 'node:assert/strict'
 import { createCompanionService, createCompanionHandler, MAX_BODY_BYTES, ApiError } from '../server/companion.js'
 import { createSupabaseObjectStore } from '../server/supabaseStore.js'
 import { emptyLedger, appendForecast, appendPurchase, appendSettlement, summarizeLedger } from '../src/forecastLedger.js'
+import { memoryStore, request } from './fixtures/companion.js'
 
 const ownerId = 'test-owner'
 const at = '2026-01-01T06:20:00.000Z'
 const scope = { userId: ownerId, raceId: '08260111', raceDate: '20260101' }
 const clone = value => JSON.parse(JSON.stringify(value))
-function memoryStore() {
-  const files = new Map()
-  return {
-    files,
-    get: async path => files.has(path) ? clone(files.get(path)) : null,
-    putImmutable: async (path, value) => {
-      if (files.has(path)) return { created: false, existing: clone(files.get(path)) }
-      files.set(path, clone(value)); return { created: true }
-    },
-    list: async (prefix, { limit = 2000, order = 'asc', complete = false } = {}) => {
-      const entries = new Map()
-      for (const path of files.keys()) {
-        if (!path.startsWith(`${prefix}/`)) continue
-        const rest = path.slice(prefix.length + 1), name = rest.split('/')[0]
-        entries.set(name, { name, path: `${prefix}/${name}`, folder: rest.includes('/') })
-      }
-      return [...entries.values()].sort((a, b) => order === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)).slice(0, limit + (complete ? 1 : 0))
-    },
-  }
-}
 const model = () => ({ schemaVersion: 1, modelType: 'idm-temperature', id: 'test-model', temperature: 8, trainedThrough: '2025-01-01', status: 'research', generatedAt: at, validation: {} })
 const bundle = () => ({ schemaVersion: 1, kind: 'race-companion-bundle', generatedAt: at, status: { state: 'ready', lastRunAt: at },
   models: { abilityModel: model(), runtimeModel: null }, races: [{ raceId: scope.raceId, raceDate: scope.raceDate,
@@ -48,12 +29,6 @@ function setup() {
   const handler = createCompanionHandler({ service, ownerId, companionToken: 'companion-only-secret-for-tests-123456',
     authenticateUser: async token => token === 'owner-token' ? { id: ownerId } : token === 'other-token' ? { id: 'another-user' } : null })
   return { store, service, handler }
-}
-async function request(handler, { method = 'GET', token = 'owner-token', body, query = {}, headers = {} } = {}) {
-  const result = { status: null, body: null, headers: {} }
-  const res = { setHeader: (key, value) => { result.headers[key] = value }, status: code => { result.status = code; return res }, json: value => { result.body = value; return res } }
-  await handler({ method, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'content-type': 'application/json', ...headers }, body, query }, res)
-  return result
 }
 
 test('cloud API distinguishes unauthenticated, wrong owner, and collector-only privilege', async () => {
@@ -332,4 +307,50 @@ test('object store uses create-only writes and recognizes duplicate conflicts wi
   assert.deepEqual(await store.putImmutable('owner/v1/item.json', object), { created: false, existing: object })
   assert.equal(calls[0].options.upsert, false); assert.equal(calls[0].bucket, 'race-research')
   await assert.rejects(store.get('../secrets'), /保存先/)
+})
+
+test('server attests only matching live forecasts submitted before the official cutoff', async () => {
+  const store = memoryStore()
+  let clock = Date.parse(at) + 1000
+  const service = createCompanionService({ store, ownerId, now: () => clock })
+  await service.ingestBundle(bundle())
+  const cutoffAt = '2026-01-01T06:30:00.000Z'
+  const snapshot = { ...proposal(), mode: 'live', cutoffAt,
+    inputs: { observedAt: at, sourcePublishedAt: at, retrievedAt: at, sourceId: 'odds-1',
+      winOdds: { 1: 3, 2: 4 }, probabilityStack: '["test-model",null,[],null]', probabilityCalibration: null },
+    field: [{ no: 1, probability: .8, pStar: .8 }, { no: 2, probability: .2, pStar: .2 }] }
+  const wrong = appendForecast(emptyLedger(scope), { ...snapshot, inputs: { ...snapshot.inputs, winOdds: { 1: 2, 2: 4 } } }, at)
+  assert.deepEqual((await service.saveLedger(wrong.ledger)).receipts, {})
+  assert.deepEqual((await service.pullForecastRaces()).races, [])
+  const valid = appendForecast(wrong.ledger, snapshot, at)
+  const saved = await service.saveLedger(valid.ledger)
+  assert.equal(saved.receipts[valid.record.id].receivedAt, new Date(clock).toISOString())
+  assert.deepEqual((await service.pullForecastRaces()).races, [{ raceId: scope.raceId, raceDate: scope.raceDate }])
+  const replay = appendForecast(valid.ledger, snapshot, at)
+  clock = Date.parse(cutoffAt) + 1
+  const replayed = await service.saveLedger(replay.ledger)
+  assert.deepEqual(replayed.receipts, saved.receipts)
+  assert.equal(replayed.receipts[replay.record.id], undefined)
+  const history = await service.pullLedger(scope)
+  assert.equal(history.ledger.forecasts.length, 3)
+  assert.deepEqual(history.receipts.map(receipt => receipt.forecastId), [valid.record.id])
+})
+
+test('a later report stopping calibration wins over a replayed older companion bundle', async () => {
+  const { service, handler } = setup()
+  const adopted = { schemaVersion: 1, algorithm: 'win-temperature-v1', id: 'win-temp-1234567890abcdef12345678',
+    stack: '["test-model",null,[],null]', temperature: 1.5, decision: 'adopted', createdAt: at, activatedAt: at,
+    trainedThrough: '20251101', testedThrough: '20251130' }
+  const report = { schemaVersion: 1, generatedAt: at, ownerId, totalForecasts: 0,
+    eligibleRaces: 0, active: [adopted], versions: [adopted], statesByStack: [], races: [] }
+  const first = { ...bundle(), forecastReview: report }
+  await service.ingestBundle(first)
+  assert.deepEqual((await service.get()).forecastReview.active, [adopted])
+  const stopped = { ...report, generatedAt: '2026-01-01T06:20:00.500Z', active: [] }
+  await service.ingestBundle({ ...bundle(), forecastReview: stopped })
+  await service.ingestBundle(first)
+  assert.equal((await service.get()).forecastReview.active.length, 0)
+  await assert.rejects(service.ingestBundle({ ...first, forecastReview: { ...report, ownerId: 'another-user' } }), /振り返り/)
+  assert.equal((await request(handler, { token: 'other-token' })).status, 403)
+  assert.equal((await request(handler, { method: 'POST', body: { action: 'pull-forecast-races' } })).status, 403)
 })

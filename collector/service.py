@@ -11,6 +11,7 @@ import plistlib
 import shutil
 import sqlite3
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,9 +33,17 @@ def install(config_path,start=False):
     config=json.loads(config_path.read_text());node=shutil.which('node');python=shutil.which('python3')
     if not node or not python:raise ValueError('Node and Python 3 must be installed')
     target=Path.home()/'Library/Application Support/RaceAnalyzer';target.mkdir(parents=True,exist_ok=True);target.chmod(0o700)
+    browsers_path=str(target/'browsers')
+    playwright_cli=ROOT/'node_modules/playwright/cli.js'
+    if not playwright_cli.is_file():raise ValueError('Run npm ci before installing companion')
+    subprocess.run(
+        [node,str(playwright_cli),'install','chromium','--no-shell'],
+        cwd=ROOT,env={**os.environ,'PLAYWRIGHT_BROWSERS_PATH':browsers_path},
+        stdout=sys.stderr,check=True,
+    )
     stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ');runtime=target/'runtime'/stamp;runtime.mkdir(parents=True)
     for directory in ('collector','pipeline'):
-        shutil.copytree(ROOT/directory,runtime/directory,ignore=shutil.ignore_patterns('state','profile','output','__pycache__'))
+        shutil.copytree(ROOT/directory,runtime/directory,ignore=shutil.ignore_patterns('state','profile','chromium-profile','output','__pycache__'))
     (runtime/'package.json').write_text('{"type":"module","private":true}\n')
     for module in ('@playwright/test','playwright','playwright-core'):
         source=ROOT/'node_modules'/module
@@ -49,8 +58,9 @@ def install(config_path,start=False):
     if source_store.exists() and not target_store.exists():
         with sqlite3.connect(source_store.as_uri()+'?mode=ro',uri=True) as src,sqlite3.connect(target_store) as dst:src.backup(dst)
         target_store.chmod(0o600)
-    for name in ('state','profile','logs'):(target/name).mkdir(exist_ok=True,mode=0o700)
-    config.update(stateDir=str(target/'state'),output=str(research),profile=str(target/'profile'))
+    for name in ('state','chromium-profile','logs'):(target/name).mkdir(exist_ok=True,mode=0o700)
+    config.update(stateDir=str(target/'state'),output=str(research),profile=str(target/'profile'),
+                  chromiumProfile=str(target/'chromium-profile'))
     for key in ('mode','date','race','no-sync','no-train','no-download','no-prepare'):config.pop(key,None)
     private=target/'config.json';private.write_text(json.dumps(config,ensure_ascii=False,indent=2)+'\n');private.chmod(0o600)
     launch_dir=Path.home()/'Library/LaunchAgents';launch_dir.mkdir(exist_ok=True)
@@ -59,7 +69,8 @@ def install(config_path,start=False):
         control('stop');shutil.copy2(plist,target/f'{LABEL}.{stamp}.plist.backup')
     definition={'Label':LABEL,'ProgramArguments':[node,str(runtime/'collector/run.mjs'),'daemon','--config',str(private)],
                 'WorkingDirectory':str(runtime),'RunAtLoad':True,'KeepAlive':True,'ThrottleInterval':60,
-                'EnvironmentVariables':{'PATH':os.environ.get('PATH','/usr/bin:/bin'),'RACE_PYTHON':python},
+                'EnvironmentVariables':{'PATH':os.environ.get('PATH','/usr/bin:/bin'),'RACE_PYTHON':python,
+                                        'PLAYWRIGHT_BROWSERS_PATH':browsers_path},
                 'StandardOutPath':str(target/'logs/companion.log'),'StandardErrorPath':str(target/'logs/companion-error.log')}
     with plist.open('wb') as stream:plistlib.dump(definition,stream)
     plist.chmod(0o600)

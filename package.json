@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "data:run": "python3 -m pipeline.run run",
-    "test:pipeline": "python3 -m unittest pipeline.test_pipeline pipeline.test_prediction collector.test_collector -v"
+    "test:pipeline": "python3 -m unittest pipeline.test_pipeline pipeline.test_prediction pipeline.test_review collector.test_collector -v"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",

@@ -1,12 +1,13 @@
 # JRDB companion
 
-認証済みのJRDB画面と公開済みZIPを、個人用Macの専用Chromeプロファイルで取得する。既存ChromeのCookieを読み出したりコピーしたりしない。2026-11-15、利用者のBasic契約で京都11Rの実取得を確認した。
+認証済みのJRDB画面と公開済みZIPを、個人用Chromeと独立したPlaywright専用Chromiumのプロファイルで取得する。旧版では2026-11-15、利用者のBasic契約で京都11Rの実取得を確認した。
 
 ## 起動
 
 秘密JSONを0600で作成し、`jrdbUser`、`jrdbPassword`、`syncToken`、`syncUrl` を設定する。環境変数 `JRDB_USER`、`JRDB_PASSWORD`、`COMPANION_TOKEN` でも指定できる。秘密ファイルはGitに入れない。
 
 ```bash
+npx playwright install chromium --no-shell
 node collector/run.mjs once --config /private/path/config.json --date 20261115 --race 08265411 --no-sync
 node collector/run.mjs daemon --config /private/path/config.json
 ```
@@ -24,9 +25,9 @@ python3 -m collector.service stop
 python3 -m collector.service start
 ```
 
-`~/Library/Application Support/RaceAnalyzer/` に最小実行コード、Playwright依存、専用profile、0600設定・記録を配置する。LaunchAgentはログイン中のMacで動く。Mac停止・スリープ中は巡回しない。WebアプリだけでChromeが常時動いていると表示しない。前の実行コードとplistバックアップを残す。再インストール時に既存の学習記録を上書きしない。
+`~/Library/Application Support/RaceAnalyzer/` に最小実行コード、Playwright依存、専用Chromiumとそのプロファイル、0600設定・記録を配置する。インストーラーは既存サービスを切り替える前にChromiumを取得する。LaunchAgentはログイン中のMacで動く。Mac停止・スリープ中は巡回しない。前の実行コードとplistバックアップを残す。再インストール時に既存の学習記録を上書きしない。
 
-プロファイル認証の追加が必要な場合は `node collector/run.mjs login --config ...` を実行して専用ブラウザでログインする。認証失敗はstatusへ記録し、正常データに置き換えない。ログへパスワード・Cookie・session queryを出さない。
+プロファイル認証の追加が必要な場合は `node collector/run.mjs login --config ...` を実行して専用ブラウザでログインする。常駐サービスと同じChromiumを使う場合は `PLAYWRIGHT_BROWSERS_PATH="$HOME/Library/Application Support/RaceAnalyzer/browsers"` を指定する。旧版からの初回切り替え時は新しいChromiumプロファイルを使用する。認証失敗はstatusへ記録する。ログへパスワード・Cookie・session queryを出さない。
 
 ## 取得内容と限界
 

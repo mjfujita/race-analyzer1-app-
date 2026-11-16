@@ -1,5 +1,6 @@
 node_modules
 dist
+/collector/chromium-profile/
 .env
 .env.local
 .env.*.local

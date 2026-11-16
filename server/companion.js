@@ -1,8 +1,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
+import { validateForecastReview } from '../src/forecastReview.js'
 import { validateModel } from '../src/modelStore.js'
 import { validateLedger, emptyLedger, importLedger, parseRaceObservations } from '../src/forecastLedger.js'
 import { importOddsSnapshots } from '../src/oddsHistory.js'
-import { raceDateISO, validTimestamp } from '../src/raceTime.js'
+import { decisionCutoff, raceDateISO, snapshotTiming, validTimestamp } from '../src/raceTime.js'
 
 export const MAX_BODY_BYTES = 3_000_000
 const MAX_RACE_FILES = 2000
@@ -121,6 +122,10 @@ export function validateBundle(input, { ownerId, runtimeValidator, now = Date.no
   if (typeof input.status.state !== 'string' || !/^[a-z_-]{1,40}$/.test(input.status.state)) invalid('取得状態が不正です。')
   for (const key of ['lastRunAt', 'lastSuccessAt']) checkTime(input.status[key], now, '処理時刻', true)
   const models = validateModels(input.models, runtimeValidator)
+  if (input.forecastReview != null) {
+    try { validateForecastReview(input.forecastReview, ownerId); checkTime(input.forecastReview.generatedAt, now, '振り返り生成時刻') }
+    catch { invalid('振り返りデータの検証に失敗しました。') }
+  }
   const keys = new Set()
   for (const race of input.races) {
     validateRaceInput(race, ownerId, now)
@@ -153,6 +158,13 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     if (!meta || meta.schemaVersion !== 1 || meta.ownerId !== ownerId) conflict('保存済みの同期情報を検証できません。')
     validateModels(meta.models, runtimeValidator)
     return meta
+  }
+  async function latestReview() {
+    const [row] = await list(`${prefix}/forecast-review`, { limit: 1, order: 'desc' })
+    if (!row) return null
+    const stored = await store.get(row.path)
+    if (!stored || stored.ownerId !== ownerId || !validTimestamp(stored.receivedAt)) conflict('振り返りの保存範囲を確認できません。')
+    return { ...validateForecastReview(stored.review, ownerId), receivedAt: stored.receivedAt }
   }
   async function availableRaces(date) {
     let dates = date ? [date] : (await list(`${prefix}/race-index`, { limit: 8, order: 'desc' })).map(row => row.name).filter(value => /^\d{8}$/.test(value))
@@ -285,6 +297,14 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       await store.putImmutable(indexPath, raceMeta(race))
     })
     const prior = await latestMeta()
+    if (bundle.forecastReview) {
+      const review = bundle.forecastReview
+      const path = `${prefix}/forecast-review/${String(Date.parse(review.generatedAt)).padStart(13, '0')}.json`
+      const saved = await store.putImmutable(path, { ownerId, receivedAt, review })
+      if (!saved.created && (saved.existing?.ownerId !== ownerId || contentHash(saved.existing?.review) !== contentHash(review))) {
+        conflict('同じ集計時刻に異なる振り返りが届きました。')
+      }
+    }
     const meta = { schemaVersion: 1, ownerId, generatedAt: bundle.generatedAt, receivedAt, status: bundle.status,
       models: { abilityModel: bundle.models.abilityModel ?? prior?.models?.abilityModel ?? null,
         runtimeModel: bundle.models.runtimeModel ?? prior?.models?.runtimeModel ?? null } }
@@ -296,7 +316,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     else if (raceDate != null && (!/^\d{8}$/.test(raceDate) || !raceDateISO({ raceDate }))) invalid('開催日が不正です。')
     const meta = await latestMeta()
     const response = { schemaVersion: 1, status: { ...(meta ? { ...meta.status, syncedAt: meta.receivedAt } : { state: 'not_connected' }), pendingCaptureCount: (await pullCommands()).commands.length },
-      models: meta?.models ?? { abilityModel: null, runtimeModel: null }, availableRaces: await availableRaces(raceDate) }
+      models: meta?.models ?? { abilityModel: null, runtimeModel: null }, forecastReview: await latestReview(), availableRaces: await availableRaces(raceDate) }
     if (!raceId) return response
     const scope = { userId: ownerId, raceId, raceDate }
     const rows = await list(`${racePrefix(raceId, raceDate)}/observations`, { limit: MAX_RACE_FILES, complete: true })
@@ -312,6 +332,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       context: latest?.context ?? null, results: latest?.results ?? null, ledger: await readLedger(scope), conflicts: [] }
   }
   async function saveLedger(input) {
+    const startedAt = now()
     boundedJson(input)
     validateRaceKey(input?.scope?.raceId, input?.scope?.raceDate)
     const scope = { userId: ownerId, raceId: input.scope.raceId, raceDate: input.scope.raceDate }
@@ -331,15 +352,59 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
         await immutable(`${base}/${kind}/${keyHash(semanticId)}.json`, { schemaVersion: 1, ownerId, scope, kind, record })
       }
     }
-    return { ok: true, ledger: await readLedger(scope) }
+    const candidates = input.forecasts.filter(record => record.kind === 'ace' && record.mode === 'live'
+      && record.inputs.probabilityStack)
+    const receipts = Object.create(null)
+    await forEachBounded(candidates, 4, async record => {
+      const receipt = await store.get(`${base}/receipts/${keyHash(record.id)}.json`)
+      if (!receipt) return
+      if (receipt.ownerId !== ownerId || receipt.raceId !== scope.raceId || receipt.raceDate !== scope.raceDate
+        || receipt.forecastId !== record.id) conflict('予想の受領記録を確認できません。')
+      receipts[record.id] = receipt
+    })
+    const newForecasts = candidates.filter(record => !receipts[record.id] && Date.parse(record.createdAt) <= startedAt
+      && startedAt <= Date.parse(record.cutoffAt))
+    const received = newForecasts.length ? await get(scope) : null
+    const cutoffAt = decisionCutoff(received?.race)
+    for (const record of newForecasts) {
+      const calibration = received.forecastReview?.active.find(model => model.id === record.inputs.probabilityCalibration
+        && model.stack === record.inputs.probabilityStack && model.temperature === record.inputs.probabilityTemperature
+        && model.testedThrough < scope.raceDate && Date.parse(received.forecastReview.receivedAt) <= Date.parse(record.createdAt))
+      if (record.inputs.probabilityCalibration && !calibration) continue
+      const source = received.snapshots?.find(row => row.id === record.inputs.sourceId && row.kind === 'observed')
+      if (!cutoffAt || Date.parse(record.cutoffAt) !== Date.parse(cutoffAt) || !source
+        || !snapshotTiming(source, received.race).eligible || Date.parse(source.retrievedAt) > Date.parse(record.createdAt)
+        || ['observedAt', 'retrievedAt', 'sourcePublishedAt'].some(key => (source[key] != null || record.inputs[key] != null)
+          && Date.parse(source[key]) !== Date.parse(record.inputs[key]))
+        || contentHash(source.odds) !== contentHash(record.inputs.winOdds)
+        || record.field.length !== Object.keys(source.odds).length || record.field.some(h => !Object.hasOwn(source.odds, h.no))) continue
+      const receipt = { schemaVersion: 1, ownerId, raceId: scope.raceId, raceDate: scope.raceDate,
+        forecastId: record.id, cutoffAt, receivedAt: new Date(startedAt).toISOString(), sourceId: source.id }
+      await immutable(`${prefix}/forecast-index/${scope.raceDate}/${scope.raceId}.json`, { raceId: scope.raceId, raceDate: scope.raceDate })
+      const saved = await store.putImmutable(`${base}/receipts/${keyHash(record.id)}.json`, receipt)
+      receipts[record.id] = saved.created ? receipt : saved.existing
+    }
+    return { ok: true, ledger: await readLedger(scope), receipts: { ...receipts } }
   }
   async function pullLedger({ raceId, raceDate }) {
     validateRaceKey(raceId, raceDate)
-    const response = { schemaVersion: 1, ledger: await readLedger({ userId: ownerId, raceId, raceDate }), conflicts: [] }
+    const base = `${racePrefix(raceId, raceDate)}/ledger/receipts`
+    const rows = await list(base, { limit: 500, complete: true })
+    const receipts = await Promise.all(rows.map(row => store.get(row.path)))
+    if (receipts.some(row => !row || row.ownerId !== ownerId || row.raceId !== raceId || row.raceDate !== raceDate)) conflict('予想の受領記録を確認できません。')
+    const response = { schemaVersion: 1, ledger: await readLedger({ userId: ownerId, raceId, raceDate }), ...(receipts.length ? { receipts } : {}), conflicts: [] }
     if (Buffer.byteLength(JSON.stringify(response)) > MAX_BODY_BYTES) throw new ApiError(413, 'too_large', 'このレースの記録は同期上限を超えています。記録は保持しています。')
     return response
   }
-  return { ingestBundle, get, saveLedger, pullLedger, requestCapture, pullCommands, acknowledgeCommand }
+  async function pullForecastRaces() {
+    const base = `${prefix}/forecast-index`
+    const dates = (await list(base, { limit: 8, order: 'desc' })).map(row => row.name).filter(day => /^\d{8}$/.test(day))
+    const races = await Promise.all(dates.map(async raceDate => (await list(`${base}/${raceDate}`, { limit: 72 }))
+      .filter(row => row.name.endsWith('.json'))
+      .map(row => validateRaceKey(row.name.slice(0, -5), raceDate))))
+    return { schemaVersion: 1, races: races.flat() }
+  }
+  return { ingestBundle, get, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand }
 }
 
 export function safeTokenEqual(left, right) {
@@ -390,6 +455,10 @@ export function createCompanionHandler({ service, authenticateUser, ownerId, com
         if (body?.action === 'pull-ledgers') {
           if (Object.keys(body).some(key => !['action', 'raceId', 'raceDate'].includes(key))) invalid('取得条件が不正です。')
           return res.status(200).json(await service.pullLedger(body))
+        }
+        if (body?.action === 'pull-forecast-races') {
+          if (Object.keys(body).some(key => key !== 'action')) invalid('取得条件が不正です。')
+          return res.status(200).json(await service.pullForecastRaces())
         }
         if (body?.action === 'pull-commands') {
           if (Object.keys(body).some(key => key !== 'action')) invalid('取得条件が不正です。')

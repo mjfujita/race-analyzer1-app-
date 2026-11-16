@@ -3,6 +3,7 @@ import WinOddsPage from './WinOddsPage.jsx'
 import PacePage from './PacePage.jsx'
 import AbilityPage from './AbilityPage.jsx'
 import OddsReview from './OddsReview.jsx'
+import ForecastReviewPage from './ForecastReviewPage.jsx'
 import AutomationPanel from './AutomationPanel.jsx'
 import { useCompanion } from './useCompanion.js'
 import { applyCloudData, fetchCloudRace, enrichCloudHorses, syncLedgerToCloud, requestRaceCapture } from './cloudStore.js'
@@ -1969,6 +1970,7 @@ function MainApp({ session, onLogout }) {
   const overviewTabs = [
     { id: 'today', label: '本日注目レース', icon: Star },
     { id: 'races', label: 'レース一覧', icon: Layers },
+    { id: 'forecastReview', label: '予想の振り返り', icon: Activity },
     { id: 'automation', label: '自動取得・学習', icon: Activity },
     { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
   ]
@@ -2006,6 +2008,7 @@ function MainApp({ session, onLogout }) {
         <div>
           {tab === 'today' && <TabToday />}
           {tab === 'races' && <TabRaces />}
+          {tab === 'forecastReview' && <ForecastReviewPage review={sync.data?.forecastReview} loading={sync.loading} error={sync.error} onRefresh={refreshCompanion} />}
           {tab === 'automation' && <AutomationPanel sync={sync} onRefresh={refreshCompanion} onSelectRace={loadCollectedRace} />}
           {tab === 'analysis' && <TabAnalysis />}
           {tab === 'ability' && <AbilityPage race={analysisRace} horses={analysisHorses} userId={session.user.id}
@@ -2024,7 +2027,7 @@ function MainApp({ session, onLogout }) {
             onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
           {tab === 'finalForecast' && (raceInfo ? <FinalForecastPage
             key={`${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={analysisRace} horses={analysisHorses}
-            userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
+            userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud} syncedReceipts={sync.data?.receipts} review={sync.error ? null : sync.data?.forecastReview}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
             onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
           {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}

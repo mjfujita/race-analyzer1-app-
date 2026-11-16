@@ -56,7 +56,7 @@ export async function synchronizePending(bundle,config,state,{changed=false,now=
   // Skip entire unchanged races after a successful sync. Changed races retain all immutable evidence.
   const changedRaces=bundle.races.filter(race=>state.raceHashes?.[`${race.raceDate}:${race.raceId}`]!==raceHashes[`${race.raceDate}:${race.raceId}`])
   // The pending bit is durable before network I/O and clears only after a complete successful batch.
-  const result=await send(full?{...bundle,races:changedRaces}:{...bundle,races:[],models:null},config)
+  const result=await send(full?{...bundle,races:changedRaces}:{...bundle,races:[],models:null,forecastReview:null},config)
   if(result.state==='synced'){
     state.lastSyncAt=now
     if(full){state.pendingFullSync=false;state.lastFullSyncAt=now;state.raceHashes={...state.raceHashes,...raceHashes}}
@@ -72,18 +72,59 @@ export async function reportSyncFailure(bundle,config,status,state,error,send=sy
   status.sync={state:'failed',...failure}
   status.lastFullSyncAt=state.lastFullSyncAt??null
   // A status heartbeat never clears the pending data bit or acknowledges a capture command.
-  try{await send({...bundle,races:[],models:null,status},config,5000)}catch{/* Offline UI detects the stale heartbeat; local failure remains available. */}
+  try{await send({...bundle,races:[],models:null,forecastReview:null,status},config,5000)}catch{/* Offline UI detects the stale heartbeat; local failure remains available. */}
 }
-async function downloadPublishedZips(page,config,date,state){
+async function downloadPublishedZips(page,config,date,state,nextDue){
   if(config['no-download'])return 0
+  const deadline = Math.min(Date.now() + 90_000, nextDue - 60_000)
+  const remaining = () => deadline - Date.now()
   await page.goto('https://jrdb.com/member/data/',{waitUntil:'domcontentloaded',timeout:30000})
-  const links=await page.locator('a[href]').evaluateAll(nodes=>nodes.map(a=>a.href))
+  const memberLinks = () => page.locator('a[href]').evaluateAll(nodes => nodes.map(a => ({ url: a.href, label: a.innerText })))
+  const entries = await memberLinks()
+  const links = entries.map(entry => entry.url)
+  const archivePages = entries.flatMap(entry => {
+    if (!/個別データ|データルーム|最新更新履歴|成績(?:速報)?(?:データ|更新)/.test(entry.label)) return []
+    try {
+      const url = safeJrdbUrl(entry.url)
+      return url.pathname.startsWith('/member/') && !/\.(?:zip|lzh)$/i.test(url.pathname) ? [url.href] : []
+    } catch { return [] }
+  })
+  for (const source of [...new Set(archivePages)].slice(0, 3)) {
+    if (remaining() < 4000) break
+    const response = await page.goto(source, { waitUntil: 'domcontentloaded', timeout: Math.min(8000, remaining()) })
+      .catch(() => null)
+    if (!response) continue
+    if ([401, 403].includes(response.status())) throw Object.assign(new Error('認証が必要です。'), { code: 'auth_required' })
+    links.push(...(await memberLinks()).map(entry => entry.url))
+  }
   // Results may be published after midnight; keep a short catch-up window and deduplicate by content hash.
-  const recentDates=new Set(Array.from({length:3},(_,day)=>new Date(Date.UTC(+date.slice(0,4),+date.slice(4,6)-1,+date.slice(6,8)-day)).toISOString().slice(2,10).replaceAll('-','')))
-  const candidate=[...new Set(links)].flatMap(value=>{try{const url=safeJrdbUrl(value),match=url.pathname.match(/(?:TYB|HJC|PACI)(\d{6})\.zip$/i);return match&&recentDates.has(match[1])?[url.href]:[]}catch{return[]}})
+  const suffix = offset => new Date(Date.UTC(+date.slice(0,4), +date.slice(4,6)-1, +date.slice(6,8)+offset))
+    .toISOString().slice(2,10).replaceAll('-','')
+  const recent = new Set(Array.from({ length: 8 }, (_, day) => suffix(-day)))
+  const upcoming = new Set(Array.from({ length: 7 }, (_, day) => suffix(day+1)))
+  const priority = ['PACI', 'SED', 'SEC', 'HJC', 'TYB', 'BAC', 'KAB', 'KTA', 'BAB', 'KAA', 'UKC', 'CSA', 'CZA', 'KSA', 'KZA', 'MSA', 'MZA']
+  const candidate = [...new Set(links)].flatMap(value => {
+    try {
+      const url = safeJrdbUrl(value)
+      const match = /([A-Z]{3,4})(\d{6})\.zip$/i.exec(url.pathname)
+      if (!match) return []
+      const [, rawKind, day] = match
+      const kind = rawKind.toUpperCase()
+      const rank = priority.indexOf(kind)
+      return rank >= 0 && (recent.has(day) || (rank === 0 || rank >= 5) && upcoming.has(day)) ? [{ url: url.href, rank, day }] : []
+    } catch { return [] }
+  }).sort((a, b) => a.rank - b.rank || b.day.localeCompare(a.day))
   let count=0
-  for(const link of candidate.slice(0,20)){
-    const response=await page.context().request.get(link,{timeout:30000})
+  for (const { url: link } of candidate.slice(0, 24)) {
+    if (remaining() < 3000) break
+    const requestZip = url => page.context().request.get(url, { timeout: Math.min(9000, remaining()), maxRedirects: 0 }).catch(() => null)
+    let response = await requestZip(link)
+    const redirect = response?.headers().location
+    if (redirect && response.status() >= 300 && response.status() < 400 && remaining() > 3000) {
+      const target = new URL(redirect, link)
+      try { response = await requestZip(safeJrdbUrl(target.href).href) } catch { continue }
+    }
+    if (!response) continue
     if([401,403].includes(response.status()))throw Object.assign(new Error('認証が必要です。'),{code:'auth_required'})
     if(!response.ok())continue
     const bytes=await response.body();if(bytes.length>50000000||bytes.length<4||bytes[0]!==80||bytes[1]!==75)continue
@@ -130,7 +171,7 @@ async function cycle(page,config,state,force=false){
   const observationWindow=nextDue-Date.now()<5*60000
   let downloads=0
   if(!observationWindow&&(force||Date.now()-Date.parse(state.lastDownloadAt??0)>15*60000)){
-    try{downloads=await downloadPublishedZips(page,config,date,state);state.lastDownloadAt=new Date().toISOString()}catch(error){failures.push(redactedFailure(error))}
+    try{downloads=await downloadPublishedZips(page,config,date,state,nextDue);state.lastDownloadAt=new Date().toISOString()}catch(error){failures.push(redactedFailure(error))}
   }
   let added=0
   if(captures.length){const path=join(config.stateDir,'capture-input.json');await saveJson(path,captures);added=JSON.parse(await python(['-m','collector.persist','persist','--output',config.output,'--input',path])).added}
@@ -138,11 +179,18 @@ async function cycle(page,config,state,force=false){
   let ledgerRecords=0
   if(config.syncToken&&!config['no-sync']&&!observationWindow&&(force||Date.now()-Date.parse(state.lastLedgerPullAt??0)>15*60000)){
     try{const pulled=[]
-      for(const race of races){const record=await companionAction(config,{action:'pull-ledgers',raceId:race.raceId,raceDate:race.raceDate})
+      const settled = state.historicalLedgerPulls ?? {}
+      const indexed = await companionAction(config, { action: 'pull-forecast-races' })
+      const history = indexed.races.filter(r => r.raceDate < date && !settled[`${r.raceDate}:${r.raceId}`]).slice(0, 12)
+      const batch = [...races, ...history].slice(0, 72)
+      for(const race of batch){const record=await companionAction(config,{action:'pull-ledgers',raceId:race.raceId,raceDate:race.raceDate})
         if(record.conflicts?.length)throw Object.assign(new Error('購入記録に競合があります。'),{code:'ledger_conflict'})
-        if(record.ledger)pulled.push(record.ledger)
+        if(record.ledger)pulled.push({ledger:record.ledger,receipts:record.receipts??[]})
       }
       if(pulled.length){const file=join(config.stateDir,'ledger-input.json');await saveJson(file,pulled);ledgerRecords=JSON.parse(await python(['-m','collector.persist','ledger','--output',config.output,'--input',file])).added}
+      state.historicalLedgerPulls = Object.fromEntries(Object.entries({
+        ...settled, ...Object.fromEntries(history.map(r => [`${r.raceDate}:${r.raceId}`, true]))
+      }).slice(-600))
       state.lastLedgerPullAt=new Date().toISOString()
     }catch(error){failures.push(redactedFailure(error))}
   }
@@ -154,12 +202,13 @@ async function cycle(page,config,state,force=false){
       }
     }catch(error){failures.push({...redactedFailure(error),code:'prepare_failed'})}
   }
-  const hasModel=await stat(join(config.output,'model.runtime.json')).then(()=>true,()=>false)
+  const hasModel=(await Promise.all(['model.runtime.json','forecast-review.json'].map(name=>stat(join(config.output,name)).then(()=>true,()=>false)))).every(Boolean)
   const resultUpdate=captures.some(c=>c.observation.payload.results.length)
   let modelUpdated=false
-  const shouldTrain=!observationWindow&&(force||!hasModel||(resultUpdate&&Date.now()-Date.parse(state.lastTrainAt??0)>30*60000))
-  if(!config['no-train']&&shouldTrain&&(force||added||downloads||!hasModel)){
-    try{await python(['-m','pipeline.run','run','--source-db',config.sourceDb,'--output',config.output,'--inbox',config.downloads]);state.lastTrainAt=new Date().toISOString();modelUpdated=true}catch(error){failures.push(redactedFailure(error));if(error.detail)await writeFile(join(config.stateDir,'pipeline-error.log'),error.detail,{mode:0o600})}
+  state.pendingTraining = Boolean(state.pendingTraining || resultUpdate || downloads || ledgerRecords)
+  const shouldTrain = !observationWindow && (force || !hasModel || (state.pendingTraining && Date.now()-Date.parse(state.lastTrainAt??0)>30*60000))
+  if(!config['no-train']&&shouldTrain){
+    try{await python(['-m','pipeline.run','run','--source-db',config.sourceDb,'--output',config.output,'--inbox',config.downloads,'--include-paci']);state.lastTrainAt=new Date().toISOString();state.pendingTraining=false;modelUpdated=true}catch(error){failures.push(redactedFailure(error));if(error.detail)await writeFile(join(config.stateDir,'pipeline-error.log'),error.detail,{mode:0o600})}
   }
   const status={state:failures.some(f=>f.code==='auth_required')?'auth_required':failures.length?'partial':jobs.length?'ready':'waiting',
     lastRunAt:new Date().toISOString(),source:'local-jrdb-companion',date,scheduledRaces:races.length,capturedRaces:captures.length,addedRecords:added,
@@ -173,7 +222,7 @@ async function cycle(page,config,state,force=false){
         {changed:Boolean(force||added||downloads||ledgerRecords||modelUpdated),persistState:value=>saveJson(join(config.stateDir,'state.json'),value)})
       if(status.sync.state==='synced'&&status.lastFullSyncAt!==state.lastFullSyncAt){
         status.lastFullSyncAt=state.lastFullSyncAt??null
-        try{await synchronize({...await json(join(config.output,'companion.bundle.json')),races:[],models:null,status},config,5000)}catch{/* Data success remains valid even if its status heartbeat is delayed. */}
+        try{await synchronize({...await json(join(config.output,'companion.bundle.json')),races:[],models:null,forecastReview:null,status},config,5000)}catch{/* Data success remains valid even if its status heartbeat is delayed. */}
       }
     }catch(error){await reportSyncFailure(await json(join(config.output,'companion.bundle.json')),config,status,state,error)}
     for(const ack of acknowledgements){
@@ -195,7 +244,7 @@ export async function main(){
     sourceDb:resolve(options['source-db']??privateConfig.sourceDb??join(homedir(),'projects/backend/race.db')),
     stateDir:resolve(options['state-dir']??privateConfig.stateDir??join(ROOT,'collector/state')),
     output:resolve(options.output??privateConfig.output??join(ROOT,'pipeline/output')),
-    profile:resolve(options.profile??privateConfig.profile??join(ROOT,'collector/profile'))}
+    profile:resolve(options.profile??privateConfig.chromiumProfile??privateConfig.profile??join(ROOT,'collector/chromium-profile'))}
   config.downloads=join(config.stateDir,'downloads');await mkdir(config.downloads,{recursive:true,mode:0o700})
   config.originalSourceDb=config.sourceDb
   const prepared=await json(join(config.stateDir,'derived/prepared-source.json'),null)
@@ -205,7 +254,8 @@ export async function main(){
   if(localModified>Date.parse(state.lastFullSyncAt??'1970-01-01'))state.pendingFullSync=true
   if(options.mode==='sync'){console.log(JSON.stringify(await synchronize(await json(join(config.output,'companion.bundle.json')),config)));return}
   const httpCredentials=config.jrdbUser&&config.jrdbPassword?{username:config.jrdbUser,password:config.jrdbPassword,origin:'https://jrdb.com'}:undefined
-  const context=await chromium.launchPersistentContext(config.profile,{channel:'chrome',headless:options.mode!=='login'&&!options.headful,httpCredentials,acceptDownloads:true})
+  // A separate macOS app bundle keeps background collection from intercepting normal Chrome launches.
+  const context=await chromium.launchPersistentContext(config.profile,{channel:'chromium',headless:options.mode!=='login'&&!options.headful,httpCredentials,acceptDownloads:true})
   const page=context.pages()[0]??await context.newPage()
   let stopped=false;process.once('SIGTERM',()=>{stopped=true});process.once('SIGINT',()=>{stopped=true})
   try{
