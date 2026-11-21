@@ -371,7 +371,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       validateRaceInput(record.race, ownerId, now())
     }
     const latest = records.at(-1)?.race
-    const saved = await pullLedger(scope)
+    const saved = await pullLedger(scope, true)
     return { ...response, race: latest ? { ...latest.race, id: raceId, raceDate } : null,
       snapshots: uniqueRecords(records.flatMap(record => record.race.snapshots), 'id'),
       observations: uniqueRecords(records.flatMap(record => record.race.observations), 'eventId'),
@@ -434,13 +434,17 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     }
     return { ok: true, ledger: await readLedger(scope), receipts: { ...receipts } }
   }
-  async function pullLedger({ raceId, raceDate }) {
+  async function pullLedger({ raceId, raceDate }, includeDecisions = false) {
     validateRaceKey(raceId, raceDate)
     const base = `${racePrefix(raceId, raceDate)}/ledger/receipts`
     const rows = await list(base, { limit: 500, complete: true })
     const receipts = await Promise.all(rows.map(row => store.get(row.path)))
     if (receipts.some(row => !row || row.ownerId !== ownerId || row.raceId !== raceId || row.raceDate !== raceDate)) conflict('予想の受領記録を確認できません。')
-    const response = { schemaVersion: 1, ledger: await readLedger({ userId: ownerId, raceId, raceDate }), ...(receipts.length ? { receipts } : {}), conflicts: [] }
+    const ledger = await readLedger({ userId: ownerId, raceId, raceDate })
+    const originalIds = new Set(ledger.forecasts.filter(record => record.kind === 'ace').map(record => record.id))
+    // Existing Python workers attest and train original forecasts only. Owner GET may also show decision receipts.
+    const visibleReceipts = includeDecisions ? receipts : receipts.filter(receipt => originalIds.has(receipt.forecastId))
+    const response = { schemaVersion: 1, ledger, ...(visibleReceipts.length ? { receipts: visibleReceipts } : {}), conflicts: [] }
     if (Buffer.byteLength(JSON.stringify(response)) > MAX_BODY_BYTES) throw new ApiError(413, 'too_large', 'このレースの記録は同期上限を超えています。記録は保持しています。')
     return response
   }

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { CloudSun, Flag } from 'lucide-react'
-import { decisionCutoff, formatRaceTime, raceTimestamp } from './raceTime.js'
+import { decisionCutoff, formatRaceTime, raceTimestamp, validTimestamp } from './raceTime.js'
 import { readPaceResults, recordedPaceRows } from './paceHistory.js'
 import { loadModel } from './modelStore.js'
 import { buildAbilityField } from './marketModel.js'
@@ -37,20 +37,24 @@ function positionProfile(race, horse, style) {
   const goingRuns = (horse.pastRuns ?? []).filter(run => race.going && race.going !== '—'
     && run.dist?.startsWith(race.surface) && run.going === race.going && Number(run.rank) > 0).slice(0, 5)
   return {
-    no: horse.no, name: horse.name, style, rank: horse.predictedFavRank, goingRuns: goingRuns.length,
+    no: horse.no, name: horse.name, style: Number(style) || null, rank: horse.predictedFavRank, goingRuns: goingRuns.length,
     goingTop3: goingRuns.filter(run => Number(run.rank) <= 3).length,
   }
 }
 
-export default function PacePage({ race, horses, statistics = [], earlierRaces = [], userId }) {
+export default function PacePage({ race, horses, statistics = [], earlierRaces = [], userId, workspace = false }) {
   const [recorded, setRecorded] = useState(() => readPaceResults(userId, race))
   const [error, setError] = useState('')
   const [asofOnly, setAsofOnly] = useState(true)
   const cloud = readCloudRace(userId, race)
   const models = loadRuntimeModel(userId)
   const enriched = enrichCloudHorses(horses, cloud?.race)
-  const ability = buildAbilityField({ race, horses: enriched, statistics, model: models?.baseModel ?? loadModel(userId) })
-  const modelCutoff = decisionCutoff(race)
+  const officialCutoff = decisionCutoff(race)
+  const modelCutoff = validTimestamp(officialCutoff) ? new Date(Math.min(Date.now(),Date.parse(officialCutoff))).toISOString() : null
+  const candidateModel = models?.baseModel ?? loadModel(userId)
+  const model = candidateModel && [candidateModel.generatedAt,candidateModel.adoptedAt ?? candidateModel.importedAt]
+    .every(time => validTimestamp(time) && Date.parse(time) <= Date.parse(modelCutoff)) ? candidateModel : null
+  const ability = buildAbilityField({ race, horses: enriched, statistics, model })
   const context = buildRaceContext({ race, horses: enriched, field: ability.field, statistics,
     observations: cloud?.observations ?? [], earlierRaces: cloud?.race?.earlierResults ?? [], cutoffAt: modelCutoff })
   const history = readOddsHistory(oddsStorageKey(userId, race), { asOf: modelCutoff })
@@ -84,7 +88,7 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
     } catch (err) { setError(err.message || 'このブラウザに保存できませんでした。') }
   }
 
-  const cutoffAt = asofOnly ? decisionCutoff(race) ?? 'unknown' : null
+  const cutoffAt = asofOnly ? modelCutoff ?? 'unknown' : null
   const manualResults = recordedPaceRows(earlierRaces, cutoffAt ? readPaceResults(userId, race, { cutoffAt }) : recorded, { cutoffAt })
   const capturedResults = (cloud?.race?.earlierResults ?? []).filter(row => row.raceDate === race.raceDate && String(row.placeCode) === String(race.placeCode)
     && (!cutoffAt || availableAt(row, cutoffAt)) && Array.isArray(row.results))
@@ -117,18 +121,21 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
   const contested = paceLabel === '前の位置取りが競る可能性'
   const favoriteScenario = targetBias?.direction === 'rear' ? '差しが届く展開を重視'
     : targetBias?.direction === 'front' ? (contested ? '前残り傾向あり。先行争い次第で差しも警戒' : '前残りの展開を重視')
-    : paceLabel === '判定保留' ? '脚質データが揃うまで軸は保留'
+    : paceLabel === '判定保留' ? '脚質データが揃うまで展開の判定を保留'
     : contested ? '脚質構成から差しが届く展開に注意'
     : paceLabel === '隊列が落ち着く可能性' ? '脚質構成から前残りに注意'
     : '前残りと差しの両方を想定'
 
   return <div className="space-y-4">
+    {workspace && <div className="rca-page-title"><div><h1>展開と馬場を、事実から確認</h1><p>取得した脚質・馬場・先行レースの結果を確認します。</p></div></div>}
     <section className={card}>
       <h3 className="flex items-center gap-2 font-bold text-[#0B2545]"><CloudSun className="h-5 w-5" />天候・馬場</h3>
       <p className="mt-2 text-sm text-slate-700">天候 {displayedRace.weather || '未取得'} ・ 馬場 {displayedRace.going || '未取得'} ・ {race.distance}</p>
       <p className="mt-1 text-xs text-slate-500">{context.source ? `締切以前のJRDB観測を参照。取得 ${formatRaceTime(context.source.retrievedAt)}` : 'レース情報に登録されている値です。時点を確認した観測は未取得です。'}</p>
     </section>
-    <RuntimeModelPanel prediction={prediction} context={context} observations={cloud?.observations} />
+    <details open={!workspace} className={card}><summary className="font-semibold text-sky-800">使用モデルと当日補正の詳細</summary><RuntimeModelPanel prediction={prediction} context={context} observations={cloud?.observations} /></details>
+    {workspace && <section className="rca-panel"><h2>脚質の配置を見る</h2><p className="rca-muted">JRDBの脚質を分類して表示（参考）。取得済み {knownProfiles} / {profiles.length}頭。</p><div className="mt-4 grid gap-3 sm:grid-cols-4">{Object.entries(styles).map(([code,label]) => <div key={code} className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="font-semibold">{label}</p><div className="mt-3 flex flex-wrap gap-2">{profiles.filter(h => Number(h.style) === Number(code)).map(h => <span key={h.no} className="rounded-full bg-white border border-blue-200 px-3 py-1 text-sm" title={h.name}>{h.no}</span>)}{!profiles.some(h => Number(h.style) === Number(code)) && <span className="rca-muted">{knownProfiles === profiles.length ? '該当馬なし' : '未確認'}</span>}</div></div>)}</div>{knownProfiles < profiles.length && <p className="rca-notice">脚質未取得：{profiles.filter(h => !styles[h.style]).map(h => `${h.no}番`).join('・')}。取得した情報が揃うまで展開の判定を保留します。</p>}<p className="rca-muted mt-3">学習・検証した補正がある場合だけ確率へ反映します。</p></section>}
+    <details open={!workspace} className={card}><summary className="font-semibold text-sky-800">脚質構成からの参考シナリオ</summary>
     <section className={card}>
       <h3 className="flex items-center gap-2 font-bold text-[#0B2545]"><Flag className="h-5 w-5" />展開予想</h3>
       <p className="mt-2 text-sm font-semibold">想定展開　{paceLabel}</p>
@@ -148,6 +155,7 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
       </div>
       <p className="mt-2 text-xs text-slate-500">候補は脚質が合う馬をIDM順位順に最大5頭表示。</p>
     </section>
+    </details>
     <section className={card}>
       <h3 className="font-bold text-[#0B2545]">当日開催の傾向</h3>
       <p className="mt-1 text-xs leading-relaxed text-slate-500">同日・同場の先行レースを芝・ダート別に集計。頭数だけの比較基準を使う記述集計です。能力・ペースを調整していないため、馬場の因果効果や確率への自動加点には使いません。</p>

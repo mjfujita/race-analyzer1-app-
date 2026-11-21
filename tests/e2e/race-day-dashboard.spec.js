@@ -135,7 +135,7 @@ test('the four-menu workspace preserves settings, evidence pages and purchase re
   const { service, handler } = setup()
   await service.ingestBundle({ schemaVersion:1,kind:'race-companion-bundle',generatedAt:now,
     status:{ state:'ready',lastRunAt:now,lastFullSyncAt:now },
-    races:[{ raceId:race.id,raceDate:race.raceDate,race:{ ...race,horses },
+    races:[{ raceId:race.id,raceDate:race.raceDate,race:{ ...race,horses:horses.map((h,i) => ({ ...h,running_style:String(i%4+1) })) },
       snapshots:demoSnapshots().filter(row => row.time <= '15:20'),observations:[] }] })
   await connect(page,handler)
   const errors = []; page.on('pageerror',e => errors.push(e.message))
@@ -184,6 +184,11 @@ test('the four-menu workspace preserves settings, evidence pages and purchase re
       await sub.getByRole('button',{ name:'能力・適性',exact:true }).click()
       await sub.getByRole('button',{ name:'オッズ推移',exact:true }).click()
       await expect(prices.locator('tbody tr').first().locator('td').last()).toHaveText(before)
+    }
+    if (name === '展開・馬場') {
+      await expect(page.getByText('100.0% → 100.0% → 100.0%',{ exact:true })).toHaveCount(0)
+      await expect(page.getByRole('heading',{ name:'脚質の配置を見る' })).toBeVisible()
+      await expect(page.getByText(/取得済み 8 \/ 8頭/)).toBeVisible()
     }
     await page.screenshot({ path:`.qa/workspace-${file}.png`,fullPage:true })
     await expect(page.getByText('人気落ち実力馬あり',{ exact:true })).toHaveCount(0)

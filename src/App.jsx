@@ -1707,7 +1707,7 @@ function MainApp({ session, onLogout }) {
             cloudRevision={sync.revision} statistics={analysisStatistics}
             onSelectRace={() => setTab('races')}
             onSelectHorse={id => { setSelectedId(id); setTab('horseEvidence') }} />}
-          {tab === 'pace' && (raceInfo ? <PacePage race={analysisRace} horses={analysisHorses}
+          {tab === 'pace' && (raceInfo ? <PacePage workspace race={analysisRace} horses={analysisHorses}
             key={`${session.user.id}:${raceInfo.id}:${raceInfo.raceDate}`} userId={session.user.id}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
             cloudRevision={sync.revision} statistics={analysisStatistics} /> : <EmptyRace />)}
