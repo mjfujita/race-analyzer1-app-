@@ -23,7 +23,7 @@ function comparisonRows(summary) {
 
 function AnchorComparisonTable({ rows, suggested, selected, skip, onSelect, label }) {
   return <div className="min-w-0 space-y-2">
-    <div className="max-w-full overflow-x-auto rounded-xl border border-slate-200" role="region" aria-label={`${label}の横スクロール`} tabIndex={0}>
+    <div className="rca-desktop-comparison max-w-full overflow-x-auto rounded-xl border border-slate-200" role="region" aria-label={`${label}の横スクロール`} tabIndex={0}>
       <table className="w-full min-w-[640px] whitespace-nowrap text-left text-sm tabular-nums" aria-label={label}>
         <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600"><tr>
           {['馬番・馬名', '推定勝率', '推定3着内率', '単勝オッズ', '単勝期待回収率'].map((title, index) =>
@@ -44,15 +44,15 @@ function AnchorComparisonTable({ rows, suggested, selected, skip, onSelect, labe
                 {candidate ? onSelect ? `${horse.valueTypes.join('・')}に妙味候補` : '保存時の軸候補' : '比較馬'}
               </span>
             </th>
-            <td className="px-3 py-3">{percent(horse.probability)}</td>
-            <td className="px-3 py-3">{percent(horse.top3Probability)}</td>
-            <td className="px-3 py-3">{comparisonPrice(horse.odds)}</td>
-            <td className="px-3 py-3 font-semibold">{percent(horse.expectedReturn)}</td>
+            <td data-label="推定勝率" className="px-3 py-3">{percent(horse.probability)}</td>
+            <td data-label="推定3着内率" className="px-3 py-3">{percent(horse.top3Probability)}</td>
+            <td data-label="単勝オッズ" className="px-3 py-3">{comparisonPrice(horse.odds)}</td>
+            <td data-label="単勝期待回収率" className="px-3 py-3 font-semibold">{percent(horse.expectedReturn)}</td>
           </tr>
         }) : <tr><td colSpan={5} className="px-3 py-4 text-slate-500">全頭の勝率とオッズが揃うと比較を表示します。</td></tr>}</tbody>
       </table>
     </div>
-    <p className="text-xs text-slate-500 sm:hidden">表は横にスクロールできます。</p>
+
   </div>
 }
 
@@ -106,11 +106,11 @@ export function FrozenAnchorAssessment({ forecast }) {
 }
 
 export default function AnchorAssessmentPanel({ field, odds, placeQuotes, releaseFieldSize, placePositions,
-  momentum, stress, onStressChange, initialSelection, canSave, saving, actualLive, onSave, onOpenAbility, onOpenPace }) {
+  momentum, stress, onStressChange, initialSelection, defaultThreshold = 50, canSave, saving, actualLive, onSave, onOpenAbility, onOpenPace }) {
   const saved = initialSelection?.method === SINGLE_ANCHOR_METHOD ? initialSelection : null
   const [selected, setSelected] = useState(saved?.selected ?? null)
   const [skip, setSkip] = useState(saved?.decision === 'skip')
-  const [threshold, setThreshold] = useState(String((saved?.minTop3 ?? 0.5) * 100))
+  const [threshold, setThreshold] = useState(String(saved ? saved.minTop3 * 100 : defaultThreshold))
   const [note, setNote] = useState('')
   const oddsFactor = stress === '' ? NaN : 1 - Number(stress) / 100
   const minTop3 = threshold === '' ? NaN : Number(threshold) / 100
@@ -127,20 +127,20 @@ export default function AnchorAssessmentPanel({ field, odds, placeQuotes, releas
         <button type="button" onClick={onOpenPace}>展開・馬場を見る</button>
       </div>
     </div>
-    <p className="text-sm text-slate-600">3着内率の下限を満たし、下落想定後の単勝または複勝期待回収率が100%を超える馬を、3着内率順に最大2頭提示します。該当する馬がいないレースは見送りです。</p>
+    <p className="text-sm text-slate-600">条件を満たす候補を最大2頭表示します。軸にする1頭を選ぶか、見送ります。</p>
     {summary.rows.some(horse => horse.placeOdds == null) && <p className="text-xs text-slate-600">複勝オッズが未取得の馬は、取得済みの単勝オッズだけで妙味を判定します。</p>}
-    <div className="grid gap-3 sm:grid-cols-2">
+    <details><summary className="cursor-pointer text-sm font-semibold text-sky-800">判断条件を確認・変更</summary><p className="mt-2 text-xs text-slate-600">3着内率の下限と、下落想定後の単勝または複勝期待回収率100%超の条件で判定します。</p><div className="mt-3 grid gap-3 sm:grid-cols-2">
       <label className="space-y-1 text-sm">3着内率の下限（%）
         <input className={control} type="number" min="0" max="100" value={threshold} onChange={event => setThreshold(event.target.value)} />
       </label>
       <label className="space-y-1 text-sm">オッズ下落の想定（%）
         <input className={control} type="number" min="0" max="80" value={stress} onChange={event => onStressChange(event.target.value)} />
       </label>
-    </div>
+    </div></details>
     <p role="status" className="rounded-xl bg-slate-50 p-3 font-bold text-[#0B2545]">{decisionLabels[summary.decision]} <span className="text-xs font-normal text-slate-600">モデル試算</span></p>
     {summary.decision === 'skip' && !summary.suggested.length && <p className="text-sm text-slate-600">3着内率と期待回収率の両方を満たす候補がありません。</p>}
     {summary.invalidSelection && <p role="alert" className="text-sm text-amber-900">取得データまたは条件が変わりました。現在の候補から軸を選び直してください。</p>}
-    <fieldset className="min-w-0 space-y-3">
+    <div className="rca-axis-grid"><div className="min-w-0 space-y-4"><fieldset className="min-w-0 space-y-3">
       <legend className="mb-3 text-sm font-semibold">軸候補と比較馬</legend>
       <AnchorComparisonTable rows={comparisonRows(summary)} suggested={summary.suggested} selected={selected} skip={skip}
         onSelect={no => { setSelected(no); setSkip(false) }} label="軸候補の比較" />
@@ -158,9 +158,10 @@ export default function AnchorAssessmentPanel({ field, odds, placeQuotes, releas
       <summary className="cursor-pointer font-semibold text-sky-800">2候補の3着内確率を比較</summary>
       <p className="mt-2">どちらかが3着以内 {percent(summary.pair.eitherTop3)} ／ 2頭とも3着以内 {percent(summary.pair.bothTop3)}</p>
     </details>}
-    <p className="text-xs text-slate-600">3着内率は全頭の勝率から着順モデルで計算した未校正の参考値です。複勝は発売時の頭数に応じた的中範囲と取得オッズ下限で試算し、払戻の変動を含む実績で検証します。券種・相手・配分を決める際に各買い目の価格も確認してください。</p>
+    <p className="text-xs text-slate-500">確率・回収率はモデル試算です。3着内率は未校正の参考値です。</p><details><summary className="text-sm font-semibold text-sky-800">確率・人気の推移の読み方</summary><p className="mt-2 text-xs text-slate-600">3着内率は全頭の勝率から着順モデルで計算した未校正の参考値です。複勝は発売時の頭数に応じた的中範囲と取得オッズ下限で試算し、払戻の変動を含む実績で検証します。券種・相手・配分を決める際に各買い目の価格も確認してください。</p>
     {momentum?.reference ? <p className="text-xs text-slate-600">人気の推移は {formatRaceTime(momentum.reference.observedAt)} から選択した観測時刻までの比較です。オッズ低下と市場支持率の上昇を「人気上昇傾向」と表示します。</p>
       : <p className="text-xs text-slate-600">時刻を確認できる同じレースのオッズが2時点揃うと、変化率と人気順位の推移を表示します。</p>}
+    </details>
     {summary.issues.map(issue => <p key={issue} className="text-sm text-amber-900">{issue}</p>)}
     <details className="text-sm">
       <summary className="cursor-pointer font-semibold text-sky-800">全頭の妙味と人気の推移</summary>
@@ -183,13 +184,13 @@ export default function AnchorAssessmentPanel({ field, odds, placeQuotes, releas
         </table>
       </div>
     </details>
-    <label className="block text-sm">軸馬を選んだ理由・判断メモ
-      <textarea className={`${control} mt-1`} rows="2" value={note} maxLength="4000" onChange={event => setNote(event.target.value)} />
-    </label>
-    <button type="button" className="inline-flex items-center gap-2 rounded-lg bg-[#0B2545] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
-      disabled={!ready || saving} onClick={() => onSave({ method: SINGLE_ANCHOR_METHOD, suggested: summary.suggested,
+    </div><aside className="rca-stack"><div className="rca-axis-summary"><h3>選択した軸馬</h3><h4>{summary.anchor ? `${summary.anchor.no} ${summary.anchor.name}` : summary.decision === 'skip' ? '今回は見送り' : summary.decision === 'hold' ? 'データの確認が必要' : '候補から1頭を選択'}</h4>
+      {summary.anchor && <dl className="rca-details">{[['推定3着内率',percent(summary.anchor.top3Probability)],['単勝・下落想定後',percent(summary.anchor.stressReturn)],['損益分岐の単勝オッズ',price(summary.anchor.breakEvenOdds)]].map(([name,value]) => <div key={name}><dt>{name}</dt><dd>{value}</dd></div>)}</dl>}
+      <button type="button" className="rca-primary disabled:opacity-40" disabled={!ready || saving} onClick={() => onSave({ method: SINGLE_ANCHOR_METHOD, suggested: summary.suggested,
         selected: summary.anchor?.no ?? null, decision: summary.decision, minTop3, note })}>
-      <Save aria-hidden="true" className="h-4 w-4" />{saving ? '保存中…' : `${saveLabel}${actualLive ? '' : '（過去検証）'}`}
-    </button>
+        <Save aria-hidden="true" className="h-4 w-4" />{saving ? '保存中…' : `${saveLabel}${actualLive ? '' : '（過去検証）'}`}
+      </button><small>保存しても馬券購入にはなりません</small></div>
+      <div className="rca-panel"><h2>判断メモ</h2><label className="block text-sm">軸馬を選んだ理由・判断メモ<textarea className={`${control} mt-2`} rows="3" value={note} maxLength="4000" onChange={event => setNote(event.target.value)} /></label><p className="rca-muted mt-3">買い方・相手・金額は自分で決めます。</p></div>
+    </aside></div>
   </section>
 }

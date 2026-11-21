@@ -418,3 +418,32 @@ test('a later report stopping calibration wins over a replayed older companion b
   assert.equal((await request(handler, { token: 'other-token' })).status, 403)
   assert.equal((await request(handler, { method: 'POST', body: { action: 'pull-forecast-races' } })).status, 403)
 })
+
+test('selected user axes receive immutable owner-readable receipts only while the official cutoff is open', async () => {
+  const { SINGLE_ANCHOR_METHOD, assessAnchorCandidates } = await import('../src/anchorAssessment.js')
+  let clock = Date.parse(at) + 1000
+  const service = createCompanionService({ store: memoryStore(), ownerId, now: () => clock })
+  await service.ingestBundle(bundle())
+  const field = [{ no:1,probability:.8,pStar:.8 },{ no:2,probability:.2,pStar:.2 }]
+  const odds = { 1:3,2:4 }, summary = assessAnchorCandidates({ field,odds })
+  const base = { ...proposal(), mode:'live', cutoffAt:'2026-01-01T06:30:00.000Z', field,
+    inputs:{ observedAt:at, sourcePublishedAt:at, retrievedAt:at, sourceId:'odds-1', winOdds:odds,
+      probabilityStack:'["test-model",null,[],null]', probabilityCalibration:null },
+    parameters:{ ...proposal().parameters,budget:0,anchorSelection:{ method:SINGLE_ANCHOR_METHOD,minTop3:.5,suggested:summary.suggested,selected:null,decision:'pending' } },
+    metrics:{ ...proposal().metrics,unspent:0 } }
+  const original = appendForecast(emptyLedger(scope),base,at)
+  const selected = appendForecast(original.ledger,{ ...base,kind:'user',parentId:original.record.id,
+    parameters:{ ...base.parameters,anchorSelection:{ ...base.parameters.anchorSelection,selected:1,decision:'selected' } } },at)
+  const saved = await service.saveLedger(selected.ledger)
+  assert.ok(saved.receipts[selected.record.id])
+  const worker = await service.pullLedger(scope)
+  assert.deepEqual(worker.receipts.map(receipt => receipt.forecastId),[original.record.id])
+  assert.equal(worker.ledger.forecasts.length,2)
+  const response = await service.get(scope)
+  assert.equal(response.receipts[selected.record.id].forecastId,selected.record.id)
+  assert.equal(response.receipts[selected.record.id].ownerId,ownerId)
+  clock = Date.parse(base.cutoffAt) + 1
+  const later = appendForecast(selected.ledger,{ ...base,kind:'user',parentId:original.record.id,
+    parameters:{ ...base.parameters,anchorSelection:{ ...base.parameters.anchorSelection,selected:null,decision:'skip' } } },at)
+  assert.equal((await service.saveLedger(later.ledger)).receipts[later.record.id],undefined)
+})

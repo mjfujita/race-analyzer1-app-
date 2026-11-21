@@ -48,5 +48,5 @@ test('review handles loading, disconnected and empty data', async ({ page }) => 
   await page.evaluate(value => localStorage.setItem('synthetic-forecast-review', JSON.stringify(value)),
     { ...review, active: [], statesByStack: [], versions: [], races: [], totalForecasts: 0, eligibleRaces: 0, actual: null })
   await page.goto('/market-preview.html?state=review')
-  await expect(page.getByText(/ACE原案を固定保存すると/)).toBeVisible()
+  await expect(page.getByText(/判断を固定保存すると/)).toBeVisible()
 })
