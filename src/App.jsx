@@ -1733,7 +1733,7 @@ function MainApp({ session, onLogout }) {
     { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
   ]
   const raceTabs = [
-    { id: 'anchors', label: '軸馬2頭・妙味判断', icon: Target },
+    { id: 'anchors', label: '軸候補・妙味判断', icon: Target },
     { id: 'analysis', label: '出走馬分析', icon: Users },
     { id: 'ability', label: '能力・適性', icon: Gauge },
     { id: 'pace', label: '展開・天候', icon: Flag },
@@ -1782,8 +1782,8 @@ function MainApp({ session, onLogout }) {
                   <button type="button" onClick={() => setTab('automation')} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">自動取得・学習を開く</button>
                 </li>
                 <li>
-                  <strong>軸馬2頭を確認し、判断を保存</strong>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">レースを選び、「軸馬2頭・妙味判断」で勝率と単勝期待回収率を比較します。発走10分前までに2頭と判断を固定保存し、買い方を決めます。</p>
+                  <strong>軸候補を確認し、判断を保存</strong>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">レースを選び、「軸候補・妙味判断」で勝率・3着内率と単勝・複勝の期待回収率を比較します。最大2頭の候補から軸を1頭選び、候補がなければ見送ります。発走10分前までに判断を固定保存します。</p>
                   <button type="button" onClick={() => openRaceList()} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">レース一覧を開く</button>
                 </li>
               </ol>

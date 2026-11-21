@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Target, ArrowRight, Save, Download, Upload, ShieldCheck, Calculator } from 'lucide-react'
 import { oddsStorageKey, readOddsHistory, readOddsEvents } from './oddsHistory.js'
-import { decisionCutoff, raceTimestamp, snapshotTiming, formatRaceTime } from './raceTime.js'
+import { decisionCutoff, raceTimestamp, snapshotTiming, formatRaceTime, validTimestamp } from './raceTime.js'
 import { loadModel } from './modelStore.js'
 import { loadRuntimeModel, readCloudRace } from './cloudStore.js'
 import { buildRaceContext, applyPredictionModels } from './predictionModel.js'
@@ -9,7 +9,8 @@ import { calibrateForecast, reviewStack } from './forecastReview.js'
 import RuntimeModelPanel from './RuntimeModelPanel.jsx'
 import RaceDataPanel, { readRaceData } from './RaceDataPanel.jsx'
 import AnchorAssessmentPanel, { FrozenAnchorAssessment } from './AnchorAssessmentPanel.jsx'
-import { ANCHOR_METHOD } from './anchorAssessment.js'
+import { SINGLE_ANCHOR_METHOD } from './anchorAssessment.js'
+import { oddsMomentum } from './oddsMomentum.js'
 import { buildAbilityField, analyzeMarket } from './marketModel.js'
 import { BET_TYPES, RISK_PROFILES, buildPortfolio, officialFrames, parseQuotes } from './portfolio.js'
 import { ledgerScope, readLedger, writeLedgerExclusive, appendForecast, appendPurchase, appendSettlement,
@@ -102,6 +103,10 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const [selectedForecastId, setSelectedForecastId] = useState(initialForecastId || latestSaved?.id || '')
   const [importing, setImporting] = useState(false)
   const current = usableHistory.find(item => item.id === snapshotId) ?? usableHistory[0]
+  const analysisCutoffAt = anchorMode && validTimestamp(current?.retrievedAt) && validTimestamp(cutoffAt)
+    ? new Date(Math.min(Date.parse(current.retrievedAt), Date.parse(cutoffAt))).toISOString() : cutoffAt
+  const snapshotModel = !anchorMode || model && [model.generatedAt, model.adoptedAt ?? model.importedAt]
+    .every(time => validTimestamp(time) && Date.parse(time) <= Date.parse(analysisCutoffAt)) ? model : null
   const asOfRecords = useMemo(() => {
     const storage = { getItem: () => JSON.stringify(records.events) }
     const asOf = current?.retrievedAt ?? cutoffAt
@@ -111,19 +116,23 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const previous = asOfRecords.previous
   const baseline = asOfRecords.baseline
   const timing = snapshotTiming(current, race)
-  const ability = useMemo(() => buildAbilityField({ horses, statistics, race, model }), [horses, statistics, race, model])
+  const ability = useMemo(() => buildAbilityField({ horses, statistics, race, model: snapshotModel }), [horses, statistics, race, snapshotModel])
   const context = useMemo(() => buildRaceContext({ race, horses, field: ability.field, statistics,
-    observations: cloud?.observations ?? [], earlierResults: cloud?.race?.earlierResults ?? [], cutoffAt }), [race, horses, ability.field, statistics, cloud, cutoffAt])
+    observations: cloud?.observations ?? [], earlierResults: cloud?.race?.earlierResults ?? [], cutoffAt: analysisCutoffAt }), [race, horses, ability.field, statistics, cloud, analysisCutoffAt])
   const initialPrediction = useMemo(() => applyPredictionModels({ field: ability.field, race, odds: current?.odds ?? {},
-    history: records.events, context, models: runtimeModels, cutoffAt, abilityModelId: ability.model.id }),
-  [ability.field, ability.model.id, race, current, records.events, context, runtimeModels, cutoffAt])
+    history: records.events, context, models: runtimeModels, cutoffAt: analysisCutoffAt, abilityModelId: ability.model.id }),
+  [ability.field, ability.model.id, race, current, records.events, context, runtimeModels, analysisCutoffAt])
   const features = initialPrediction.appliedFeatures?.filter(key => runtimeModels?.contextModel?.coefficients[key] !== 0) ?? []
   const marketModel = initialPrediction.field.some(h => h.pM != null) && runtimeModels?.marketModel
   const stack = reviewStack({ ability: ability.model.id,
     context: features.length ? features.map(key => runtimeModels.contextModel.coefficients[key]) : null, features,
     market: marketModel && marketModel.abilityWeight < 1 ? [marketModel.gamma, marketModel.abilityWeight] : null })
-  const prediction = useMemo(() => calibrateForecast(initialPrediction, { review, stack, race, current, cutoffAt }),
-    [initialPrediction, review, stack, race, current, cutoffAt])
+  const prediction = useMemo(() => calibrateForecast(initialPrediction, {
+    review: anchorMode && (!validTimestamp(review?.receivedAt) || Date.parse(review.receivedAt) > Date.parse(analysisCutoffAt)) ? null : review,
+    stack, race, current, cutoffAt }),
+    [initialPrediction, review, stack, race, current, cutoffAt, anchorMode, analysisCutoffAt])
+  const momentum = useMemo(() => oddsMomentum({ race, field: prediction.field, current, events: records.events, cutoffAt }),
+    [race, prediction.field, current, records.events, cutoffAt])
   const predictedByNo = new Map(prediction.field.map(horse => [horse.no, horse]))
   const frames = useMemo(() => officialFrames(ability.field), [ability.field])
   const parsed = useMemo(() => parseQuotes(pairs, ability.field, frames), [pairs, ability.field, frames])
@@ -139,9 +148,10 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     const source = context.source
     if (!source?.observedAt || !current?.observedAt || Date.parse(source.observedAt) !== Date.parse(current.observedAt)
       || !ability.field.every(h => source.winOdds?.[h.no] === current.odds[h.no])) return []
-    const text = (source.quotes ?? []).map(q => `${q.type} ${q.numbers.join('-')} ${q.odds}`).join('\n')
-    return parseQuotes(text, ability.field, frames).quotes.filter(q => q.type !== '単勝' && !parsed.quotes.some(manual => manual.type === q.type && manual.numbers.join('-') === q.numbers.join('-')))
-  }, [context.source, current, ability.field, frames, parsed.quotes])
+    const text = (source.quotes ?? []).map(q => `${q.type} ${q.numbers.join('-')} ${q.odds}${q.upper > q.odds ? `-${q.upper}` : ''}`).join('\n')
+    if (anchorMode && Date.parse(source.retrievedAt) > Date.parse(current.retrievedAt)) return []
+    return parseQuotes(text, ability.field, frames).quotes.filter(q => q.type !== '単勝' && (anchorMode || !parsed.quotes.some(manual => manual.type === q.type && manual.numbers.join('-') === q.numbers.join('-'))))
+  }, [context.source, current, ability.field, frames, parsed.quotes, anchorMode])
   const quotes = useMemo(() => [...ability.field.filter(horse => Number.isFinite(current?.odds?.[horse.no])).map(horse => ({ type: '単勝', numbers: [horse.no], odds: current.odds[horse.no] })),
     ...automaticQuotes, ...parsed.quotes], [ability.field, current, automaticQuotes, parsed.quotes])
   const pricingQuotes = useMemo(() => quotes.map(quote => {
@@ -207,8 +217,8 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     } finally { savingRef.current = false; setSaving(false) }
   }
 
-  async function freeze(twoAnchors = null) {
-    const anchorsOnly = anchorMode && twoAnchors != null
+  async function freeze(anchorDecision = null) {
+    const anchorsOnly = anchorMode && anchorDecision != null
     if (!(anchorsOnly ? ability.complete && market.complete && stressValid && current : ready) || !cutoffAt) return
     try {
       const common = { mode: actualLive && Date.now() <= Date.parse(cutoffAt) ? 'live' : 'replay', cutoffAt, modelVersion: ability.model.id,
@@ -216,37 +226,40 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
           probabilityTemperature: prediction.calibrationTemperature ?? null, sourceId: current.id, observedAt: current.observedAt ?? null,
           sourcePublishedAt: current.sourcePublishedAt ?? null, timingEvidence: current.timingEvidence ?? null, availabilityAt: current.availabilityAt ?? null, retrievedAt: current.retrievedAt ?? null, winOdds: current.odds,
           baselineOdds: baseline?.odds ?? null, baselineSnapshot: baseline ?? null, previousSnapshot: previous ?? null,
-          quotes: anchorsOnly ? quotes.filter(quote => quote.type === '単勝') : quotes,
-          quoteObservedAt: anchorsOnly ? null : pairs.trim() ? raceTimestamp(race, pairTime) : automaticQuotes.length ? context.source.observedAt : null,
-          quoteRetrievedAt: anchorsOnly ? null : pairs.trim() ? pairRetrievedAt : automaticQuotes.length ? context.source.retrievedAt : null,
+          quotes: anchorsOnly ? [...quotes.filter(quote => quote.type === '単勝'), ...automaticQuotes.filter(quote => quote.type === '複勝')] : quotes,
+          quoteObservedAt: anchorsOnly ? automaticQuotes.length ? context.source.observedAt : null : pairs.trim() ? raceTimestamp(race, pairTime) : automaticQuotes.length ? context.source.observedAt : null,
+          quoteRetrievedAt: anchorsOnly ? automaticQuotes.length ? context.source.retrievedAt : null : pairs.trim() ? pairRetrievedAt : automaticQuotes.length ? context.source.retrievedAt : null,
           model: effectiveModel, runtimeModels, context, closingPrices: anchorsOnly ? {} : prediction.prices,
           pricingQuotes: anchorsOnly ? quotes.filter(quote => quote.type === '単勝') : pricingQuotes, weather: race.weather ?? null, going: race.going ?? null,
           contextObservationIds: (raceData.bundle?.observations ?? []).filter(event => event.kind === 'TYB').map(event => event.eventId),
-          releaseFieldSize: config.releaseFieldSize, placePositions: config.placePositions ?? null, frameBettingAvailable: config.frameBettingAvailable ?? null },
+          releaseFieldSize: config.releaseFieldSize, placePositions: config.placePositions ?? null, frameBettingAvailable: config.frameBettingAvailable ?? null,
+          ...(anchorsOnly ? { analysisAsOf: analysisCutoffAt } : {}) },
         parameters: { budget: anchorsOnly ? 0 : Number(budget), profile, minHit: anchorsOnly ? 0 : Number(minimumHit) / 100,
           oddsFactor: factor, anchor: null, priceBasis: anchorsOnly ? 'observed' : priceBasis,
-          ...(anchorsOnly ? { anchorSelection: { method: ANCHOR_METHOD, suggested: twoAnchors.suggested, selected: twoAnchors.suggested } } : {}) },
+          ...(anchorsOnly ? { anchorSelection: { method: SINGLE_ANCHOR_METHOD, suggested: anchorDecision.suggested,
+            selected: null, minTop3: anchorDecision.minTop3, decision: anchorDecision.suggested.length ? 'pending' : 'skip' } } : {}) },
         field: prediction.field.map(horse => ({ no: horse.no, name: horse.name, idm: horse.idm, probability: horse.probability,
           frameNo: horse.frameNo, pF: horse.pF, pContext: horse.pContext, pM: horse.pM, pStar: horse.pStar, contextContributions: horse.contextContributions, contributions: horse.contributions ?? [] })) }
       const allocation = anchorsOnly ? { allocations: [], metrics: { invested: 0, unspent: 0, expectedPayout: 0, expectedProfit: 0,
         expectedReturn: null, maxLoss: 0, hitProbability: null, profitProbability: null, lossProbability: null, allMissProbability: null },
-        method: ANCHOR_METHOD } : ace
+        method: SINGLE_ANCHOR_METHOD } : ace
+      if (anchorsOnly) common.inputs.anchorTrendReference = momentum.reference
       const base = appendForecast(ledger, { ...common, kind: 'ace', parentId: null, allocations: allocation.allocations, metrics: allocation.metrics,
         ...(anchorsOnly ? {} : { coverage: ace.coverage }), method: allocation.method,
-        note: anchorsOnly ? 'AIが選出した2頭の軸候補。単勝を比較基準とした試算。' : '利用者の軸指定・意見を加える前のACE原案。確率と収益性は検証中。' })
+        note: anchorsOnly ? '3着内率と取得した単勝・複勝価格による軸候補。条件外の馬を補わず、候補なしは見送り。' : '利用者の軸指定・意見を加える前のACE原案。確率と収益性は検証中。' })
       let result = base
       if (anchorsOnly) {
-        if (twoAnchors.note.trim() || twoAnchors.selected.some((no, index) => no !== twoAnchors.suggested[index])) {
+        if (anchorDecision.note.trim() || anchorDecision.selected != null || anchorDecision.decision !== common.parameters.anchorSelection.decision) {
           result = appendForecast(base.ledger, { ...base.record, kind: 'user', parentId: base.record.id,
-            parameters: { ...common.parameters, anchorSelection: { ...common.parameters.anchorSelection, selected: twoAnchors.selected } },
-            note: twoAnchors.note.trim() || '利用者が軸馬2頭を変更' })
+            parameters: { ...common.parameters, anchorSelection: { ...common.parameters.anchorSelection, selected: anchorDecision.selected, decision: anchorDecision.decision } },
+            note: anchorDecision.note.trim() || (anchorDecision.decision === 'skip' ? '利用者が見送りを選択' : `${anchorDecision.selected}番を軸に選択`) })
         }
       } else if (anchor || opinion.trim()) {
         result = appendForecast(base.ledger, { ...common, kind: 'user', parentId: base.record.id,
           parameters: { ...common.parameters, anchor: anchor ? Number(anchor) : null }, allocations: selected.allocations,
           metrics: selected.metrics, coverage: selected.coverage, method: selected.method, note: opinion.trim() || `${anchor}番を軸に指定` })
       }
-      const success = anchorsOnly ? '2頭の軸馬・勝率・取得オッズ・判断条件を固定保存しました。' : 'ACE原案と入力条件を固定保存しました。購入した内容は別に記録してください。'
+      const success = anchorsOnly ? '軸馬候補・選択した軸1頭・見送り判断と取得オッズを固定保存しました。' : 'ACE原案と入力条件を固定保存しました。購入した内容は別に記録してください。'
       if (await persist(result.ledger, success, common.mode === 'live' ? base.record.id : null)) setSelectedForecastId(result.record.id)
     } catch (error) { setStorageError(error.message) }
   }
@@ -267,8 +280,8 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     <section className="overflow-hidden rounded-2xl bg-[#0B2545] p-5 text-white shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>{!anchorMode && <p className="font-mono text-xs tracking-widest text-cyan-300">ABILITY × MARKET × PRICE</p>}
-          <h1 className="mt-2 flex items-center gap-2 text-xl font-semibold"><Target className="h-5 w-5" />{anchorMode ? '軸馬2頭・妙味判断' : '市場評価と買い方'}</h1>
-          <p className="mt-2 text-sm text-slate-300">{anchorMode ? '2頭の軸候補と勝率・期待回収率を確認し、買い方を考えるための判断材料を保存します。' : '強さ、市場の評価、価格の余裕を分けて比較します。'}</p></div>
+          <h1 className="mt-2 flex items-center gap-2 text-xl font-semibold"><Target className="h-5 w-5" />{anchorMode ? '軸候補・妙味判断' : '市場評価と買い方'}</h1>
+          <p className="mt-2 text-sm text-slate-300">{anchorMode ? '最大2頭の候補から妙味のある1頭を軸に選び、流し・ボックスなどの買い方を考えます。候補がないレースは見送ります。' : '強さ、市場の評価、価格の余裕を分けて比較します。'}</p></div>
         <span className="rounded-full border border-cyan-600/50 bg-cyan-950/50 px-3 py-1 text-xs text-cyan-200">研究用・収益性検証中</span>
       </div>
       <div className="mt-5 grid gap-4 border-t border-white/10 pt-4 text-sm sm:grid-cols-3">
@@ -288,7 +301,8 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
       </select></label>
       {current && <p className="text-xs text-slate-600">観測 {formatRaceTime(current.observedAt)} ／ 取得 {formatRaceTime(current.retrievedAt)}。{timing.reason}</p>}
       <AnchorAssessmentPanel field={prediction.field} odds={current?.odds ?? {}} stress={stress} onStressChange={setStress}
-        initialSelection={latestSaved?.parameters.anchorSelection?.selected}
+        initialSelection={latestSaved?.parameters.anchorSelection} placeQuotes={automaticQuotes}
+        releaseFieldSize={config.releaseFieldSize} placePositions={config.placePositions} momentum={momentum}
         canSave={Boolean(ability.complete && market.complete && current && !loaded.error && !records.error)}
         saving={saving} actualLive={actualLive} onSave={freeze} onOpenAbility={onOpenAbility} onOpenPace={onOpenPace} />
       <details className={panel}><summary className="cursor-pointer text-sm font-semibold text-sky-800">使用モデルと補正の根拠</summary>
