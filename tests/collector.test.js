@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { safeJrdbUrl, publicSource, postTimestamp, dueCaptures, parseVisibleRace, parseHistoryTable } from '../collector/capture.mjs'
+import { safeJrdbUrl, publicSource, postTimestamp, dueCaptures, parseVisibleRace, parseHistoryTable, capturePage } from '../collector/capture.mjs'
 import { chunkBundles, companionAction, synchronizePending, reportSyncFailure } from '../collector/run.mjs'
 const race={raceId:'08265411',raceDate:'20261115',postTime:'1540',fieldSize:2,horses:[{horseNo:1,name:'架空馬A'},{horseNo:2,name:'架空馬B'}]}
 const at='2026-11-15T06:29:00.000Z'
@@ -9,6 +9,52 @@ const raw=()=>({rows:structuredClone(rows),weather:'稍重 小雨',oddsLabel:'�
 const cell=(text,rowspan=1)=>({text,rowspan,colspan:1})
 const history=[['枠','馬','馬名','騎手名','基準オッズ'].map(v=>cell(v,3)).concat([cell('15:10')]),[cell('100万円')],[cell('90万円')],
   ['1','1','架空馬A','騎手A','4.0','3.0'].map(v=>cell(v)),['2','2','架空馬B','騎手B','4.0','4.5'].map(v=>cell(v))]
+
+test('capture clicks the published session-bound link, waits for its field, and closes temporary pages',async t=>{
+  let clock=Date.now()
+  t.mock.method(Date,'now',()=>clock)
+  const visited=[],closed=[]
+  let href='/member/n_live_20261115_08265411.html?PHPSESSID=synthetic-session',ready=false,clicked=false
+  const racePage={url:()=>`https://jrdb.com${href}`,async waitForLoadState(){},
+    async waitForFunction(fn,expected){assert.deepEqual(expected,race.horses);assert.ok(fn.toString().includes('rows.every'));ready=true},
+    locator:()=>({async count(){return 0}}),async evaluate(){assert.ok(ready);assert.ok(clicked);return raw()},
+    async close(){closed.push('race')}}
+  const locator={first(){return this},filter(){return this},async waitFor(){},async getAttribute(){clock+=3500;return href},async click(){clicked=true}}
+  const indexPage={async goto(url){visited.push(url);return {status:()=>200}},url:()=>visited.at(-1),locator:()=>locator,getByRole:()=>locator,
+    async waitForEvent(event){assert.equal(event,'popup');return racePage},async close(){closed.push('index')}}
+  const context={async newPage(){clock+=3500;return indexPage}}
+  const page={context:()=>context}
+  const captured=await capturePage(page,race)
+  assert.deepEqual(visited,['https://jrdb.com/member/new_index.php'])
+  assert.deepEqual(closed,['race','index'])
+  assert.equal(captured.completeOdds,true)
+  assert.equal(captured.observation.payload.source,'https://jrdb.com/member/n_live_20261115_08265411.html')
+  assert.ok(!JSON.stringify(captured).includes('synthetic-session'))
+  href='/member/n_live_20261115_08265412.html?PHPSESSID=synthetic-session'
+  await assert.rejects(()=>capturePage(page,race),/対象レースと一致/)
+  assert.equal(closed.at(-1),'index')
+  href='/member/n_live_20261115_08265411.html?PHPSESSID=synthetic-session'
+  racePage.waitForFunction=async()=>{throw new Error('not ready')}
+  await assert.rejects(()=>capturePage(page,race),error=>error.code==='race_unavailable')
+  assert.deepEqual(closed.slice(-2),['race','index'])
+})
+
+test('a cancelled truncated name requires its full DOM horse-link name and remains excluded from active odds',()=>{
+  const data=raw()
+  data.rows[1].bamei9m={text:'取消　架空',fullName:'架空馬B'}
+  data.rows[1].tanodds=''
+  data.historyTable=history
+  const captured=parseVisibleRace(data,race,{retrievedAt:at})
+  assert.equal(captured.observation.payload.horses[1].cancelled,true)
+  assert.deepEqual(captured.observation.payload.activeHorseNumbers,[1])
+  assert.equal(captured.observation.payload.releaseFieldSize,2)
+  assert.deepEqual(captured.observation.payload.winOdds,{'1':3})
+  assert.ok(captured.snapshots.every(snapshot=>!Object.hasOwn(snapshot.odds,'2')))
+  data.rows[1].bamei9m={text:'取消　架空'}
+  assert.throws(()=>parseVisibleRace(data,race,{retrievedAt:at}),/馬名/)
+  data.rows[1].bamei9m.fullName='別の馬'
+  assert.throws(()=>parseVisibleRace(data,race,{retrievedAt:at}),/馬名/)
+})
 
 test('collector only follows official HTTPS origins and removes secret query strings',()=>{
   assert.equal(publicSource('https://jrdb.com/member/a?PHPSESSID=secret'),'https://jrdb.com/member/a')
