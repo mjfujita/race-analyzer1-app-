@@ -190,6 +190,27 @@ class SnapshotTests(unittest.TestCase):
 
 class LedgerTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('node'), 'Node optional for browser schema roundtrip')
+    def test_two_anchor_choice_roundtrip_and_invalid_duplicate(self):
+        ledger = ledger_fixture()
+        record = ledger['forecasts'][0]
+        record['parameters'].update(budget=0, anchorSelection={
+            'method': 'win-value-two-v1', 'suggested': [1, 2], 'selected': [1, 2]})
+        record['metrics']['unspent'] = 0
+        record['inputs']['winOdds'] = {'1': 2.5, '2': 4.0}
+        ledger['purchases'], ledger['settlements'] = [], []
+        with tempfile.TemporaryDirectory() as folder, closing(open_store(Path(folder)/'derived.sqlite')) as connection:
+            self.assertEqual(import_ledger(connection, ledger), 1)
+            restored = saved_ledgers(connection)[0]
+            script = "import {validateLedger} from './src/forecastLedger.js';let s='';for await(const chunk of process.stdin)s+=chunk;const l=JSON.parse(s);validateLedger(l,l.scope);process.stdout.write('ok');"
+            result = subprocess.run(['node', '--input-type=module', '-e', script], input=json.dumps(restored), text=True,
+                                    cwd=Path(__file__).resolve().parents[1], capture_output=True, check=True)
+            self.assertEqual(result.stdout, 'ok')
+            self.assertEqual(restored['forecasts'][0]['parameters']['anchorSelection']['selected'], [1, 2])
+            record['parameters']['anchorSelection']['selected'] = [1, 1]
+            with self.assertRaises(ValueError):
+                validate_ledger(ledger)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node optional for browser schema roundtrip')
     def test_browser_ledger_roundtrip(self):
         ledger = ledger_fixture()
         with tempfile.TemporaryDirectory() as folder, closing(open_store(Path(folder)/'derived.sqlite')) as c:

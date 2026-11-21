@@ -780,7 +780,7 @@ function MainApp({ session, onLogout }) {
   const resetWidth = () => { setListWidthPct(46); localStorage.setItem(LIST_WIDTH_KEY, '46') }
 
   // レース選択 → 評価ロード → 出走馬分析へ
-  const loadAsTarget = (raceKey, goTab = 'analysis', currentMetadata = null) => {
+  const loadAsTarget = (raceKey, goTab = 'anchors', currentMetadata = null) => {
     if (!db) return
     try {
       const data = dataApi.getEvaluation(db, raceKey)
@@ -800,7 +800,7 @@ function MainApp({ session, onLogout }) {
     const raceKey = item.id ?? item.raceId
     try {
       setInitialForecastId(fromDashboard ? item.receipt?.forecastId ?? '' : '')
-      if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, 'finalForecast', fromDashboard ? item : null); return }
+      if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, 'anchors', fromDashboard ? item : null); return }
       const metadata = { ...item, id: raceKey }
       const payload = await fetchCloudRace(metadata)
       const received = payload.race
@@ -809,7 +809,7 @@ function MainApp({ session, onLogout }) {
       setRaceInfo({ ...received, id: raceKey, liveOnly: true, place: received.place ?? PLACE_NAMES[received.placeCode],
         surface: received.surface ?? SURFACE_NAMES[received.surfaceCode] })
       setHorses(received.horses.map(horse => ({ ...horse, id: horse.id ?? `${raceKey}-${horse.no}`, pastRuns: horse.pastRuns ?? [] })))
-      setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab('finalForecast')
+      setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab('anchors')
     } catch (error) {
       if (fromDashboard) throw error
       alert(error.message)
@@ -1708,19 +1708,19 @@ function MainApp({ session, onLogout }) {
               <span className="text-slate-300">•</span><span>{raceInfo.fieldSize}頭</span>
             </div>
           </div>
-          <div className="flex gap-2 flex-wrap">
+          {tab !== 'anchors' && <div className="flex gap-2 flex-wrap">
             <KpiCard icon={Star} label="注目馬" value={summary.notable} role="value" />
             <KpiCard icon={Flame} label="妙味軸候補" value={summary.valueAxis} role="value" />
             <KpiCard icon={Layers2} label="2着妙味" value={summary.secondValue} role="second" />
             <KpiCard icon={AlertTriangle} label="注意馬" value={summary.caution} role="all" />
-          </div>
+          </div>}
         </div>
         {/* シナリオバッジ */}
-        <div className="mt-4 pt-3 border-t border-white/15 flex items-center gap-2 flex-wrap">
+        {tab !== 'anchors' && <div className="mt-4 pt-3 border-t border-white/15 flex items-center gap-2 flex-wrap">
           <Pill className={(PRIORITY_STYLES[raceInfo.racePriority] || PRIORITY_STYLES.C).cls}>{(PRIORITY_STYLES[raceInfo.racePriority] || PRIORITY_STYLES.C).label}</Pill>
           {(raceInfo.raceScenarioTags || []).map((t) => <Pill key={t} className={tagStyle(t)}>{t}</Pill>)}
           <span className="text-xs text-slate-200 ml-1">{raceInfo.raceScenarioComment}</span>
-        </div>
+        </div>}
       </div>
     )
   }
@@ -1733,6 +1733,7 @@ function MainApp({ session, onLogout }) {
     { id: 'philosophy', label: 'AIの位置づけ', icon: Info },
   ]
   const raceTabs = [
+    { id: 'anchors', label: '軸馬2頭・妙味判断', icon: Target },
     { id: 'analysis', label: '出走馬分析', icon: Users },
     { id: 'ability', label: '能力・適性', icon: Gauge },
     { id: 'pace', label: '展開・天候', icon: Flag },
@@ -1740,7 +1741,7 @@ function MainApp({ session, onLogout }) {
     { id: 'finalForecast', label: '最終予想・買い目', icon: Target },
     { id: 'scenario', label: 'レースシナリオ', icon: Flag },
     { id: 'oddsReview', label: '買い目比較', icon: Layers2 },
-  ].filter(item => !raceInfo?.liveOnly || ['ability', 'pace', 'winOdds', 'finalForecast'].includes(item.id))
+  ].filter(item => !raceInfo?.liveOnly || ['anchors', 'ability', 'pace', 'winOdds', 'finalForecast'].includes(item.id))
 
   const showRaceHeader = raceInfo && raceTabs.some(item => item.id === tab)
   const renderNav = (items, label) => (
@@ -1781,8 +1782,8 @@ function MainApp({ session, onLogout }) {
                   <button type="button" onClick={() => setTab('automation')} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">自動取得・学習を開く</button>
                 </li>
                 <li>
-                  <strong>レースを選び、予想を固定保存</strong>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">開催日とレースを選び、発走10分前までに「最終予想・買い目」で予想を固定保存します。</p>
+                  <strong>軸馬2頭を確認し、判断を保存</strong>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">レースを選び、「軸馬2頭・妙味判断」で勝率と単勝期待回収率を比較します。発走10分前までに2頭と判断を固定保存し、買い方を決めます。</p>
                   <button type="button" onClick={() => openRaceList()} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">レース一覧を開く</button>
                 </li>
               </ol>
@@ -1815,6 +1816,11 @@ function MainApp({ session, onLogout }) {
             userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud} syncedReceipts={receipts} review={sync.error ? null : sync.data?.forecastReview}
             initialForecastId={initialForecastId}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
+            onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
+          {tab === 'anchors' && (raceInfo ? <FinalForecastPage anchorMode
+            key={`anchors:${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={analysisRace} horses={analysisHorses}
+            userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
+            syncedReceipts={receipts} review={sync.error ? null : sync.data?.forecastReview} initialForecastId={initialForecastId}
             onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
           {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}
           {tab === 'philosophy' && <TabPhilosophy />}

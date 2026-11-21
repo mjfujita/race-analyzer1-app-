@@ -8,6 +8,8 @@ import { buildRaceContext, applyPredictionModels } from './predictionModel.js'
 import { calibrateForecast, reviewStack } from './forecastReview.js'
 import RuntimeModelPanel from './RuntimeModelPanel.jsx'
 import RaceDataPanel, { readRaceData } from './RaceDataPanel.jsx'
+import AnchorAssessmentPanel, { FrozenAnchorAssessment } from './AnchorAssessmentPanel.jsx'
+import { ANCHOR_METHOD } from './anchorAssessment.js'
 import { buildAbilityField, analyzeMarket } from './marketModel.js'
 import { BET_TYPES, RISK_PROFILES, buildPortfolio, officialFrames, parseQuotes } from './portfolio.js'
 import { ledgerScope, readLedger, writeLedgerExclusive, appendForecast, appendPurchase, appendSettlement,
@@ -55,7 +57,7 @@ export default function FinalForecastPage(props) {
   return <ForecastWorkspace key={`${scope.userId}:${scope.raceDate}:${scope.raceId}`} {...props} scope={scope} />
 }
 
-function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger, syncedReceipts, review, initialForecastId }) {
+function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger, syncedReceipts, review, initialForecastId, anchorMode = false }) {
   const [loaded] = useState(() => storedLedger(scope))
   const [ledger, setLedger] = useState(loaded.ledger)
   const [savedReceipts, setSavedReceipts] = useState({})
@@ -150,7 +152,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     oddsFactor: factor, profile, maxTickets: 8, releaseFieldSize: Number(race.releaseFieldSize ?? race.fieldSize),
     placePositions: race.placePositions, frameBettingAvailable: race.frameBettingAvailable }),
   [prediction.field, pricingQuotes, budget, frames, minimumHit, factor, profile, race.releaseFieldSize, race.fieldSize, race.placePositions, race.frameBettingAvailable])
-  const ace = useMemo(() => inputsReady ? buildPortfolio(config) : null, [inputsReady, config])
+  const ace = useMemo(() => inputsReady && !anchorMode ? buildPortfolio(config) : null, [inputsReady, config, anchorMode])
   const selected = useMemo(() => !ace ? null : anchor ? buildPortfolio({ ...config, anchor: Number(anchor) }) : ace, [ace, config, anchor])
   const ready = inputsReady && !ace?.issues.length && !selected?.issues.length
   const rows = useMemo(() => [...(selected?.evaluated ?? [])].sort((a, b) => (b[sort] ?? -Infinity) - (a[sort] ?? -Infinity)), [selected, sort])
@@ -170,9 +172,9 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const effectiveModel = ability.model.status === 'research' ? model : null
   const modelTimeEligible = !effectiveModel || [effectiveModel.generatedAt, effectiveModel.adoptedAt ?? effectiveModel.importedAt]
     .every(value => value && Number.isFinite(Date.parse(value)) && Date.parse(value) <= Date.parse(cutoffAt))
-  const runtimeTimeEligible = !prediction.appliedFeatures?.length && !prediction.field.some(h => h.pM != null) && !Object.values(prediction.prices).some(p => p.median != null)
+  const runtimeTimeEligible = !prediction.appliedFeatures?.length && !prediction.field.some(h => h.pM != null) && (anchorMode || !Object.values(prediction.prices).some(p => p.median != null))
     || runtimeModels?.adoptedAt && Date.parse(runtimeModels.adoptedAt) <= Date.parse(cutoffAt)
-  const actualLive = timing.eligible && !lateQuotes && modelTimeEligible && runtimeTimeEligible && cutoffAt && Date.now() <= Date.parse(cutoffAt)
+  const actualLive = timing.eligible && (anchorMode || !lateQuotes) && modelTimeEligible && runtimeTimeEligible && cutoffAt && Date.now() <= Date.parse(cutoffAt)
 
   async function persist(next, success, liveForecastId) {
     if (loaded.error) { setStorageError(loaded.error); return false }
@@ -205,26 +207,47 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     } finally { savingRef.current = false; setSaving(false) }
   }
 
-  async function freeze() {
-    if (!ready || !cutoffAt) return
+  async function freeze(twoAnchors = null) {
+    const anchorsOnly = anchorMode && twoAnchors != null
+    if (!(anchorsOnly ? ability.complete && market.complete && stressValid && current : ready) || !cutoffAt) return
     try {
       const common = { mode: actualLive && Date.now() <= Date.parse(cutoffAt) ? 'live' : 'replay', cutoffAt, modelVersion: ability.model.id,
         modelStatus: ability.model.status, inputs: { probabilityStack: stack, probabilityCalibration: prediction.calibrationId ?? null,
           probabilityTemperature: prediction.calibrationTemperature ?? null, sourceId: current.id, observedAt: current.observedAt ?? null,
           sourcePublishedAt: current.sourcePublishedAt ?? null, timingEvidence: current.timingEvidence ?? null, availabilityAt: current.availabilityAt ?? null, retrievedAt: current.retrievedAt ?? null, winOdds: current.odds,
-          baselineOdds: baseline?.odds ?? null, baselineSnapshot: baseline ?? null, previousSnapshot: previous ?? null, quotes, quoteObservedAt: pairs.trim() ? raceTimestamp(race, pairTime) : automaticQuotes.length ? context.source.observedAt : null,
-          quoteRetrievedAt: pairs.trim() ? pairRetrievedAt : automaticQuotes.length ? context.source.retrievedAt : null, model: effectiveModel, runtimeModels, context, closingPrices: prediction.prices, pricingQuotes, weather: race.weather ?? null, going: race.going ?? null,
+          baselineOdds: baseline?.odds ?? null, baselineSnapshot: baseline ?? null, previousSnapshot: previous ?? null,
+          quotes: anchorsOnly ? quotes.filter(quote => quote.type === '単勝') : quotes,
+          quoteObservedAt: anchorsOnly ? null : pairs.trim() ? raceTimestamp(race, pairTime) : automaticQuotes.length ? context.source.observedAt : null,
+          quoteRetrievedAt: anchorsOnly ? null : pairs.trim() ? pairRetrievedAt : automaticQuotes.length ? context.source.retrievedAt : null,
+          model: effectiveModel, runtimeModels, context, closingPrices: anchorsOnly ? {} : prediction.prices,
+          pricingQuotes: anchorsOnly ? quotes.filter(quote => quote.type === '単勝') : pricingQuotes, weather: race.weather ?? null, going: race.going ?? null,
           contextObservationIds: (raceData.bundle?.observations ?? []).filter(event => event.kind === 'TYB').map(event => event.eventId),
           releaseFieldSize: config.releaseFieldSize, placePositions: config.placePositions ?? null, frameBettingAvailable: config.frameBettingAvailable ?? null },
-        parameters: { budget: Number(budget), profile, minHit: Number(minimumHit) / 100, oddsFactor: factor, anchor: null, priceBasis },
+        parameters: { budget: anchorsOnly ? 0 : Number(budget), profile, minHit: anchorsOnly ? 0 : Number(minimumHit) / 100,
+          oddsFactor: factor, anchor: null, priceBasis: anchorsOnly ? 'observed' : priceBasis,
+          ...(anchorsOnly ? { anchorSelection: { method: ANCHOR_METHOD, suggested: twoAnchors.suggested, selected: twoAnchors.suggested } } : {}) },
         field: prediction.field.map(horse => ({ no: horse.no, name: horse.name, idm: horse.idm, probability: horse.probability,
           frameNo: horse.frameNo, pF: horse.pF, pContext: horse.pContext, pM: horse.pM, pStar: horse.pStar, contextContributions: horse.contextContributions, contributions: horse.contributions ?? [] })) }
-      const base = appendForecast(ledger, { ...common, kind: 'ace', parentId: null, allocations: ace.allocations, metrics: ace.metrics,
-        coverage: ace.coverage, method: ace.method, note: '利用者の軸指定・意見を加える前のACE原案。確率と収益性は検証中。' })
-      const result = anchor || opinion.trim() ? appendForecast(base.ledger, { ...common, kind: 'user', parentId: base.record.id,
-        parameters: { ...common.parameters, anchor: anchor ? Number(anchor) : null }, allocations: selected.allocations,
-        metrics: selected.metrics, coverage: selected.coverage, method: selected.method, note: opinion.trim() || `${anchor}番を軸に指定` }) : base
-      if (await persist(result.ledger, 'ACE原案と入力条件を固定保存しました。購入した内容は別に記録してください。', common.mode === 'live' ? base.record.id : null)) setSelectedForecastId(result.record.id)
+      const allocation = anchorsOnly ? { allocations: [], metrics: { invested: 0, unspent: 0, expectedPayout: 0, expectedProfit: 0,
+        expectedReturn: null, maxLoss: 0, hitProbability: null, profitProbability: null, lossProbability: null, allMissProbability: null },
+        method: ANCHOR_METHOD } : ace
+      const base = appendForecast(ledger, { ...common, kind: 'ace', parentId: null, allocations: allocation.allocations, metrics: allocation.metrics,
+        ...(anchorsOnly ? {} : { coverage: ace.coverage }), method: allocation.method,
+        note: anchorsOnly ? 'AIが選出した2頭の軸候補。単勝を比較基準とした試算。' : '利用者の軸指定・意見を加える前のACE原案。確率と収益性は検証中。' })
+      let result = base
+      if (anchorsOnly) {
+        if (twoAnchors.note.trim() || twoAnchors.selected.some((no, index) => no !== twoAnchors.suggested[index])) {
+          result = appendForecast(base.ledger, { ...base.record, kind: 'user', parentId: base.record.id,
+            parameters: { ...common.parameters, anchorSelection: { ...common.parameters.anchorSelection, selected: twoAnchors.selected } },
+            note: twoAnchors.note.trim() || '利用者が軸馬2頭を変更' })
+        }
+      } else if (anchor || opinion.trim()) {
+        result = appendForecast(base.ledger, { ...common, kind: 'user', parentId: base.record.id,
+          parameters: { ...common.parameters, anchor: anchor ? Number(anchor) : null }, allocations: selected.allocations,
+          metrics: selected.metrics, coverage: selected.coverage, method: selected.method, note: opinion.trim() || `${anchor}番を軸に指定` })
+      }
+      const success = anchorsOnly ? '2頭の軸馬・勝率・取得オッズ・判断条件を固定保存しました。' : 'ACE原案と入力条件を固定保存しました。購入した内容は別に記録してください。'
+      if (await persist(result.ledger, success, common.mode === 'live' ? base.record.id : null)) setSelectedForecastId(result.record.id)
     } catch (error) { setStorageError(error.message) }
   }
 
@@ -243,9 +266,9 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   return <div className="space-y-5 text-slate-800">
     <section className="overflow-hidden rounded-2xl bg-[#0B2545] p-5 text-white shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><p className="font-mono text-xs tracking-widest text-cyan-300">ABILITY × MARKET × PRICE</p>
-          <h3 className="mt-2 flex items-center gap-2 text-xl font-semibold"><Target className="h-5 w-5" />市場評価と買い方</h3>
-          <p className="mt-2 text-sm text-slate-300">強さ、市場の評価、価格の余裕を分けて比較します。</p></div>
+        <div>{!anchorMode && <p className="font-mono text-xs tracking-widest text-cyan-300">ABILITY × MARKET × PRICE</p>}
+          <h1 className="mt-2 flex items-center gap-2 text-xl font-semibold"><Target className="h-5 w-5" />{anchorMode ? '軸馬2頭・妙味判断' : '市場評価と買い方'}</h1>
+          <p className="mt-2 text-sm text-slate-300">{anchorMode ? '2頭の軸候補と勝率・期待回収率を確認し、買い方を考えるための判断材料を保存します。' : '強さ、市場の評価、価格の余裕を分けて比較します。'}</p></div>
         <span className="rounded-full border border-cyan-600/50 bg-cyan-950/50 px-3 py-1 text-xs text-cyan-200">研究用・収益性検証中</span>
       </div>
       <div className="mt-5 grid gap-4 border-t border-white/10 pt-4 text-sm sm:grid-cols-3">
@@ -258,6 +281,23 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     {storageError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{storageError}</p>}
     {statusMessage && <p role="status" className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-900">{statusMessage}</p>}
     {records.error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{records.error}</p>}
+    {anchorMode && <>
+      <label className="flex flex-wrap items-center gap-2 text-sm">オッズの観測時刻<select className={control} value={snapshotId} onChange={event => setSnapshotId(event.target.value)}>
+        {usableHistory.length ? <option value="">最新を自動表示（{usableHistory[0].time}）</option> : <option value="">締切以前の記録なし</option>}
+        {usableHistory.map(item => <option key={item.id} value={item.id}>{item.time} {snapshotTiming(item, race).eligible ? '時刻証跡あり' : '過去検証用'}</option>)}
+      </select></label>
+      {current && <p className="text-xs text-slate-600">観測 {formatRaceTime(current.observedAt)} ／ 取得 {formatRaceTime(current.retrievedAt)}。{timing.reason}</p>}
+      <AnchorAssessmentPanel field={prediction.field} odds={current?.odds ?? {}} stress={stress} onStressChange={setStress}
+        initialSelection={latestSaved?.parameters.anchorSelection?.selected}
+        canSave={Boolean(ability.complete && market.complete && current && !loaded.error && !records.error)}
+        saving={saving} actualLive={actualLive} onSave={freeze} onOpenAbility={onOpenAbility} onOpenPace={onOpenPace} />
+      <details className={panel}><summary className="cursor-pointer text-sm font-semibold text-sky-800">使用モデルと補正の根拠</summary>
+        <RuntimeModelPanel prediction={prediction} context={context} observations={cloud?.observations} />
+        {ability.issues.map(issue => <p key={issue} className="mt-2 text-sm text-amber-900">{issue}</p>)}
+        {!modelTimeEligible && <p className="mt-2 text-sm text-amber-900">モデルの作成・採用時刻を締切前と確認できないため、過去検証として保存します。</p>}
+      </details>
+    </>}
+    {!anchorMode && <>
     <RaceDataPanel scope={scope} data={raceData} onChange={setRaceData} />
 
     <section className={`${panel} space-y-4`}>
@@ -316,19 +356,29 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
         <div className="overflow-x-auto"><table className="w-full whitespace-nowrap text-left text-sm"><thead className="border-y border-slate-200 bg-slate-50 text-xs"><tr>{['買い目', '評価に使う倍率', '下落想定', '的中確率', '損益分岐オッズ', '試算回収率', '判定'].map(title => <th key={title} scope="col" className="p-3">{title}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{rows.slice(0, limit).map(ticket => <tr key={ticket.key}><th scope="row" className="p-3 font-semibold">{label(ticket)}</th><td className="p-3 font-mono">{decimal(ticket.odds)}</td><td className="p-3 font-mono">{decimal(ticket.stressOdds)}</td><td className="p-3 font-mono">{pct(ticket.probability)}</td><td className="p-3 font-mono">{decimal(ticket.breakEvenOdds)}</td><td className="p-3 font-mono">{pct(ticket.expectedReturn)}</td><td className={`p-3 text-xs ${ticket.qualifies ? 'text-cyan-800' : 'text-slate-500'}`}>{ticket.reason || (ticket.qualifies ? '価格面の候補' : '条件外')}</td></tr>)}</tbody></table></div>
         {rows.length > limit && <button type="button" className={secondary} onClick={() => setLimit(limit + 100)}>次の100件を表示（全{rows.length}件）</button>}
         <label className="block text-sm">利用者の意見・判断メモ<textarea className={`${control} mt-2 block w-full`} rows="2" maxLength="4000" value={opinion} onChange={event => setOpinion(event.target.value)} placeholder="観察した事実や軸馬を選んだ理由。メモだけで確率は自動変更しません。" /></label>
-        <button type="button" className={button} disabled={Boolean(loaded.error) || saving} onClick={freeze}><Save className="h-4 w-4" />{actualLive ? '10分前の予想を固定保存' : '研究用の試算を固定保存'}</button>
+        <button type="button" className={button} disabled={Boolean(loaded.error) || saving} onClick={() => freeze()}><Save className="h-4 w-4" />{actualLive ? '10分前の予想を固定保存' : '研究用の試算を固定保存'}</button>
       </> : <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">全頭の能力・同時点のオッズ・有効な入力条件が揃うと、ACE原案と配分を比較できます。</p>}
     </section>
 
+    </>}
     <section className={`${panel} space-y-4`}>
-      <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4 text-cyan-700" />04 · 固定予想・実購入・払戻</h3><div className="flex flex-wrap gap-2"><button type="button" className={secondary} disabled={!ledger.forecasts.length} onClick={() => { try { downloadFile(exportLedger(ledger), `race-record-${scope.raceDate}-${scope.raceId}.json`) } catch (error) { setStorageError(error.message) } }}><Download className="h-4 w-4" />JSONを書き出す</button><label className={`${secondary} ${importing || saving || loaded.error ? 'opacity-40' : 'cursor-pointer'}`}><Upload className="h-4 w-4" />{importing ? '照合中…' : '記録を取り込む'}<input type="file" accept="application/json,.json" className="sr-only" disabled={importing || saving || Boolean(loaded.error)} onChange={handleImport} /></label></div></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4 text-cyan-700" />固定予想・実購入・払戻</h3><div className="flex flex-wrap gap-2"><button type="button" className={secondary} disabled={!ledger.forecasts.length} onClick={() => { try { downloadFile(exportLedger(ledger), `race-record-${scope.raceDate}-${scope.raceId}.json`) } catch (error) { setStorageError(error.message) } }}><Download className="h-4 w-4" />JSONを書き出す</button><label className={`${secondary} ${importing || saving || loaded.error ? 'opacity-40' : 'cursor-pointer'}`}><Upload className="h-4 w-4" />{importing ? '照合中…' : '記録を取り込む'}<input type="file" accept="application/json,.json" className="sr-only" disabled={importing || saving || Boolean(loaded.error)} onChange={handleImport} /></label></div></div>
       <p className="text-xs text-slate-500">ブラウザに保存し、ログイン中の本人専用クラウドへ同期します。予想は購入として計上せず、訂正も元記録を残します。通信できない間の記録は次の同期で再送します。JSONでも書き出せます。</p>
       {!ledger.forecasts.length ? <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">固定保存した予想はまだありません。</p> : <>
         <label className="flex flex-wrap items-center gap-2 text-sm">保存済み予想<select className={`${control} max-w-full`} value={forecast?.id ?? ''} onChange={event => setSelectedForecastId(event.target.value)}>{[...ledger.forecasts].reverse().map((item, i) => <option key={item.id} value={item.id}>#{ledger.forecasts.length - i} {item.kind === 'ace' ? 'ACE原案' : '利用者案'} · {formatRaceTime(item.createdAt)} · {item.mode === 'live' ? '締切前記録' : '過去検証'}</option>)}</select></label>
-        {forecast && <div className="rounded-xl border border-slate-200 p-4 text-sm"><p className="font-semibold">固定条件：予算 {yen(forecast.parameters.budget)} / 下落想定 {Math.round((1 - forecast.parameters.oddsFactor) * 100)}% / {forecast.parameters.anchor ? `軸 ${forecast.parameters.anchor}番` : '軸指定なし'}</p><p className="mt-2 text-xs text-slate-500">モデル {forecast.modelVersion} ・ 観測 {formatRaceTime(forecast.inputs.observedAt)} ・ 締切 {formatRaceTime(forecast.cutoffAt)}</p>{receivedAt && <p className="mt-2 text-xs font-semibold text-cyan-800">締切前受領 {formatRaceTime(receivedAt)}</p>}<p className="mt-2">{forecast.allocations.map(ticket => `${label(ticket)} ${yen(ticket.stake)}`).join(' ／ ') || '見送り'}</p>{forecast.note && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{forecast.note}</p>}</div>}
+        {forecast && <div className="rounded-xl border border-slate-200 p-4 text-sm">{forecast.parameters.anchorSelection
+          ? <FrozenAnchorAssessment forecast={forecast} />
+          : <p className="font-semibold">固定条件：予算 {yen(forecast.parameters.budget)} / 下落想定 {Math.round((1 - forecast.parameters.oddsFactor) * 100)}% / {forecast.parameters.anchor ? `軸 ${forecast.parameters.anchor}番` : '軸指定なし'}</p>}
+          <p className="mt-2 text-xs text-slate-500">モデル {forecast.modelVersion} ・ 観測 {formatRaceTime(forecast.inputs.observedAt)} ・ 締切 {formatRaceTime(forecast.cutoffAt)}</p>
+          {receivedAt && <p className="mt-2 text-xs font-semibold text-cyan-800">締切前受領 {formatRaceTime(receivedAt)}</p>}
+          {!forecast.parameters.anchorSelection && <p className="mt-2">{forecast.allocations.map(ticket => `${label(ticket)} ${yen(ticket.stake)}`).join(' ／ ') || '見送り'}</p>}
+          {forecast.note && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{forecast.note}</p>}</div>}
+        <details open={!anchorMode} className="space-y-3">
+          <summary className="cursor-pointer text-sm font-semibold text-sky-800">購入後の記録・払戻</summary>
         {forecast && <PurchaseEditor key={`${forecast.id}:${purchase?.id ?? 'new'}`} forecast={forecast} purchase={purchase} disabled={Boolean(loaded.error) || saving} onSave={(tickets, note) => { const next = appendPurchase(ledger, { forecastId: forecast.id, tickets, note, replacesId: purchase?.id ?? null }); return persist(next.ledger, '実購入の記録を保存しました。') }} />}
         {activePurchases(ledger).map(item => <SettlementEditor key={`${item.id}:${latestSettlement(ledger, item.id)?.id ?? 'new'}`} purchase={item} settlement={latestSettlement(ledger, item.id)} payoutEvent={payoutEvent} disabled={Boolean(loaded.error) || saving} onSave={(payouts, note, source) => { const latest = latestSettlement(ledger, item.id); const next = appendSettlement(ledger, { purchaseId: item.id, payouts, note, source, replacesId: latest?.id ?? null }); return persist(next.ledger, '正式払戻の記録を保存しました。') }} />)}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric title="実購入の総額" value={yen(totals.invested)} detail={`未精算 ${totals.pendingCount}件`} /><Metric title="精算済みの払戻" value={yen(totals.payout)} detail={`精算した購入 ${yen(totals.settledInvested)}`} /><Metric title="精算済み損益" value={yen(totals.profit)} /><Metric title="実回収率" value={pct(totals.returnRate)} detail="未精算分は含みません" /></div>
+        </details>
       </>}
     </section>
   </div>

@@ -1,4 +1,5 @@
 import { validCalibrationEvidence } from './forecastReview.js'
+import { ANCHOR_METHOD, assessAnchors } from './anchorAssessment.js'
 export const LEDGER_VERSION = 1
 const MAX_RECORDS = 500
 const MAX_BYTES = 4_000_000
@@ -126,6 +127,20 @@ export function validateLedger(value, scope) {
     if (record.field.length < 2 || Math.abs(record.field.reduce((sum, horse) => sum + horse.probability, 0) - 1) > 1e-6) fail('予想確率の合計が1になっていません。')
     if (record.inputs.probabilityStack != null && !validCalibrationEvidence(record)) fail('校正前後の予想確率が一致しません。')
     if (record.parameters.anchor !== null && !numbers.has(record.parameters.anchor)) fail('軸馬が出走馬にありません。')
+    if (record.parameters.anchorSelection != null) {
+      const selection = record.parameters.anchorSelection
+      if (!plain(selection) || selection.method !== ANCHOR_METHOD || !Array.isArray(selection.suggested)
+        || selection.suggested.length !== 2 || record.parameters.budget !== 0 || record.allocations.length !== 0) {
+        fail('2頭の軸馬記録の形式が正しくありません。')
+      }
+      const assessment = assessAnchors({ field: record.field, odds: record.inputs.winOdds,
+        oddsFactor: record.parameters.oddsFactor, selected: selection.selected })
+      if (!Array.isArray(selection.selected) || !assessment.complete
+        || selection.suggested.some((no, index) => no !== assessment.suggested[index])
+        || record.kind === 'ace' && selection.selected.some((no, index) => no !== selection.suggested[index])) {
+        fail('2頭の軸馬・勝率・オッズの記録が一致しません。')
+      }
+    }
     const keys = new Set()
     for (const ticket of record.allocations) {
       validateTicket(ticket, true)

@@ -80,6 +80,26 @@ def validate_ledger(value):
             probability_sum += probability
         if abs(probability_sum - 1) > 1e-6:
             raise ValueError('Forecast probabilities must sum to one')
+        selection = parameters.get('anchorSelection')
+        if selection is not None:
+            if not isinstance(selection, dict) or selection.get('method') != 'win-value-two-v1':
+                raise ValueError('Invalid two-anchor method')
+            suggested, selected = selection.get('suggested'), selection.get('selected')
+            for pair in (suggested, selected):
+                if not isinstance(pair, list) or len(pair) != 2 or any(type(n) is not int or n not in numbers for n in pair) or pair[0] == pair[1]:
+                    raise ValueError('Two distinct forecast horses are required')
+            factor, prices = parameters.get('oddsFactor'), inputs.get('winOdds')
+            if type(factor) not in (int, float) or not math.isfinite(factor) or not 0.2 - 1e-12 <= factor <= 1 or not isinstance(prices, dict):
+                raise ValueError('Invalid two-anchor prices')
+            if any(type(prices.get(str(h['no']))) not in (int, float) or not math.isfinite(prices[str(h['no'])]) or prices[str(h['no'])] < 1 for h in field):
+                raise ValueError('Complete two-anchor prices required')
+            ranked = sorted(field, key=lambda h: (-h['probability'], h['no']))
+            qualifies = lambda h: h['probability'] * max(1, prices[str(h['no'])] * factor) > 1 + 1e-10
+            expected = [h['no'] for h in ranked if qualifies(h)] + [h['no'] for h in ranked if not qualifies(h)]
+            if suggested != expected[:2] or (forecast['kind'] == 'ace' and selected != suggested):
+                raise ValueError('Two-anchor selection does not match the frozen forecast')
+            if parameters['budget'] != 0 or forecast.get('allocations') != []:
+                raise ValueError('Two-anchor selection must not contain an allocated budget')
         allocations = forecast.get('allocations')
         if not isinstance(allocations, list):
             raise ValueError('Forecast allocations required')
