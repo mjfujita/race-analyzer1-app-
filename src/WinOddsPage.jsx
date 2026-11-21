@@ -1,18 +1,19 @@
 import { useState } from 'react'
 import { ArrowUpDown, TrendingUp, Upload } from 'lucide-react'
-import { oddsStorageKey, readOddsHistory } from './oddsHistory.js'
+import { oddsStorageKey, readOddsHistory, readOddsEvents } from './oddsHistory.js'
 import { analyzeMarket, buildAbilityField } from './marketModel.js'
-import { decisionCutoff, formatRaceTime, snapshotTiming } from './raceTime.js'
+import { decisionCutoff, formatRaceTime, snapshotTiming, validTimestamp } from './raceTime.js'
 import { loadModel, saveModel } from './modelStore.js'
 import { readCloudRace, loadRuntimeModel, enrichCloudHorses } from './cloudStore.js'
 import { applyPredictionModels, buildRaceContext } from './predictionModel.js'
+import OddsMomentumPanel from './OddsMomentumPanel.jsx'
 import RuntimeModelPanel from './RuntimeModelPanel.jsx'
 
 const pct = value => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '—'
 const num = value => Number.isFinite(value) ? value.toFixed(2) : '—'
 const select = 'ml-2 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-slate-800'
 
-export default function WinOddsPage({ race, horses, statistics = [], userId, onOpenAbility }) {
+export default function WinOddsPage({ race, horses, statistics = [], userId, onOpenAbility, workspace = false }) {
   const key = oddsStorageKey(userId, race)
   const history = readOddsHistory(key)
   const [selected, setSelected] = useState('')
@@ -24,10 +25,11 @@ export default function WinOddsPage({ race, horses, statistics = [], userId, onO
   const current = history.find(item => item.id === selected) ?? history[0]
   const cloud = readCloudRace(userId, race)
   const models = loadRuntimeModel(userId)
-  const model = modelOverride === undefined ? models?.baseModel ?? loadModel(userId) : modelOverride
+  const candidateModel = modelOverride === undefined ? models?.baseModel ?? loadModel(userId) : modelOverride
   const enriched = enrichCloudHorses(horses, cloud?.race)
   const decisionAt = decisionCutoff(race)
   const cutoffAt = current?.retrievedAt && decisionAt && Date.parse(current.retrievedAt) < Date.parse(decisionAt) ? current.retrievedAt : decisionAt
+  const model = !workspace || candidateModel && [candidateModel.generatedAt, candidateModel.adoptedAt ?? candidateModel.importedAt].every(time => validTimestamp(time) && Date.parse(time) <= Date.parse(cutoffAt)) ? candidateModel : null
   const available = current?.retrievedAt ? readOddsHistory(key, { asOf: current.retrievedAt }) : []
   const previous = available.find(item => Date.parse(item.observedAt) < Date.parse(current?.observedAt))
   const baseline = current?.retrievedAt ? readOddsHistory(key, { kind: 'baseline', asOf: current.retrievedAt })
@@ -53,6 +55,8 @@ export default function WinOddsPage({ race, horses, statistics = [], userId, onO
     ['gapLog', '市場評価差'], ['expectedReturn', '現在価格の回収率'], ['stressReturn', '下落時の回収率'], ['fairOdds', '損益分岐オッズ'],
   ]
   return <div className="space-y-4">
+    {workspace && <><div className="rca-page-title"><div><h1>人気の動きと、残っている妙味を見る</h1><p>オッズが下がった馬も、現在の確率と価格を比較して判断します。</p></div></div><label className="text-sm">比較する観測時刻<select className={select} value={current?.id ?? ''} onChange={event => setSelected(event.target.value)}>{history.map(item => <option key={item.id} value={item.id}>{item.time}</option>)}</select></label><OddsMomentumPanel race={race} field={prediction.field} current={current} events={readOddsEvents(key)} cutoffAt={cutoffAt} /></>}
+    <details open={!workspace} className="rca-panel"><summary className="font-semibold text-sky-800">価格・市場評価の詳細</summary><div className="space-y-4 mt-4">
     <section className="overflow-hidden rounded-2xl bg-[#0B2545] p-5 text-white shadow-sm sm:p-7">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><p className="text-xs tracking-[.18em] text-cyan-300">ABILITY × MARKET</p><h3 className="mt-2 flex items-center gap-2 text-xl font-bold"><TrendingUp aria-hidden="true" />実力と市場の評価差</h3>
@@ -109,5 +113,6 @@ export default function WinOddsPage({ race, horses, statistics = [], userId, onO
       {model && <button type="button" className="text-slate-600" onClick={() => { try { localStorage.removeItem(`race-market-model:v1:${userId}`); setModel(null) } catch { setError('設定を保存できませんでした。') } }}>初期モデルに戻す</button>}</div>
       {error && <p role="alert" className="mt-3 text-red-700">{error}</p>}
     </details>
+    </div></details>
   </div>
 }

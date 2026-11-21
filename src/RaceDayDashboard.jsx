@@ -1,11 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ArrowRight, Database } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { decisionCutoff, formatRaceTime, japanRaceDay, raceDateISO, raceTimestamp, validTimestamp } from './raceTime.js'
 import { ledgerScope, readLedger } from './forecastLedger.js'
 
-const panelBase = 'rounded-2xl border px-4 py-4 shadow-sm sm:px-5'
-const panel = `${panelBase} border-slate-200 bg-white`
-const link = 'inline-flex items-center gap-1 rounded text-left text-sm font-semibold text-sky-800 hover:underline disabled:opacity-50'
 const primary = 'inline-flex items-center gap-2 rounded-lg bg-[#0B2545] px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50'
 const raceClock = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 const dayLabel = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' })
@@ -51,10 +48,12 @@ export default function RaceDayDashboard({ userId, dashboard, placeNames, onNavi
   })).sort((a, b) => (a.post || Infinity) - (b.post || Infinity) || a.id.localeCompare(b.id))
   const next = dashboard.error ? null : races.find(race => race.cutoff > now && Date.parse(race.oddsRetrievedAt) <= now
     && race.saved === 'none' && !race.review)
-  const otherRaces = [
-    ...races.filter(race => race.id !== next?.id && (!Number.isFinite(race.post) || race.post > now)).slice(0, 4),
-    ...races.filter(race => race.post <= now).reverse().slice(0, 2),
-  ]
+  const [filter, setFilter] = useState('すべて')
+  const [search, setSearch] = useState('')
+  const filtered = races.filter(race => (filter === 'すべて' || filter === race.place || filter === '未保存だけ' && race.saved === 'none')
+    && `${race.place}${race.raceNo}R ${race.name}`.includes(search))
+  const places = [...new Set(races.map(race => race.place).filter(Boolean))]
+
 
   async function openRace(race) {
     setOpening(race.id)
@@ -65,66 +64,29 @@ export default function RaceDayDashboard({ userId, dashboard, placeNames, onNavi
   }
 
   const loading = dashboard.loading || (!data && !dashboard.error)
-  return <div className="space-y-4 pb-14">
-    <header>
-      <p className="text-sm font-bold tabular-nums text-[#2B6CB0]">{dateLabel(date)}</p>
-      <h1 className="mt-1 text-3xl font-black text-[#0B2545]">開催ダッシュボード</h1>
-    </header>
+  return <div className="space-y-5">
+    <header className="rca-page-title"><div><p className="text-sm font-bold text-blue-600">{dateLabel(date)}</p><h1>本日のレース</h1><p>データが揃ったレースから、軸馬を1頭選ぶ。</p></div><button type="button" className="rca-secondary" onClick={() => onOpenList(date)}>過去開催・PACIレース一覧</button></header>
     {children}
-    <section aria-label="JRDBの同期状況" className={`${panel} flex flex-wrap items-center justify-between gap-3`}>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <h2 className="flex items-center gap-2 font-bold text-[#0B2545]"><Database aria-hidden="true" className="h-4 w-4" /> JRDBデータ</h2>
-        <p role="status" className="text-sm text-slate-600">{data?.lastDataSentAt
-          ? `最終受信 ${formatRaceTime(data.lastDataSentAt)}`
-          : loading ? '受信状況を確認中' : '受信時刻を確認できません'}</p>
-      </div>
-      <button type="button" className={link} onClick={() => onNavigate('automation')}>同期状況を確認 {arrow}</button>
-    </section>
-    {dashboard.error && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{dashboard.error}</p>}
-    {openError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{openError}</p>}
-    {next && <section aria-labelledby="next-race-title" className={`${panelBase} flex flex-wrap items-center justify-between gap-4 border-sky-200 bg-sky-50`}>
-      <div>
-        <p className="text-sm font-semibold text-sky-800">次に予想を確認できるレース</p>
-        <h2 id="next-race-title" className="mt-1 text-xl font-bold text-[#0B2545]">{next.place}{next.raceNo}R {next.name}</h2>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums">
-          <span>発走 <strong>{timeLabel(new Date(next.post).toISOString())}</strong></span>
-          <span>判断締切 <strong>{timeLabel(new Date(next.cutoff).toISOString())}</strong></span>
-        </div>
-        <p className="mt-1 text-xs tabular-nums text-slate-600">単勝オッズ {timeLabel(next.oddsRetrievedAt)} 取得 · 予想未保存</p>
-      </div>
-      <button type="button" className={primary} onClick={() => openRace(next)} disabled={Boolean(opening)}>{opening === next.id ? '読み込み中…' : '軸候補を確認'} {arrow}</button>
-    </section>}
-    {races.length > 0 && <section aria-labelledby="race-progress-title" className={panel}>
-      <h2 id="race-progress-title" className="font-bold text-[#0B2545]">{next ? 'ほかのレースの進捗' : 'レースの進捗'}</h2>
-      {!next && !dashboard.error && <p className="mt-1 text-sm text-slate-600">判断締切前で、単勝オッズ取得済みの未保存レースはありません。</p>}
-      {otherRaces.length > 0 && <ul className="mt-2 divide-y divide-slate-100 border-y border-slate-100">
-        {otherRaces.map(race => {
-          const state = raceStatus(race, now)
-          return <li key={race.id} className="grid items-center gap-x-3 gap-y-1 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-            <div className="min-w-0">
-              <p className="break-words text-sm font-bold text-[#0B2545]">{race.place}{race.raceNo}R {race.name}</p>
-              <p className="text-xs tabular-nums text-slate-600">{Number.isFinite(race.post) ? `${timeLabel(new Date(race.post).toISOString())} 発走` : '発走時刻未取得'}</p>
-            </div>
-            <span className="text-sm text-slate-700">{state.label}</span>
-            <button type="button" disabled={state.action === 'forecast' && Boolean(opening)}
-              className={`${link} w-fit`} aria-label={`${race.place}${race.raceNo}Rの${state.text}`}
-              onClick={() => state.action === 'review' ? onOpenReview(race.review.forecastId)
-                : state.action === 'forecast' ? openRace(race) : onNavigate('automation')}>
-              {opening === race.id ? '読み込み中…' : state.text} {arrow}
-            </button>
-          </li>
-        })}
-      </ul>}
-      <button type="button" className={`${link} mt-3`} onClick={() => onOpenList(date)}>レース一覧を開く {arrow}</button>
-    </section>}
-    {!races.length && <section aria-labelledby="race-day-empty-title" className={panel}>
-      <h2 id="race-day-empty-title" className="font-bold text-[#0B2545]">{data?.schedule === 'no-races'
-        ? '本日の開催なし' : data?.schedule === 'scheduled' ? '開催情報の取得待ち' : '開催情報を確認中'}</h2>
-      {data?.schedule === 'no-races'
-        ? <><p className="mt-1 text-sm text-slate-600">{data.lastMeeting ? `取込済みの直近開催 ${dateLabel(data.lastMeeting)}` : 'JRAの開催日程を確認しました。'}</p>
-          <button type="button" className={`${link} mt-3`} onClick={() => onOpenReview()}>予想の振り返りを開く {arrow}</button></>
-        : <p className="mt-1 text-sm text-slate-600">{data?.schedule === 'scheduled' ? 'JRAの開催予定を確認しました。JRDBのレースデータが届き次第表示します。'
-          : '開催日程を確認でき次第、レースの進捗を表示します。'}</p>}
-    </section>}
+    {dashboard.error && <p role="alert" className="rca-error">{dashboard.error} 最後に取得した表示を保持しています。</p>}
+    {openError && <p role="alert" className="rca-error">{openError}</p>}
+    <dl className="rca-stat-grid">{[
+      ['本日のレース', loading ? '—' : races.length, '取得済みの開催情報'],
+      ['単勝データあり', loading ? '—' : races.filter(r => r.oddsRetrievedAt).length, '軸候補の有無は予想画面で判定'],
+      ['判断を保存済み', loading ? '—' : races.filter(r => ['saved','local'].includes(r.saved)).length, 'ローカル保存と受領を区別'],
+      ['単勝データ待ち', loading ? '—' : races.filter(r => !r.oddsRetrievedAt).length, '未取得レースを確認'],
+    ].map(([name,value,detail]) => <div key={name}><dt>{name}</dt><dd>{value}</dd><p className="rca-muted">{detail}</p></div>)}</dl>
+    <div className="rca-columns"><div className="rca-stack">
+    {races.length > 0 ? <section className="rca-panel" aria-labelledby="race-progress-title"><h2 id="race-progress-title">開催レース</h2>
+      <div className="rca-filterbar">{['すべて',...places,'未保存だけ'].map(name => <button type="button" key={name} aria-pressed={filter === name} onClick={() => setFilter(name)}>{name}</button>)}<input type="search" aria-label="レース名・番号で検索" placeholder="レース名・番号で検索" value={search} onChange={event => setSearch(event.target.value)} /></div>
+      <table className="rca-list-table rca-race-table" aria-label="本日の開催レース"><thead><tr>{['発走','場・レース','条件','判断・保存','操作'].map(name => <th scope="col" key={name}>{name}</th>)}</tr></thead><tbody>{filtered.map(race => {
+        const state = raceStatus(race, now)
+        return <tr key={race.id}><td className="tabular-nums">{Number.isFinite(race.post) ? timeLabel(new Date(race.post).toISOString()) : '時刻未取得'}</td><th scope="row">{race.place}{race.raceNo}R <span className="block text-xs font-normal text-slate-500">{race.name}</span></th><td>{race.distance == null ? race.surface ?? '区分未取得' : /^\d+$/.test(String(race.distance)) ? `${race.surface ?? ''}${race.distance}m` : race.distance}<span className="block text-xs text-slate-500">{race.fieldSize ?? '—'}頭</span></td><td><span className="rca-pill">{state.label}</span></td><td><button type="button" aria-label={`${race.place}${race.raceNo}Rの${state.text}`} disabled={Boolean(opening)} onClick={() => state.action === 'review' ? onOpenReview(race.review.forecastId) : state.action === 'forecast' ? openRace(race) : onNavigate('automation')}>{opening === race.id ? '読み込み中…' : state.text} →</button></td></tr>
+      })}</tbody></table>{!filtered.length && <p className="rca-notice">条件に合うレースがありません。絞り込みを変更してください。</p>}
+      <p className="rca-muted mt-4">{filtered.length} / {races.length}レースを表示。旧方式の注目レース数・推測ラベルは表示しません。</p>
+    </section> : <section aria-labelledby="race-day-empty-title" className="rca-panel"><h2 id="race-day-empty-title">{data?.schedule === 'no-races' ? '本日の開催なし' : data?.schedule === 'scheduled' ? '開催情報の取得待ち' : '開催情報を確認中'}</h2><p className="rca-muted">{loading ? '開催情報を読み込んでいます。' : data?.schedule === 'no-races' ? data.lastMeeting ? `取込済みの直近開催 ${dateLabel(data.lastMeeting)}` : 'JRAの開催日程を確認しました。' : 'JRDBの開催データが届き次第、ここに表示します。'}</p><button type="button" className="rca-secondary" onClick={() => onOpenReview()}>予想の振り返りを開く</button></section>}
+    </div><aside className="rca-stack">
+      {next && <section aria-labelledby="next-race-title" className="rca-panel"><p className="rca-muted">次に予想を確認できるレース</p><h2 id="next-race-title" className="mt-2">{next.place}{next.raceNo}R {next.name}</h2><p className="tabular-nums">判断締切 {timeLabel(new Date(next.cutoff).toISOString())}</p><p className="rca-muted">単勝オッズ {timeLabel(next.oddsRetrievedAt)} 取得 · 予想未保存</p><button type="button" className={primary} onClick={() => openRace(next)} disabled={Boolean(opening)}>{opening === next.id ? '読み込み中…' : '軸候補を確認'} {arrow}</button></section>}
+      <section aria-label="JRDBの同期状況" className="rca-panel"><h2>取得状況</h2><p role="status" className="rca-muted">{data?.lastDataSentAt ? `最終受信 ${formatRaceTime(data.lastDataSentAt)}` : loading ? '受信状況を確認中' : '受信時刻を確認できません'}</p><button type="button" className="rca-secondary" onClick={() => onNavigate('automation')}>同期状況を確認 {arrow}</button></section>
+    </aside></div>
   </div>
 }

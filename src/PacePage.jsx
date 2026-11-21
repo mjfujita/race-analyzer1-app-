@@ -168,7 +168,7 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
         </div>)}
       </div>
       {earlierRaces.length > 0 && <details className="mt-3 text-sm text-slate-700">
-        <summary className="cursor-pointer font-semibold text-[#2B6CB0]">確定したレース結果を記録</summary>
+        <summary className="cursor-pointer font-semibold text-[#2B6CB0]">取込エラーの訂正・結果の補完</summary>
         <p className="mt-1 text-xs text-slate-500">4角で同じ集団にいた馬は、集団の先頭順位を入力してください。</p>
         <form onSubmit={saveResult} className="mt-2 flex flex-wrap items-end gap-2">
           <label>対象レース<select name="raceNo" className="ml-1 rounded border border-slate-300 p-1">

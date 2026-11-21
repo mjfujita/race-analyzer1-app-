@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
+import { SINGLE_ANCHOR_METHOD } from '../src/anchorAssessment.js'
 import { validateForecastReview } from '../src/forecastReview.js'
 import { validateModel } from '../src/modelStore.js'
 import { validateLedger, emptyLedger, importLedger, parseRaceObservations } from '../src/forecastLedger.js'
@@ -370,10 +371,11 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       validateRaceInput(record.race, ownerId, now())
     }
     const latest = records.at(-1)?.race
+    const saved = await pullLedger(scope)
     return { ...response, race: latest ? { ...latest.race, id: raceId, raceDate } : null,
       snapshots: uniqueRecords(records.flatMap(record => record.race.snapshots), 'id'),
       observations: uniqueRecords(records.flatMap(record => record.race.observations), 'eventId'),
-      context: latest?.context ?? null, results: latest?.results ?? null, ledger: await readLedger(scope), conflicts: [] }
+      context: latest?.context ?? null, results: latest?.results ?? null, ledger: saved.ledger, receipts: Object.fromEntries((saved.receipts ?? []).map(receipt => [receipt.forecastId,receipt])), conflicts: [] }
   }
   async function saveLedger(input) {
     const startedAt = now()
@@ -396,7 +398,9 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
         await immutable(`${base}/${kind}/${keyHash(semanticId)}.json`, { schemaVersion: 1, ownerId, scope, kind, record })
       }
     }
-    const candidates = input.forecasts.filter(record => record.kind === 'ace' && record.mode === 'live'
+    const candidates = input.forecasts.filter(record => (record.kind === 'ace' || record.kind === 'user'
+      && record.parameters.anchorSelection?.method === SINGLE_ANCHOR_METHOD
+      && ['selected','skip'].includes(record.parameters.anchorSelection.decision)) && record.mode === 'live'
       && record.inputs.probabilityStack)
     const receipts = Object.create(null)
     await forEachBounded(candidates, 4, async record => {

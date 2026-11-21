@@ -30,12 +30,12 @@ function recordRate(topThree, runs) {
   return runs > 0 && topThree != null ? topThree / runs : null
 }
 
-export default function AbilityPage({ race, horses, statistics, userId, cloudRevision = 0, onSelectRace, onSelectHorse }) {
+export default function AbilityPage({ race, horses, statistics, userId, cloudRevision = 0, onSelectRace, onSelectHorse, workspace = false }) {
   const storageKey = oddsStorageKey(userId, race)
-  return <AbilityTable key={storageKey} {...{ race, horses, statistics, storageKey, cloudRevision, onSelectRace, onSelectHorse }} />
+  return <AbilityTable key={storageKey} {...{ race, horses, statistics, storageKey, cloudRevision, onSelectRace, onSelectHorse, workspace }} />
 }
 
-function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onSelectRace, onSelectHorse }) {
+function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onSelectRace, onSelectHorse, workspace }) {
   const [sort, setSort] = useState({ key: 'rank', ascending: true })
   const [history, setHistory] = useState(() => readOddsHistory(storageKey))
   useEffect(() => { setHistory(readOddsHistory(storageKey)) }, [storageKey, cloudRevision])
@@ -114,13 +114,14 @@ function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onS
     const order = (av - bv) * (sort.ascending ? 1 : -1)
     return order || a.values.number - b.values.number
   })
+  const displayedColumns = workspace ? columns.filter(c => c.key !== 'ability') : columns
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
       <div className="space-y-2 border-b border-slate-100 p-5">
         <h3 className="flex items-center gap-2 font-bold text-[#0B2545]"><Gauge className="h-5 w-5" />能力・適性</h3>
         <p className="text-sm text-slate-700">{leaders.length
-          ? `能力の軸候補は ${leaders.map(horse => `${horse.no}番 ${horse.name}`).join('、')}。JRDBの出走時IDMで最上位です。`
-          : '出走時IDMの順位が揃うと、能力の軸候補を表示します。'}</p>
+          ? `出走時IDMの上位は ${leaders.map(horse => `${horse.no}番 ${horse.name}`).join('、')}。JRDBの出走時IDMで最上位です。`
+          : '出走時IDMの順位が揃うと、能力の上位を表示します。'}</p>
         <p className="text-xs text-slate-500">実績は直近5走の3着内／出走数。同じ芝・ダート区分で集計します。近い距離は今回の±200m、同場同距離は競馬場と距離が一致する走です。実績列は3着内率で並び替えます。</p>
         {!statistics.length && <p className="text-xs text-slate-500">IDM実数と競馬場別実績は、能力データ付きのDBの取得後に表示します。</p>}
         {rows.length > 0 && <div className="space-y-2">
@@ -174,7 +175,7 @@ function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onS
         <div className="overflow-x-auto">
           <table className="w-full whitespace-nowrap text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
-              <tr>{columns.map(column => {
+              <tr>{displayedColumns.map(column => {
                 const active = sort.key === column.key
                 const Icon = active ? (sort.ascending ? ArrowUp : ArrowDown) : ChevronsUpDown
                 return (
@@ -206,7 +207,7 @@ function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onS
                     {horse.values.oddsChange == null ? '—' : oddsChangeFormat.format(horse.values.oddsChange / 100)}
                   </td>
                   <td className="px-4 py-3 tabular-nums">{stats?.idm == null ? '—' : Number(stats.idm).toFixed(1)}</td>
-                  <td className="px-4 py-3 tabular-nums">{horse.abilityScore ?? '—'}</td>
+                  {!workspace && <td className="px-4 py-3 tabular-nums">{horse.abilityScore ?? '—'}</td>}
                   <td className="px-4 py-3">{recordText(horse.distanceTop3, horse.distanceRuns)}</td>
                   <td className="px-4 py-3">{recordText(stats?.venue_top3, stats?.venue_runs)}</td>
                   <td className="px-4 py-3">{recordText(stats?.course_top3, stats?.course_runs)}</td>

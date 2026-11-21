@@ -1,1 +1,74 @@
 @import "tailwindcss";
+
+:root { font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif; color: #16324f; background: #f3f6fa; }
+button, summary, select { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+:focus-visible { outline: 3px solid #76aaf0; outline-offset: 3px; }
+.rca-app { min-height:100vh; background:#f3f6fa; color:#16324f; font-size:14px; }
+.rca-topbar { display:flex; align-items:center; gap:24px; min-height:76px; background:#0b2545; color:white; padding:16px 28px; }
+.rca-brand { display:flex; gap:11px; align-items:center; text-align:left; min-width:290px; }
+.rca-brand-icon { display:grid; place-items:center; background:#24558a; width:38px; height:38px; border-radius:11px; }
+.rca-brand b { font-size:18px; letter-spacing:-.04em; }
+.rca-brand small { display:block; font-size:10px; color:#c0d0e4; letter-spacing:.1em; }
+.rca-main-nav { display:flex; flex:1; gap:5px; }
+.rca-main-nav button { display:flex; align-items:center; gap:8px; white-space:nowrap; padding:11px 15px; border-radius:8px; color:#c1d1e4; font-weight:650; }
+.rca-main-nav [aria-current] { background:#294767; color:white; }
+.rca-account { display:flex; gap:6px; align-items:center; font-size:11px; max-width:110px; }
+.rca-account span { overflow:hidden; text-overflow:ellipsis; }
+.rca-workspace { max-width:1440px; margin:auto; padding:30px 32px; }
+.rca-race-nav,.rca-data-nav { display:flex; gap:28px; border-bottom:1px solid #d9e3ee; margin-bottom:24px; }
+.rca-race-nav button,.rca-data-nav button { display:flex; align-items:center; gap:7px; padding:13px 0; color:#70869e; white-space:nowrap; border-bottom:3px solid transparent; }
+.rca-race-nav [aria-current],.rca-data-nav [aria-current] { border-color:#2877d7; color:#216ac1; font-weight:700; }
+.rca-page-title { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-bottom:22px; flex-wrap:wrap; }
+.rca-page-title h1 { font-size:29px; font-weight:750; letter-spacing:-.04em; }
+.rca-page-title p { margin-top:7px; color:#6d8198; }
+.rca-panel { padding:22px; border:1px solid #dfe7f1; background:white; border-radius:14px; min-width:0; }
+.rca-panel h2 { font-size:17px; font-weight:700; margin-bottom:15px; }
+.rca-panel p { line-height:1.85; }
+.rca-panel details { margin-top:14px; }
+.rca-panel summary { font-weight:650; color:#2168b7; padding:7px 0; }
+.rca-muted { font-size:12px; color:#6e8299; line-height:1.85; }
+.rca-primary,.rca-secondary { display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:10px 15px; border-radius:8px; font-size:13px; font-weight:650; margin-top:12px; }
+.rca-primary { color:white; background:#0b2545; }.rca-primary:disabled { opacity:.45; }
+.rca-secondary { border:1px solid #d6e1ef; background:white; color:#35516e; }
+.rca-columns { display:grid; grid-template-columns:minmax(0,1fr) 303px; gap:20px; align-items:start; }
+.rca-stack { display:flex; flex-direction:column; gap:18px; min-width:0; }
+.rca-details>div,.rca-setting { display:flex; align-items:center; justify-content:space-between; gap:16px; border-bottom:1px solid #e9eef5; padding:14px 0; flex-wrap:wrap; }
+.rca-details dt { color:#70839a; font-size:12px; }.rca-details dd { font-weight:650; text-align:right; font-variant-numeric:tabular-nums; }
+.rca-setting input { width:100px; border:1px solid #cedcec; border-radius:8px; padding:9px; text-align:right; }
+.rca-error { background:#fff0ed; padding:12px; color:#a13d27; border-radius:8px; margin:12px 0; }
+.rca-notice { background:#eff6ff; color:#466d99; padding:12px; border-radius:8px; margin:12px 0; font-size:12px; }
+.rca-footer { display:flex; justify-content:space-between; gap:15px; flex-wrap:wrap; margin-top:30px; border-top:1px solid #dce5ef; padding-top:15px; font-size:10px; color:#798ca2; }
+.rca-bottom-nav { display:none; }
+.rca-stat-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); background:white; border:1px solid #dfe7f1; border-radius:13px; overflow:hidden; margin:20px 0; }
+.rca-stat-grid>div { padding:19px 23px; border-right:1px solid #e6edf5; }.rca-stat-grid>div:last-child { border:0; }
+.rca-stat-grid dt { font-size:12px; color:#6d8199; }.rca-stat-grid dd { font-size:28px; font-weight:750; margin:5px 0; font-variant-numeric:tabular-nums; }
+.rca-list-table { width:100%; text-align:left; border-collapse:collapse; font-size:13px; }
+.rca-list-table th,.rca-list-table td { padding:16px 13px; border-bottom:1px solid #edf1f6; }.rca-list-table thead { background:#f7f9fc; color:#6e839b; font-size:11px; }
+.rca-list-table tbody th { font-weight:650; }.rca-list-table td button { color:#216bc3; font-weight:650; }
+.rca-filterbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:15px 0; }
+.rca-filterbar button { padding:7px 12px; border:1px solid #dde6f0; border-radius:8px; font-size:12px; }.rca-filterbar [aria-pressed=true] { background:#edf5ff; border-color:#bcd4f2; color:#1f66b9; }
+.rca-filterbar input { min-width:130px; max-width:100%; flex:1; border:1px solid #dce5ef; padding:8px 12px; border-radius:8px; margin-left:auto; }
+.rca-pill { display:inline-flex; align-items:center; border-radius:30px; background:#edf3fa; color:#476782; padding:4px 9px; font-size:11px; }
+.rca-axis-grid { display:grid; grid-template-columns:minmax(0,1fr) 290px; gap:20px; align-items:start; }
+.rca-axis-summary { background:#0d2b4c; color:white; padding:22px; border-radius:13px; }.rca-axis-summary h3 { font-size:15px; color:#c2d6ed; font-weight:650; margin-bottom:15px; }.rca-axis-summary h4 { font-size:20px; font-weight:700; margin-bottom:12px; }
+.rca-axis-summary .rca-details dt { color:#bfd0e5; }.rca-axis-summary .rca-details>div { border-color:#31516f; }.rca-axis-summary button { background:white; color:#0b2545; width:100%; }.rca-axis-summary small { display:block; text-align:center; font-size:11px; color:#b8cce2; margin-top:12px; }
+.rca-desktop-comparison table { min-width:640px; }
+.rca-axis-page>section:first-child { background:transparent; color:#16324f; border:0; box-shadow:none; padding:0; }
+.rca-axis-page>section:first-child p { color:#6d839b; }.rca-axis-page>section:first-child>div:last-child { border-color:#dbe6f2; }
+.rca-odds-chart { width:100%; height:auto; margin-top:15px; }.rca-odds-chart text { font-size:12px; fill:#71869c; }
+@media(max-width:1100px) { .rca-topbar { gap:14px; padding:15px 20px; }.rca-brand{min-width:250px}.rca-brand b{font-size:16px}.rca-main-nav button{padding:10px;font-size:12px}.rca-account span{display:none} }
+@media(max-width:800px) { .rca-columns,.rca-axis-grid { grid-template-columns:minmax(0,1fr); }.rca-workspace { padding:22px 18px 100px; }.rca-main-nav{display:none}.rca-topbar{justify-content:space-between}.rca-bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:45;display:flex;justify-content:space-around;background:white;border-top:1px solid #dce5f0;padding:10px 5px calc(10px + env(safe-area-inset-bottom));}.rca-bottom-nav button{display:flex;align-items:center;flex-direction:column;gap:5px;color:#758aa1;font-size:10px;padding:4px}.rca-bottom-nav [aria-current]{color:#216dcd;font-weight:700}.rca-page-title h1{font-size:25px}.rca-footer{padding-bottom:20px}.rca-race-nav,.rca-data-nav{gap:18px;font-size:12px}.rca-stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.rca-stat-grid>div{padding:16px;border-bottom:1px solid #e6edf5}.rca-stat-grid dd{font-size:24px}.rca-panel{padding:18px}.rca-race-table thead{display:none}.rca-race-table tbody tr{display:grid;grid-template-columns:1fr 1fr;padding:14px 0;border-bottom:1px solid #e4ecf5;gap:6px}.rca-race-table th,.rca-race-table td{border:0;padding:4px}.rca-race-table td:last-child{grid-column:1/-1}.rca-axis-summary{order:0} }
+@media(max-width:639px) { .rca-brand b{font-size:16px}.rca-race-nav{justify-content:space-between;gap:10px}.rca-race-nav svg{display:none}.rca-axis-page{min-width:0}.rca-workspace{padding-left:14px;padding-right:14px} }
+
+@media(max-width:639px) {
+ .rca-desktop-comparison { display:block; overflow:hidden; }
+ .rca-desktop-comparison table { display:block; min-width:0; white-space:normal; }
+ .rca-desktop-comparison thead { display:none; }
+ .rca-desktop-comparison tbody { display:block; }
+ .rca-desktop-comparison tbody tr { display:grid; grid-template-columns:1fr 1fr; gap:14px 12px; padding:16px; }
+ .rca-desktop-comparison tbody th { position:static; grid-column:1/-1; padding:0; background:transparent; }
+ .rca-desktop-comparison tbody td { display:flex; justify-content:space-between; align-items:baseline; gap:5px; padding:0; background:transparent; font-weight:650; font-size:14px; }
+ .rca-desktop-comparison td[data-label]::before { content:attr(data-label); font-size:10px; font-weight:400; color:#70859c; white-space:nowrap; }
+ .rca-desktop-comparison tbody td:last-child { color:#216dcd; }
+}

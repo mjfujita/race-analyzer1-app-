@@ -9,6 +9,7 @@ import { calibrateForecast, reviewStack } from './forecastReview.js'
 import RuntimeModelPanel from './RuntimeModelPanel.jsx'
 import RaceDataPanel, { readRaceData } from './RaceDataPanel.jsx'
 import AnchorAssessmentPanel, { FrozenAnchorAssessment } from './AnchorAssessmentPanel.jsx'
+import { readSettings } from './workspaceSettings.js'
 import { SINGLE_ANCHOR_METHOD } from './anchorAssessment.js'
 import { oddsMomentum } from './oddsMomentum.js'
 import { buildAbilityField, analyzeMarket } from './marketModel.js'
@@ -58,7 +59,7 @@ export default function FinalForecastPage(props) {
   return <ForecastWorkspace key={`${scope.userId}:${scope.raceDate}:${scope.raceId}`} {...props} scope={scope} />
 }
 
-function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger, syncedReceipts, review, initialForecastId, anchorMode = false }) {
+function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger, syncedReceipts, review, initialForecastId, anchorMode = false, recordsOnly = false, embedded = false }) {
   const [loaded] = useState(() => storedLedger(scope))
   const [ledger, setLedger] = useState(loaded.ledger)
   const [savedReceipts, setSavedReceipts] = useState({})
@@ -86,6 +87,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     const observed = item.observedAt ?? raceTimestamp(race, item.time)
     return cutoffAt && observed && Date.parse(observed) <= Date.parse(cutoffAt)
   }).sort((a, b) => b.time.localeCompare(a.time) || Number(snapshotTiming(b, race).eligible) - Number(snapshotTiming(a, race).eligible)), [records.history, records.strictHistory, cutoffAt, race])
+  const preferences = readSettings(userId).value
   const latestSaved = loaded.ledger.forecasts.at(-1)
   const [snapshotId, setSnapshotId] = useState('')
   const [anchor, setAnchor] = useState(String(latestSaved?.parameters.anchor ?? ''))
@@ -93,7 +95,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const [priceBasis, setPriceBasis] = useState(latestSaved?.parameters.priceBasis ?? 'lower')
   const [profile, setProfile] = useState(latestSaved?.parameters.profile ?? 'balanced')
   const [minimumHit, setMinimumHit] = useState(String((latestSaved?.parameters.minHit ?? 0) * 100))
-  const [stress, setStress] = useState(String(Math.round((1 - (latestSaved?.parameters.oddsFactor ?? 0.9)) * 100)))
+  const [stress, setStress] = useState(String(Number(((1 - (latestSaved?.parameters.oddsFactor ?? (1 - preferences.stress / 100))) * 100).toFixed(6))))
   const [pairs, setPairs] = useState(quoteText(latestSaved?.inputs.quotes))
   const [pairTime, setPairTime] = useState(latestSaved?.inputs.quoteObservedAt ? clockTime(latestSaved.inputs.quoteObservedAt) : usableHistory[0]?.time ?? '')
   const [pairRetrievedAt, setPairRetrievedAt] = useState(latestSaved?.inputs.quoteRetrievedAt ?? null)
@@ -167,8 +169,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const ready = inputsReady && !ace?.issues.length && !selected?.issues.length
   const rows = useMemo(() => [...(selected?.evaluated ?? [])].sort((a, b) => (b[sort] ?? -Infinity) - (a[sort] ?? -Infinity)), [selected, sort])
   const forecast = ledger.forecasts.find(item => item.id === selectedForecastId) ?? ledger.forecasts.at(-1)
-  const originalId = forecast?.parentId ?? forecast?.id
-  const receipt = syncedReceipts?.[originalId] ?? savedReceipts[originalId]
+  const receipt = syncedReceipts?.[forecast?.id] ?? savedReceipts[forecast?.id]
   const receivedAt = receipt?.raceId === scope.raceId && receipt.raceDate === scope.raceDate
     && receipt.ownerId === scope.userId ? receipt.receivedAt : null
   const restored = awaitingReceipt && syncedReceipts?.[awaitingReceipt.id]
@@ -260,7 +261,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
           metrics: selected.metrics, coverage: selected.coverage, method: selected.method, note: opinion.trim() || `${anchor}番を軸に指定` })
       }
       const success = anchorsOnly ? '軸馬候補・選択した軸1頭・見送り判断と取得オッズを固定保存しました。' : 'ACE原案と入力条件を固定保存しました。購入した内容は別に記録してください。'
-      if (await persist(result.ledger, success, common.mode === 'live' ? base.record.id : null)) setSelectedForecastId(result.record.id)
+      if (await persist(result.ledger, success, common.mode === 'live' ? (anchorsOnly ? result.record.id : base.record.id) : null)) setSelectedForecastId(result.record.id)
     } catch (error) { setStorageError(error.message) }
   }
 
@@ -276,8 +277,10 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     finally { setImporting(false); event.target.value = '' }
   }
 
-  return <div className="space-y-5 text-slate-800">
-    <section className="overflow-hidden rounded-2xl bg-[#0B2545] p-5 text-white shadow-sm sm:p-6">
+  return <div className={`space-y-5 text-slate-800 ${anchorMode && !recordsOnly ? 'rca-axis-page' : ''}`}>
+    {recordsOnly && <>{storageError && <p role="alert" className="rca-error">{storageError}</p>}{statusMessage && <p role="status" className="rca-notice">{statusMessage}</p>}</>}
+    {!recordsOnly && <>
+    {!embedded && <section className="overflow-hidden rounded-2xl bg-[#0B2545] p-5 text-white shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>{!anchorMode && <p className="font-mono text-xs tracking-widest text-cyan-300">ABILITY × MARKET × PRICE</p>}
           <h1 className="mt-2 flex items-center gap-2 text-xl font-semibold"><Target className="h-5 w-5" />{anchorMode ? '軸候補・妙味判断' : '市場評価と買い方'}</h1>
@@ -289,19 +292,20 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
         <div><p className="text-xs text-slate-400">能力モデル</p><p className="mt-1">{ability.model.label}</p></div>
         <div><p className="text-xs text-slate-400">取得時点の扱い</p><p className="mt-1">{actualLive ? '締切前の情報で記録可能' : '過去検証・試算として記録'}</p></div>
       </div>
-    </section>
+    </section>}
+    {embedded && <div className="rca-notice flex flex-wrap justify-between gap-2"><span>判断締切 {formatRaceTime(cutoffAt)} · 発走10分前</span><strong>{actualLive ? '締切前の情報で記録可能' : '参考・過去検証として記録'}</strong><span>研究用・収益性検証中</span></div>}
 
     {storageError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{storageError}</p>}
     {statusMessage && <p role="status" className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-900">{statusMessage}</p>}
     {records.error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{records.error}</p>}
     {anchorMode && <>
-      <label className="flex flex-wrap items-center gap-2 text-sm">オッズの観測時刻<select className={control} value={snapshotId} onChange={event => setSnapshotId(event.target.value)}>
+      <details open={!embedded}><summary className="text-sm font-semibold text-sky-800">参照するオッズ時刻を確認・変更</summary><label className="mt-2 flex flex-wrap items-center gap-2 text-sm">オッズの観測時刻<select className={control} value={snapshotId} onChange={event => setSnapshotId(event.target.value)}>
         {usableHistory.length ? <option value="">最新を自動表示（{usableHistory[0].time}）</option> : <option value="">締切以前の記録なし</option>}
         {usableHistory.map(item => <option key={item.id} value={item.id}>{item.time} {snapshotTiming(item, race).eligible ? '時刻証跡あり' : '過去検証用'}</option>)}
-      </select></label>
+      </select></label></details>
       {current && <p className="text-xs text-slate-600">観測 {formatRaceTime(current.observedAt)} ／ 取得 {formatRaceTime(current.retrievedAt)}。{timing.reason}</p>}
       <AnchorAssessmentPanel field={prediction.field} odds={current?.odds ?? {}} stress={stress} onStressChange={setStress}
-        initialSelection={latestSaved?.parameters.anchorSelection} placeQuotes={automaticQuotes}
+        defaultThreshold={preferences.minTop3} initialSelection={latestSaved?.parameters.anchorSelection} placeQuotes={automaticQuotes}
         releaseFieldSize={config.releaseFieldSize} placePositions={config.placePositions} momentum={momentum}
         canSave={Boolean(ability.complete && market.complete && current && !loaded.error && !records.error)}
         saving={saving} actualLive={actualLive} onSave={freeze} onOpenAbility={onOpenAbility} onOpenPace={onOpenPace} />
@@ -313,7 +317,6 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     </>}
     {!anchorMode && <>
     <RaceDataPanel scope={scope} data={raceData} onChange={setRaceData} />
-
     <section className={`${panel} space-y-4`}>
       <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">01 · 能力と市場の評価</h3><button type="button" className={secondary} onClick={onOpenAbility}>能力・オッズ記録 <ArrowRight className="h-4 w-4" /></button></div>
       <p className="text-sm text-slate-600">IDMを土台にした研究用モデルの確率を基準に比較します。市場支持率は勝率ではありません。当日条件と市場の補正は学習済みモデルと締切前の情報が揃った項目を反映します。p*を買い方の計算に使います。</p>
@@ -375,7 +378,8 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
     </section>
 
     </>}
-    <section className={`${panel} space-y-4`}>
+    </>}
+    <details open={!embedded || recordsOnly} className="rca-records"><summary className="text-sm font-semibold text-sky-800 mb-3">保存済み予想・バックアップ</summary><section className={`${panel} space-y-4`}>
       <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4 text-cyan-700" />固定予想・実購入・払戻</h3><div className="flex flex-wrap gap-2"><button type="button" className={secondary} disabled={!ledger.forecasts.length} onClick={() => { try { downloadFile(exportLedger(ledger), `race-record-${scope.raceDate}-${scope.raceId}.json`) } catch (error) { setStorageError(error.message) } }}><Download className="h-4 w-4" />JSONを書き出す</button><label className={`${secondary} ${importing || saving || loaded.error ? 'opacity-40' : 'cursor-pointer'}`}><Upload className="h-4 w-4" />{importing ? '照合中…' : '記録を取り込む'}<input type="file" accept="application/json,.json" className="sr-only" disabled={importing || saving || Boolean(loaded.error)} onChange={handleImport} /></label></div></div>
       <p className="text-xs text-slate-500">ブラウザに保存し、ログイン中の本人専用クラウドへ同期します。予想は購入として計上せず、訂正も元記録を残します。通信できない間の記録は次の同期で再送します。JSONでも書き出せます。</p>
       {!ledger.forecasts.length ? <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">固定保存した予想はまだありません。</p> : <>
@@ -387,14 +391,14 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
           {receivedAt && <p className="mt-2 text-xs font-semibold text-cyan-800">締切前受領 {formatRaceTime(receivedAt)}</p>}
           {!forecast.parameters.anchorSelection && <p className="mt-2">{forecast.allocations.map(ticket => `${label(ticket)} ${yen(ticket.stake)}`).join(' ／ ') || '見送り'}</p>}
           {forecast.note && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{forecast.note}</p>}</div>}
-        <details open={!anchorMode} className="space-y-3">
+        <details open={recordsOnly || !anchorMode} className="space-y-3">
           <summary className="cursor-pointer text-sm font-semibold text-sky-800">購入後の記録・払戻</summary>
         {forecast && <PurchaseEditor key={`${forecast.id}:${purchase?.id ?? 'new'}`} forecast={forecast} purchase={purchase} disabled={Boolean(loaded.error) || saving} onSave={(tickets, note) => { const next = appendPurchase(ledger, { forecastId: forecast.id, tickets, note, replacesId: purchase?.id ?? null }); return persist(next.ledger, '実購入の記録を保存しました。') }} />}
         {activePurchases(ledger).map(item => <SettlementEditor key={`${item.id}:${latestSettlement(ledger, item.id)?.id ?? 'new'}`} purchase={item} settlement={latestSettlement(ledger, item.id)} payoutEvent={payoutEvent} disabled={Boolean(loaded.error) || saving} onSave={(payouts, note, source) => { const latest = latestSettlement(ledger, item.id); const next = appendSettlement(ledger, { purchaseId: item.id, payouts, note, source, replacesId: latest?.id ?? null }); return persist(next.ledger, '正式払戻の記録を保存しました。') }} />)}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric title="実購入の総額" value={yen(totals.invested)} detail={`未精算 ${totals.pendingCount}件`} /><Metric title="精算済みの払戻" value={yen(totals.payout)} detail={`精算した購入 ${yen(totals.settledInvested)}`} /><Metric title="精算済み損益" value={yen(totals.profit)} /><Metric title="実回収率" value={pct(totals.returnRate)} detail="未精算分は含みません" /></div>
         </details>
       </>}
-    </section>
+    </section></details>
   </div>
 }
 
