@@ -1,10 +1,10 @@
-import { Target, LayoutDashboard, History, Database, LogOut, Gauge, Route, TrendingUp } from 'lucide-react'
+import { Target, LayoutDashboard, History, Database, LogOut, Gauge, Route, TrendingUp, Layers } from 'lucide-react'
 
 const mainItems = [
   ['today', '本日のレース', LayoutDashboard], ['anchors', '予想・軸選択', Target],
   ['forecastReview', '振り返り', History], ['automation', 'データ管理', Database],
 ]
-const raceItems = [['anchors', '軸候補', Target], ['ability', '能力・適性', Gauge], ['winOdds', 'オッズ推移', TrendingUp], ['pace', '展開・馬場', Route]]
+const raceItems = [['groups', 'グループ・買い目', Layers], ['anchors', '軸候補', Target], ['ability', '能力・適性', Gauge], ['winOdds', 'オッズ推移', TrendingUp], ['pace', '展開・馬場', Route]]
 export const isRacePage = tab => raceItems.some(([id]) => id === tab)
 
 export default function WorkspaceShell({ tab, onNavigate, onLogout, email, children, raceHeader, footer }) {

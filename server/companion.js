@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { SINGLE_ANCHOR_METHOD } from '../src/anchorAssessment.js'
 import { validateForecastReview } from '../src/forecastReview.js'
 import { validateModel } from '../src/modelStore.js'
-import { validateLedger, emptyLedger, importLedger, parseRaceObservations } from '../src/forecastLedger.js'
+import { validateLedger, emptyLedger, importLedger, parseRaceObservations, LEDGER_COLLECTIONS } from '../src/forecastLedger.js'
 import { importOddsSnapshots } from '../src/oddsHistory.js'
 import { decisionCutoff, japanRaceDay, raceDateISO, snapshotTiming, validTimestamp } from '../src/raceTime.js'
 
@@ -188,10 +188,11 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
   }
   async function dashboardRace(item, reviewRow, timestamp) {
     const { id, raceDate } = item, base = racePrefix(id, raceDate)
-    const [observations, forecasts, receipts] = await Promise.all([
+    const [observations, forecasts, receipts, groupPlans] = await Promise.all([
       list(`${base}/observations`, { limit: 1, column: 'created_at', order: 'desc' }),
       list(`${base}/ledger/forecasts`, { limit: 1 }),
       list(`${base}/ledger/receipts`, { limit: 1 }),
+      list(`${base}/ledger/groupPlans`, { limit:1 }),
     ])
     // Collector updates carry cumulative snapshots for the race. Use one published payload.
     const [stored, receipt] = await Promise.all([
@@ -210,7 +211,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       && Object.keys(row.odds).length === field.length && field.every(no => Object.hasOwn(row.odds, no))
       && snapshotTiming(row, race).eligible && Date.parse(row.retrievedAt) <= timestamp)
       .sort((a, b) => Date.parse(b.retrievedAt) - Date.parse(a.retrievedAt))[0]
-    return { ...race, oddsRetrievedAt: odds?.retrievedAt ?? null, hasForecast: forecasts.length > 0 || Boolean(receipt),
+    return { ...race, oddsRetrievedAt: odds?.retrievedAt ?? null, ...(groupPlans.length ? { hasGroupPlan:true } : {}), hasForecast: forecasts.length > 0 || groupPlans.length > 0 || Boolean(receipt),
       receipt: receipt ? { ownerId, raceId: id, raceDate, forecastId: receipt.forecastId, receivedAt: receipt.receivedAt } : null,
       review: reviewRow ? { forecastId: reviewRow.forecastId, state: reviewRow.state } : null }
   }
@@ -301,7 +302,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
   }
   async function readLedger(scope) {
     const ledger = emptyLedger(scope), base = `${racePrefix(scope.raceId, scope.raceDate)}/ledger`
-    for (const kind of ['forecasts', 'purchases', 'settlements']) {
+    for (const kind of LEDGER_COLLECTIONS) {
       const rows = await list(`${base}/${kind}`, { limit: 500, complete: true })
       const records = await Promise.all(rows.map(row => store.get(row.path)))
       if (records.some(record => !record || record.ownerId !== ownerId || record.scope?.raceId !== scope.raceId || record.scope?.raceDate !== scope.raceDate || record.kind !== kind)) conflict('保存済み記録の範囲が一致しません。')
@@ -312,6 +313,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
         const index = remaining.findIndex(record => !(kind === 'forecasts' ? record.parentId : record.replacesId) || ids.has(kind === 'forecasts' ? record.parentId : record.replacesId))
         if (index < 0) conflict('訂正履歴の参照を復元できません。')
         const [record] = remaining.splice(index, 1)
+        if (!ledger[kind]) ledger[kind] = []
         ledger[kind].push(record); ids.add(record.id)
       }
     }
@@ -375,7 +377,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     return { ...response, race: latest ? { ...latest.race, id: raceId, raceDate } : null,
       snapshots: uniqueRecords(records.flatMap(record => record.race.snapshots), 'id'),
       observations: uniqueRecords(records.flatMap(record => record.race.observations), 'eventId'),
-      context: latest?.context ?? null, results: latest?.results ?? null, ledger: saved.ledger, receipts: Object.fromEntries((saved.receipts ?? []).map(receipt => [receipt.forecastId,receipt])), conflicts: [] }
+      context: latest?.context ?? null, results: latest?.results ?? null, ledger: saved.ledger, groupReceipts: saved.groupReceipts ?? {}, receipts: Object.fromEntries((saved.receipts ?? []).map(receipt => [receipt.forecastId,receipt])), conflicts: [] }
   }
   async function saveLedger(input) {
     const startedAt = now()
@@ -389,8 +391,8 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     try { merged = importLedger(previous, JSON.stringify(input)) } catch { conflict('記録または訂正履歴が競合しています。先に最新の記録を同期してください。') }
     const base = `${racePrefix(scope.raceId, scope.raceDate)}/ledger`
     await immutable(`${base}/archives/${contentHash(input)}.json`, { schemaVersion: 1, ownerId, ledger: input })
-    for (const kind of ['forecasts', 'purchases', 'settlements']) {
-      for (const record of merged[kind]) {
+    for (const kind of LEDGER_COLLECTIONS) {
+      for (const record of merged[kind] ?? []) {
         // Reserve IDs across record kinds as well as across stale clients. A failed attempt can be retried identically.
         await immutable(`${base}/ids/${keyHash(record.id)}.json`, { kind, record })
         const semanticId = kind === 'settlements' ? record.replacesId ? `replace:${record.replacesId}` : `purchase:${record.purchaseId}`
@@ -432,7 +434,26 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       const saved = await store.putImmutable(`${base}/receipts/${keyHash(record.id)}.json`, receipt)
       receipts[record.id] = saved.created ? receipt : saved.existing
     }
-    return { ok: true, ledger: await readLedger(scope), receipts: { ...receipts } }
+    // Group decisions have no model probabilities and never enter forecast calibration.
+    const groupReceipts = Object.create(null)
+    const groupCandidates = (input.groupPlans ?? []).filter(p => p.mode === 'live')
+    const groupData = groupCandidates.length ? await get(scope) : null
+    for (const plan of groupCandidates) {
+      const path = `${base}/group-receipts/${keyHash(plan.id)}.json`
+      const previousReceipt = await store.get(path)
+      if (previousReceipt) { groupReceipts[plan.id] = previousReceipt; continue }
+      const source = groupData.snapshots?.find(s => s.id === plan.snapshot.id && s.kind === 'observed')
+      const cutoff = decisionCutoff(groupData.race)
+      if (!source || !cutoff || cutoff !== plan.cutoffAt || !snapshotTiming(source,groupData.race).eligible
+        || Date.parse(plan.createdAt) > startedAt || startedAt > Date.parse(cutoff)
+        || contentHash(source) !== contentHash(plan.snapshot)
+        || plan.field.length !== Object.keys(source.odds).length || plan.field.some(h => !Object.hasOwn(source.odds,h.no))) continue
+      const receipt = { ownerId, raceId:scope.raceId, raceDate:scope.raceDate, planId:plan.id, sourceId:source.id,
+        receivedAt:new Date(startedAt).toISOString(), cutoffAt:cutoff }
+      const saved = await store.putImmutable(path,receipt)
+      groupReceipts[plan.id] = saved.created ? receipt : saved.existing
+    }
+    return { ok: true, ledger: await readLedger(scope), receipts: { ...receipts }, groupReceipts: { ...groupReceipts } }
   }
   async function pullLedger({ raceId, raceDate }, includeDecisions = false) {
     validateRaceKey(raceId, raceDate)
@@ -445,6 +466,12 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     // Existing Python workers attest and train original forecasts only. Owner GET may also show decision receipts.
     const visibleReceipts = includeDecisions ? receipts : receipts.filter(receipt => originalIds.has(receipt.forecastId))
     const response = { schemaVersion: 1, ledger, ...(visibleReceipts.length ? { receipts: visibleReceipts } : {}), conflicts: [] }
+    if (includeDecisions) {
+      const rows = await list(`${racePrefix(raceId,raceDate)}/ledger/group-receipts`, { limit:500, complete:true })
+      const groups = await Promise.all(rows.map(row => store.get(row.path)))
+      if (groups.some(r => !r || r.ownerId !== ownerId || r.raceId !== raceId || r.raceDate !== raceDate)) conflict('グループ判断の受領範囲が一致しません。')
+      response.groupReceipts = Object.fromEntries(groups.map(r => [r.planId,r]))
+    }
     if (Buffer.byteLength(JSON.stringify(response)) > MAX_BODY_BYTES) throw new ApiError(413, 'too_large', 'このレースの記録は同期上限を超えています。記録は保持しています。')
     return response
   }

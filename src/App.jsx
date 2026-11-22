@@ -7,6 +7,7 @@ import DataManagement from './DataManagement.jsx'
 import WorkspaceShell, { isRacePage } from './WorkspaceShell.jsx'
 import ReviewWorkspace from './ReviewWorkspace.jsx'
 import RaceDayDashboard from './RaceDayDashboard.jsx'
+import GroupWorkspace from './GroupWorkspace.jsx'
 import { useCompanion } from './useCompanion.js'
 import { applyCloudData, fetchCloudRace, fetchRaceDashboard, enrichCloudHorses, syncLedgerToCloud, requestRaceCapture } from './cloudStore.js'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
@@ -801,7 +802,7 @@ function MainApp({ session, onLogout }) {
     const raceKey = item.id ?? item.raceId
     try {
       setInitialForecastId(fromDashboard ? item.receipt?.forecastId ?? '' : '')
-      if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, 'anchors', fromDashboard ? item : null); return }
+      if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, item.hasGroupPlan ? 'groups' : 'anchors', fromDashboard ? item : null); return }
       const metadata = { ...item, id: raceKey }
       const payload = await fetchCloudRace(metadata)
       const received = payload.race
@@ -810,7 +811,7 @@ function MainApp({ session, onLogout }) {
       setRaceInfo({ ...received, id: raceKey, liveOnly: true, place: received.place ?? PLACE_NAMES[received.placeCode],
         surface: received.surface ?? SURFACE_NAMES[received.surfaceCode] })
       setHorses(received.horses.map(horse => ({ ...horse, id: horse.id ?? `${raceKey}-${horse.no}`, pastRuns: horse.pastRuns ?? [] })))
-      setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab('anchors')
+      setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab(item.hasGroupPlan ? 'groups' : 'anchors')
     } catch (error) {
       if (fromDashboard) throw error
       alert(error.message)
@@ -1699,6 +1700,7 @@ function MainApp({ session, onLogout }) {
           {tab === 'races' && <><div className="rca-page-title"><div><h1>過去開催・PACIレース一覧</h1><p>既存DBと同期済み開催を確認できます。</p></div><button type="button" className="rca-secondary" onClick={() => setTab('today')}>本日のレースへ</button></div><TabRaces /></>}
           {tab === 'forecastReview' && <ReviewWorkspace key={`${reviewForecastId}:${sync.revision}`} userId={session.user.id} initialForecastId={reviewForecastId}
             review={sync.data?.forecastReview} loading={sync.loading} error={sync.error} onRefresh={refreshCompanion}
+            onOpenGroupRecords={async scope => { await loadCollectedRace({ id:scope.raceId,raceDate:scope.raceDate },{ fromDashboard:true }); setTab('groups') }}
             onOpenRecords={async (scope,forecastId) => { await loadCollectedRace({ id: scope.raceId, raceDate: scope.raceDate }, { fromDashboard: true }); setInitialForecastId(forecastId ?? ''); setTab('records') }} />}
           {tab === 'automation' && <DataManagement userId={session.user.id} race={raceInfo} sync={sync} onRefresh={refreshCompanion} onSelectRace={loadCollectedRace}
             onRefreshDb={refreshDb} onOpenArchive={() => openRaceList()} diagnostics={`DB ${diag?.latestDate ?? '未取得'} / ${diag?.evaluator ?? '評価版未取得'}`} />}
@@ -1723,6 +1725,11 @@ function MainApp({ session, onLogout }) {
             initialForecastId={initialForecastId}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
             onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
+          {tab === 'groups' && (raceInfo ? <GroupWorkspace race={analysisRace} horses={analysisHorses} statistics={analysisStatistics}
+            userId={session.user.id} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
+            syncedGroupReceipts={sync.data?.groupReceipts}
+            loading={sync.loading}
+            review={sync.error ? null : sync.data?.forecastReview} onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
           {tab === 'anchors' && (raceInfo ? <FinalForecastPage anchorMode embedded
             key={`anchors:${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={analysisRace} horses={analysisHorses}
             userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
