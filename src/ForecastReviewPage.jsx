@@ -19,14 +19,14 @@ function ScoreTable({ comparison, caption }) {
   </table></div>
 }
 
-export default function ForecastReviewPage({ review, loading, error, onRefresh, initialForecastId = '' }) {
+export default function ForecastReviewPage({ review, loading, error, onRefresh, initialForecastId = '', view = 'all' }) {
   const [selected, setSelected] = useState(initialForecastId)
   const [versionId, setVersionId] = useState('')
   const race = selected ? review?.races.find(row => row.forecastId === selected) : review?.races[0]
   const version = review?.versions.find(item => item.id === versionId) ?? review?.versions[0]
   const bins = version?.evaluation?.after?.bins ?? []
   return <div className="space-y-4">
-    <section className={panel} aria-labelledby="review-title">
+    {view !== 'learning' && <section className={panel} aria-labelledby="review-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 id="review-title" className="text-xl font-bold text-[#0B2545]">予想の振り返り</h1>
         {onRefresh && <button type="button" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold disabled:opacity-50" onClick={onRefresh} disabled={loading}>{loading ? '同期中…' : '振り返りを同期'}</button>}
@@ -39,12 +39,12 @@ export default function ForecastReviewPage({ review, loading, error, onRefresh, 
             ['実際に保存した予想の1位的中率', percent(review.actual?.topPickRate)], ['集計時刻', formatRaceTime(review.generatedAt)]].map(([name, value]) =>
             <div key={name} className="rounded-xl bg-slate-50 p-3"><dt className="text-xs text-slate-600">{name}</dt><dd className="mt-1 font-semibold text-[#0B2545]">{value}</dd></div>)}
         </dl>
-        {!race && <p className="mt-4 text-sm text-slate-600">{selected ? '選んだ予想の振り返りを確認中です。' : '最終予想・買い目でACE原案を固定保存すると、ここで着順と照合できます。'}</p>}
+        {!race && <p className="mt-4 text-sm text-slate-600">{selected ? '選んだ予想の振り返りを確認中です。' : '軸候補で判断を固定保存すると、ここで着順と照合できます。'}</p>}
         {!race && selected && review.races.length > 0 && <button type="button" className="mt-2 text-sm font-semibold text-sky-800 underline" onClick={() => setSelected('')}>取り込み済みの振り返りを見る</button>}
         {Object.keys(review.sourceCounts ?? {}).length > 0 && <p className="mt-3 text-xs text-slate-600">取込済みの記録数 {Object.entries(review.sourceCounts).map(([name, count]) => `${name} ${count}`).join(' ／ ')}</p>}
       </>}
-    </section>
-    {race && <section className={panel} aria-labelledby="review-race">
+    </section>}
+    {view !== 'learning' && race && <section className={panel} aria-labelledby="review-race">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="review-race" className="font-bold text-[#0B2545]">固定予想と着順</h2>
         <label className="flex flex-wrap items-center gap-2 text-sm">対象レース
@@ -68,7 +68,7 @@ export default function ForecastReviewPage({ review, loading, error, onRefresh, 
         <tbody>{[...race.field].sort((a, b) => b.probability - a.probability).map(h => <tr key={h.no} className={h.rank === 1 ? 'bg-cyan-50' : 'border-b border-slate-100'}><th scope="row" className="py-2 font-medium">{h.no}番</th><td>{percent(h.probability)}</td><td>{h.rank ?? '—'}</td></tr>)}</tbody>
       </table></div>
     </section>}
-    {review && <section className={panel} aria-labelledby="review-model">
+    {view !== 'review' && review && <section className={panel} aria-labelledby="review-model">
       <h2 id="review-model" className="font-bold text-[#0B2545]">確率校正とモデル採用履歴</h2>
       <p className="mt-2 text-sm text-slate-600">採用中 {review.active.length}版。学習には最低40レース・10開催日、採否にはその後の最低20レース・5開催日が必要です。</p>
       {review.statesByStack.map(group => <div key={group.stack} className="my-3">
