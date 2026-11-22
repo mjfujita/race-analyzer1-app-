@@ -229,6 +229,10 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     return { schemaVersion: 1, date, lastMeeting, lastDataSentAt,
       schedule: races.length ? 'scheduled' : await schedule(date), races: races.map(race => rows.get(race.id)) }
   }
+  async function getCatalog() {
+    const date=japanRaceDay(now())
+    return {schemaVersion:1,date,availableRaces:await availableRaces(date)}
+  }
   function checkCommand(command) {
     if (!plain(command) || command.ownerId !== ownerId || !/^\d{1,12}-[a-f0-9]{64}$/.test(command.id ?? '')
       || !Number.isSafeInteger(command.sequence) || command.sequence < 1 || command.sequence > 1_000_000
@@ -483,7 +487,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       .map(row => validateRaceKey(row.name.slice(0, -5), raceDate))))
     return { schemaVersion: 1, races: races.flat() }
   }
-  return { ingestBundle, get, getDashboard, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand }
+  return { ingestBundle, get, getDashboard, getCatalog, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand }
 }
 
 export function safeTokenEqual(left, right) {
@@ -530,6 +534,7 @@ export function createCompanionHandler({ service, authenticateUser, ownerId, com
       }
       if (req.method === 'GET') {
         const query = req.query ?? Object.fromEntries(new URL(req.url, 'https://local.invalid').searchParams)
+        if (query.catalog === '1' && Object.keys(query).length === 1) return res.status(200).json(await service.getCatalog())
         if (query.dashboard === '1' && Object.keys(query).length === 1) return res.status(200).json(await service.getDashboard())
         if (Object.keys(query).some(key => !['raceId', 'raceDate'].includes(key)) || Object.values(query).some(value => typeof value !== 'string')) invalid('取得条件が不正です。')
         return res.status(200).json(await service.get(query))

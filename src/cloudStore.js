@@ -37,6 +37,10 @@ export function fetchRaceDashboard(signal) {
   return request('/api/companion?dashboard=1', { signal })
 }
 
+export function fetchRaceCatalog(signal) {
+  return request('/api/companion?catalog=1', { signal })
+}
+
 export function requestRaceCapture(race) {
   return request('/api/companion', { body: { action: 'request-capture', raceId: String(race.id), raceDate: raceDateISO(race)?.replaceAll('-', '') } })
 }
