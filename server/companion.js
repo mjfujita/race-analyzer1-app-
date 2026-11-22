@@ -507,21 +507,26 @@ async function readBody(req) {
   boundedJson(raw)
   return raw
 }
-export function createCompanionHandler({ service, authenticateUser, ownerId, companionToken }) {
+export function createCompanionHandler({ service, authenticateUser, ownerId, companionToken, authenticateDevice, checkDeviceWrite }) {
   return async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store, max-age=0')
-    res.setHeader('Vary', 'Authorization')
+    res.setHeader('Vary', 'Authorization, Cookie')
     res.setHeader('X-Content-Type-Options', 'nosniff')
     try {
       if (!['GET', 'POST'].includes(req.method)) { res.setHeader('Allow', 'GET, POST'); throw new ApiError(405, 'method_not_allowed', 'この操作は利用できません。') }
       const authorization = req.headers?.authorization
       const token = typeof authorization === 'string' && /^Bearer [^\s]+$/i.test(authorization) ? authorization.slice(7) : null
-      if (!token) throw new ApiError(401, 'unauthorized', 'ログインが必要です。')
       const isCompanion = req.method === 'POST' && safeTokenEqual(token, companionToken)
       if (!isCompanion) {
-        const user = await authenticateUser(token)
+        const deviceUser = authenticateDevice ? await authenticateDevice(req) : null
+        if (!token && !deviceUser) throw new ApiError(401, 'unauthorized', '端末の承認が必要です。')
+        const user = deviceUser ?? await authenticateUser(token)
         if (!user?.id) throw new ApiError(401, 'unauthorized', 'ログインを確認できません。')
         if (user.id !== ownerId) throw new ApiError(403, 'forbidden', 'このデータへのアクセス権がありません。')
+        if (deviceUser && req.method === 'POST') {
+          if (!checkDeviceWrite) throw new ApiError(403,'invalid_origin','この画面から操作してください。')
+          checkDeviceWrite(req)
+        }
       }
       if (req.method === 'GET') {
         const query = req.query ?? Object.fromEntries(new URL(req.url, 'https://local.invalid').searchParams)

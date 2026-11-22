@@ -17,6 +17,7 @@ async function connect(page, handler, stamp = now) {
   }, { ownerId, token })
   // The dashboard uses the private companion API independently of the PACI database.
   await page.route('https://*.supabase.co/storage/**', route => route.fulfill({ status: 503, json: { message: 'fixture database unavailable' } }))
+  await page.route('**/api/device',route => route.fulfill({ json:{session:route.request().headers().authorization===`Bearer ${token}` ? {user:{id:ownerId},device:null} : null} }))
   await page.route('**/api/companion*', async route => {
     const incoming = route.request()
     const response = await request(handler, {
@@ -125,9 +126,10 @@ test('the home distinguishes no meeting, an unconfirmed schedule, and API errors
   await expect(page.getByRole('heading', { name: '本日の開催なし' })).toHaveCount(0)
 })
 
-test('signed-out visitors see the login screen before the dashboard', async ({ page }) => {
+test('unapproved visitors see device approval before the dashboard', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'ログイン', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'この端末は未承認です', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'ログイン', exact: true })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: '本日のレース', exact: true })).toHaveCount(0)
 })
 

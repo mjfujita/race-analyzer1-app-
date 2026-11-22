@@ -105,3 +105,12 @@ button:disabled { cursor: not-allowed; }
  .rca-race-nav { overflow-x:auto; justify-content:flex-start; white-space:nowrap; }
  .rca-race-nav button { flex-shrink:0; }
 }
+
+.rca-device-gate { min-height:100vh; background:#f4f7fb; padding:40px 18px; display:flex; align-items:center; justify-content:center; }
+.rca-device-gate>section { width:100%; max-width:500px; }
+.rca-device-gate h1 { font-size:25px; color:#0b2545; font-weight:800; margin:18px 0; }
+.rca-device-gate>section>div { min-height:0; padding:0; margin-top:20px; }
+.rca-device-pair { display:flex; align-items:center; flex-direction:column; gap:10px; max-width:100%; }
+.rca-device-pair img { width:280px; max-width:100%; height:auto; }
+.rca-device-list article { display:flex; gap:16px; justify-content:space-between; align-items:center; padding:20px 0; border-bottom:1px solid #dce5ef; }
+@media(max-width:639px) { .rca-device-list article { display:block; }.rca-device-list article>div:last-child { margin-top:12px; }.rca-devices input { display:block; margin:10px 0; width:100%; } }

@@ -1,4 +1,4 @@
-import { supabase } from './supabase.js'
+import { ownerHeaders } from './deviceAuth.js'
 import { oddsStorageKey, importOddsSnapshots } from './oddsHistory.js'
 import { loadModel, saveModel, validateModel } from './modelStore.js'
 import { ledgerScope, readLedger, importLedger, writeLedgerExclusive, parseRaceObservations, mergeRaceObservations } from './forecastLedger.js'
@@ -19,10 +19,8 @@ export function readCloudRace(userId, race, storage = globalThis.localStorage) {
 }
 
 async function request(path, { body, signal } = {}) {
-  const { data, error } = await supabase.auth.getSession()
-  if (error || !data.session?.access_token) throw new Error('同期にはログインが必要です。')
-  const response = await fetch(path, { method: body ? 'POST' : 'GET', signal, cache: 'no-store',
-    headers: { Authorization: `Bearer ${data.session.access_token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+  const response = await fetch(path, { method: body ? 'POST' : 'GET', signal, cache: 'no-store',credentials:'same-origin',
+    headers: { ...await ownerHeaders(), ...(body ? { 'Content-Type': 'application/json','X-Race-Device':'1' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}) })
   let payload
   try { payload = await response.json() } catch { throw new Error('同期サーバーから有効な応答を取得できませんでした。') }
