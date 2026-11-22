@@ -50,6 +50,8 @@ test('invalid budget, incomplete data, corrupt storage, and unauthenticated stat
   await page.goto('/market-preview.html?state=error')
   await expect(page.getByRole('alert')).toBeVisible()
   await page.goto('/')
+  await expect(page.getByRole('heading',{name:'この端末は未承認です'})).toBeVisible()
+  await page.getByRole('button',{name:'本人確認による復旧'}).click()
   await expect(page.getByText('メールアドレス',{exact:true})).toBeVisible()
 })
 

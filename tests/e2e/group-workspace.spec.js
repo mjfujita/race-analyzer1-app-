@@ -111,6 +111,7 @@ test('browser to authenticated API to immutable store: offline retry obtains rec
     access_token:'group-test-token',refresh_token:'synthetic-refresh',expires_at:Date.now()/1000+3600,user:{ id:ownerId,email:'test@example.invalid' },
   })),{ ownerId })
   let failUpload = true
+  await page.route('**/api/device',route => route.fulfill({ json:{session:route.request().headers().authorization==='Bearer group-test-token' ? {user:{id:ownerId},device:null} : null} }))
   await page.route('**/api/companion*',async route => {
     const req = route.request()
     if (req.method() === 'POST' && failUpload) return route.fulfill({ status:503,json:{ error:{ message:'synthetic offline' } } })

@@ -1,6 +1,7 @@
 import initSqlJs from 'sql.js/dist/sql-wasm.js'
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url'
 import { supabase, RACE_DB_BUCKET, RACE_DB_OBJECT } from '../supabase'
+import { raceDbDownloadUrl } from '../deviceAuth.js'
 
 const CACHE_KEY = 'race-db-cache-v1'
 const CACHE_META_KEY = 'race-db-cache-meta-v1'
@@ -41,13 +42,16 @@ async function saveToCache(buf, etag) {
 }
 
 async function fetchRaceDb(onProgress) {
-  const { data: signed, error } = await supabase.storage
-    .from(RACE_DB_BUCKET)
-    .createSignedUrl(RACE_DB_OBJECT, 60)
-  if (error || !signed?.signedUrl) {
-    throw new Error('race.db の署名URL取得に失敗: ' + (error?.message || 'unknown'))
+  const { data: session }=await supabase.auth.getSession()
+  let signedUrl
+  if (session.session?.access_token) {
+    const { data:signed,error }=await supabase.storage.from(RACE_DB_BUCKET).createSignedUrl(RACE_DB_OBJECT,60)
+    if (error || !signed?.signedUrl) throw new Error('race.db の署名URL取得に失敗: '+(error?.message || 'unknown'))
+    signedUrl=signed.signedUrl
+  } else {
+    signedUrl=await raceDbDownloadUrl()
   }
-  const res = await fetch(signed.signedUrl)
+  const res = await fetch(signedUrl)
   if (!res.ok) throw new Error('race.db ダウンロード失敗: HTTP ' + res.status)
 
   const totalCompressed = Number(res.headers.get('Content-Length')) || 0

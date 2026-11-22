@@ -8,6 +8,8 @@ import WorkspaceShell, { isRacePage } from './WorkspaceShell.jsx'
 import ReviewWorkspace from './ReviewWorkspace.jsx'
 import RaceDayDashboard from './RaceDayDashboard.jsx'
 import GroupWorkspace from './GroupWorkspace.jsx'
+import DeviceManager, { DeviceGate } from './DeviceManager.jsx'
+import { deviceRequest } from './deviceAuth.js'
 import { useCompanion } from './useCompanion.js'
 import { applyCloudData, fetchCloudRace, fetchRaceDashboard, enrichCloudHorses, syncLedgerToCloud, requestRaceCapture } from './cloudStore.js'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
@@ -1704,6 +1706,7 @@ function MainApp({ session, onLogout }) {
             onOpenRecords={async (scope,forecastId) => { await loadCollectedRace({ id: scope.raceId, raceDate: scope.raceDate }, { fromDashboard: true }); setInitialForecastId(forecastId ?? ''); setTab('records') }} />}
           {tab === 'automation' && <DataManagement userId={session.user.id} race={raceInfo} sync={sync} onRefresh={refreshCompanion} onSelectRace={loadCollectedRace}
             onRefreshDb={refreshDb} onOpenArchive={() => openRaceList()} diagnostics={`DB ${diag?.latestDate ?? '未取得'} / ${diag?.evaluator ?? '評価版未取得'}`} />}
+          {tab === 'devices' && <DeviceManager />}
           {tab === 'analysis' && <TabAnalysis />}
           {tab === 'ability' && <AbilityPage workspace race={analysisRace} horses={analysisHorses} userId={session.user.id}
             cloudRevision={sync.revision} statistics={analysisStatistics}
@@ -1752,12 +1755,33 @@ function MainApp({ session, onLogout }) {
 export default function App() {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [pairing,setPairing]=useState(() => new URLSearchParams(location.hash.slice(1)).get('device-pair'))
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoading(false) })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
-    return () => subscription.unsubscribe()
+    let active=true
+    const refresh=async () => {
+      try {
+        const data=await deviceRequest()
+        if(active)setSession(data.session)
+      } catch {
+        if(active)setSession(null)
+      } finally {if(active)setLoading(false)}
+    }
+    void refresh()
+    const changed=() => {setPairing(false);void refresh()}
+    const hashChanged=() => {
+      const code=new URLSearchParams(location.hash.slice(1)).get('device-pair')
+      if(code)setPairing(code)
+    }
+    globalThis.addEventListener('race-device-session-changed',changed)
+    globalThis.addEventListener('hashchange',hashChanged)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {setTimeout(() => {if(active)void refresh()},0)})
+    const interval=setInterval(() => {if(!document.hidden)void refresh()},60000)
+    return () => {active=false;subscription.unsubscribe();clearInterval(interval);globalThis.removeEventListener('race-device-session-changed',changed);globalThis.removeEventListener('hashchange',hashChanged)}
   }, [])
-  const logout = async () => { await supabase.auth.signOut(); setSession(null) }
+  const logout = async () => {
+    if(!window.confirm('この端末の承認を解除しますか？ 保存した予想・購入記録は残ります。'))return
+    try {await deviceRequest('logout');await supabase.auth.signOut({scope:'local'});setSession(null)}catch{window.alert('端末の解除を完了できませんでした。端末認証の画面から再度お試しください。')}
+  }
   if (loading) return <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center"><div className="w-10 h-10 border-4 border-[#4A90E2] border-t-transparent rounded-full animate-spin" /></div>
-  return session ? <MainApp key={session.user.id} session={session} onLogout={logout} /> : <LoginPage onLogin={setSession} />
+  return session && !pairing ? <MainApp key={session.user.id} session={session} onLogout={logout} /> : <DeviceGate key={pairing || 'approval'} recovery={<LoginPage onLogin={() => globalThis.dispatchEvent(new Event('race-device-session-changed'))} />} />
 }
