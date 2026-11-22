@@ -11,6 +11,7 @@ import GroupWorkspace from './GroupWorkspace.jsx'
 import DeviceManager, { DeviceGate } from './DeviceManager.jsx'
 import { deviceRequest } from './deviceAuth.js'
 import { useCompanion } from './useCompanion.js'
+import { useRaceCatalog } from './useRaceCatalog.js'
 import { applyCloudData, fetchCloudRace, fetchRaceDashboard, enrichCloudHorses, syncLedgerToCloud, requestRaceCapture } from './cloudStore.js'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
@@ -677,6 +678,7 @@ function MainApp({ session, onLogout }) {
   const [summary, setSummary] = useState({})
   const [currentRaceKey, setCurrentRaceKey] = useState(null)
   const { sync, refresh: refreshCompanion } = useCompanion({ userId: session.user.id, race: raceInfo, horses })
+  const {catalog,refreshCatalog}=useRaceCatalog(session.user.id)
   const [captureMessage, setCaptureMessage] = useState('')
   const [capturePending, setCapturePending] = useState(false)
   async function requestLatestCapture() {
@@ -755,7 +757,6 @@ function MainApp({ session, onLogout }) {
     try {
       const ds = dataApi.getDates(db)
       setDates(ds)
-      if (ds.length > 0) setSelectedDate((cur) => cur || ds[0].date)
     } catch (err) { console.error(err) }
   }, [db])
 
@@ -884,8 +885,8 @@ function MainApp({ session, onLogout }) {
     return list
   }, [roleFilter, sortKey, search, horses])
 
-  const openRaceList = (day = dashboard.data?.date) => {
-    if (day && (dashboard.data?.races.some(race => race.raceDate === day) || dates.some(item => item.date === day))) setSelectedDate(day)
+  const openRaceList = (day = catalog.data?.date ?? dashboard.data?.date) => {
+    if (day && (catalog.data?.availableRaces.some(race=>race.raceDate===day) || dashboard.data?.races.some(race => race.raceDate === day) || dates.some(item => item.date === day))) setSelectedDate(day)
     setTab('races')
   }
   const openForecastReview = (forecastId = '') => {
@@ -931,21 +932,21 @@ function MainApp({ session, onLogout }) {
   // タブ: レース一覧（シンプルな全レース開閉）
   // ================================================================
   const TabRaces = () => {
-    const [races, setRaces] = useState([])
-    const [stats, setStats] = useState(null)
-    useEffect(() => {
-      if (!selectedDate || !db) return
-      try { setRaces(dataApi.getRacesOfDate(db, selectedDate)); setStats(dataApi.getStats(db)) } catch (e) { console.error(e) }
-    }, [selectedDate])
-
-    const currentCloudRaces = (dashboard.data?.races ?? []).filter(race => race.raceDate === selectedDate)
+    const cloudRaces=catalog.data?.availableRaces ?? dashboard.data?.races ?? []
+    const dateCounts=new Map(dates.map(item=>[item.date,item.race_count]))
+    const cloudDates=new Map()
+    for(const race of cloudRaces){if(!cloudDates.has(race.raceDate))cloudDates.set(race.raceDate,new Set());cloudDates.get(race.raceDate).add(race.id)}
+    for(const [date,ids] of cloudDates)dateCounts.set(date,Math.max(dateCounts.get(date)??0,ids.size))
+    const listDates=[...dateCounts].map(([date,race_count])=>({date,race_count})).sort((a,b)=>b.date.localeCompare(a.date))
+    const archiveDate=listDates.some(item=>item.date===selectedDate) ? selectedDate : listDates[0]?.date
+    const races=db&&archiveDate ? dataApi.getRacesOfDate(db,archiveDate) : []
+    const stats=db ? dataApi.getStats(db) : null
+    const currentCloudRaces = cloudRaces.filter(race => race.raceDate === archiveDate)
     const allRaces = [...races, ...currentCloudRaces.filter(race => !races.some(row => row.race_key === race.id)).map(race => ({
       race_key: race.id, place_code: race.placeCode, place: race.place ?? PLACE_NAMES[race.placeCode],
       race_no: race.raceNo, race_name: race.name, post_time: race.postTime,
       surface: race.surface, distance: race.distance, field_size: race.fieldSize, cloudRace: race,
     }))].sort((a, b) => a.race_no - b.race_no)
-    const listDates = dashboard.data?.races.length && !dates.some(item => item.date === dashboard.data.date)
-      ? [{ date: dashboard.data.date, race_count: dashboard.data.races.length }, ...dates] : dates
     const groups = []
     const idx = new Map()
     for (const r of allRaces) {
@@ -955,26 +956,30 @@ function MainApp({ session, onLogout }) {
     }
     return (
       <div className="space-y-6 pb-12">
+        <div className="flex flex-wrap items-center gap-3"><button type="button" className="rca-secondary" disabled={catalog.loading} onClick={refreshCatalog}>開催一覧を再取得</button>{catalog.loading&&<p role="status" className="text-sm text-slate-600">本日の開催一覧を確認しています…</p>}</div>
+        {catalog.error&&<p role="alert" className="rca-error">本日の開催一覧を取得できませんでした。{catalog.error} 表示中のPACI一覧は保存済みの分です。</p>}
+        {catalog.data&&!catalog.loading&&!catalog.data.availableRaces.length&&<p role="status" className="rca-notice">本日の同期済みレースはまだありません。保存済みPACIから過去の開催を選べます。</p>}
         {(stats || listDates.length > 0) && (
           <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
             <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
               <span className="text-xs font-bold tracking-widest text-[#4A90E2] uppercase">JRDB 取り込みデータ</span>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-500">開催日</span>
-                <select value={selectedDate || ''} onChange={(e) => setSelectedDate(e.target.value)}
+                <label htmlFor="archive-date" className="text-xs font-bold text-slate-500">開催日</label>
+                <select id="archive-date" value={archiveDate || ''} disabled={catalog.loading&&!catalog.data} onChange={(e) => setSelectedDate(e.target.value)}
                   className="bg-white border border-slate-200 text-sm font-medium text-slate-800 py-1.5 px-3 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#4A90E2]">
                   {listDates.map((d) => <option key={d.date} value={d.date}>{fmtDate(d.date)} ({d.race_count}R)</option>)}
                 </select>
               </div>
             </div>
-            {stats && <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <section aria-label="選択開催の取込件数" className="grid grid-cols-2 gap-4 mb-4">{[['表示中のレース',allRaces.length],['登録頭数',allRaces.reduce((sum,r)=>sum+(Number(r.field_size)||0),0)]].map(([label,value])=><div key={label}><p className="text-xs text-slate-500 mb-1">{label}</p><p className="text-2xl font-bold text-[#0B2545] tabular-nums">{value.toLocaleString()}</p></div>)}</section>
+            {stats && <details className="text-sm"><summary className="cursor-pointer text-slate-500">保存済みPACI全体の集計</summary><div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mt-4">
               {[['レース総数', stats.race_count.toLocaleString()], ['登録馬数', stats.horse_count.toLocaleString()],
                 ['過去走レコード', stats.result_count.toLocaleString()]].map(([l, v]) => (
                 <div key={l}><div className="text-xs text-slate-500 font-medium mb-1">{l}</div><div className="text-2xl font-bold tabular-nums text-[#0B2545]">{v}</div></div>
               ))}
               <div><div className="text-xs text-slate-500 font-medium mb-1">対象期間</div>
                 <div className="text-sm font-bold tabular-nums text-slate-700 mt-1">{stats.date_range.earliest} 〜 {stats.date_range.latest}</div></div>
-            </div>}
+            </div></details>}
           </div>
         )}
         <div className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(230px,1fr))]">

@@ -104,6 +104,24 @@ test('empty dashboard distinguishes the published calendar and the absence of pr
   }
 })
 
+test('today catalog is owner-only and independent of forecast, ledger, and dashboard reads',async()=>{
+  const {service,handler,store}=setup()
+  await service.ingestBundle(bundle())
+  const query={catalog:'1'}
+  assert.equal((await request(handler,{query,token:null})).status,401)
+  assert.equal((await request(handler,{query,token:'other-token'})).status,403)
+  assert.equal((await request(handler,{query:{...query,raceDate:scope.raceDate}})).status,400)
+  const list=store.list
+  store.list=async(path,options)=>{
+    assert.match(path,/\/race-index\//)
+    return list(path,options)
+  }
+  const response=await request(handler,{query})
+  assert.equal(response.status,200)
+  assert.match(response.headers['Cache-Control'],/no-store/)
+  assert.deepEqual(response.body,{schemaVersion:1,date:scope.raceDate,availableRaces:[{id:scope.raceId,raceDate:scope.raceDate,name:'Synthetic',postTime:'1540',fieldSize:2}]})
+})
+
 test('JRA calendar separates JRA races from local simulcasts and rejects invalid responses', async () => {
   let calls = 0
   const feed = async url => {
