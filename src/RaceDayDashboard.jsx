@@ -31,7 +31,7 @@ function raceStatus(race, now) {
   if (race.saved === 'unknown') return { label: '予想の保存状況を確認中', action: 'forecast', text: 'レースを開く' }
   if (Number.isFinite(race.post) && race.post <= now) return { label: '結果照合待ち', action: 'automation', text: '取得状況を確認' }
   if (Number.isFinite(race.cutoff) && race.cutoff <= now) return { label: '判断締切を経過', action: 'forecast', text: 'レースを開く' }
-  if (race.oddsRetrievedAt) return { label: '単勝オッズ取得済み・予想未保存', action: 'forecast', text: '最終予想を開く' }
+  if (race.oddsRetrievedAt) return { label: '単勝オッズ取得済み・予想未保存', action: 'forecast', text: '軸候補を確認' }
   return { label: '単勝オッズ取得待ち', action: 'automation', text: '取得状況を確認' }
 }
 
@@ -92,7 +92,7 @@ export default function RaceDayDashboard({ userId, dashboard, placeNames, onNavi
         </div>
         <p className="mt-1 text-xs tabular-nums text-slate-600">単勝オッズ {timeLabel(next.oddsRetrievedAt)} 取得 · 予想未保存</p>
       </div>
-      <button type="button" className={primary} onClick={() => openRace(next)} disabled={Boolean(opening)}>{opening === next.id ? '読み込み中…' : '最終予想を開く'} {arrow}</button>
+      <button type="button" className={primary} onClick={() => openRace(next)} disabled={Boolean(opening)}>{opening === next.id ? '読み込み中…' : '軸候補を確認'} {arrow}</button>
     </section>}
     {races.length > 0 && <section aria-labelledby="race-progress-title" className={panel}>
       <h2 id="race-progress-title" className="font-bold text-[#0B2545]">{next ? 'ほかのレースの進捗' : 'レースの進捗'}</h2>

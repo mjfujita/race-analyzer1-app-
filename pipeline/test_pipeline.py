@@ -190,6 +190,70 @@ class SnapshotTests(unittest.TestCase):
 
 class LedgerTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('node'), 'Node optional for browser schema roundtrip')
+    def test_single_axis_place_value_and_skip_cross_language_roundtrip(self):
+        ledger = ledger_fixture()
+        record = ledger['forecasts'][0]
+        record['field'] = [{'no': n, 'probability': .2} for n in range(1, 6)]
+        record['parameters'].update(budget=0)
+        record['metrics']['unspent'] = 0
+        record['inputs'].update(winOdds={str(n): 2 for n in range(1, 6)}, releaseFieldSize=5,
+                                quotes=[{'type': '複勝', 'numbers': [1], 'odds': 3, 'upper': 5}])
+        record['inputs']['quoteObservedAt'] = record['inputs']['observedAt']
+        record['inputs']['quoteRetrievedAt'] = record['inputs']['retrievedAt']
+        record['inputs']['anchorTrendReference'] = {
+            **snapshot_fixture(), 'id': 'older-observation', 'time': '15:00',
+            'observedAt': '2026-11-15T15:00:00+09:00', 'retrievedAt': '2026-11-15T15:00:20+09:00',
+            'sourcePublishedAt': '2026-11-15T15:00:00+09:00', 'odds': {str(n): 3 for n in range(1, 6)}}
+        ledger['purchases'], ledger['settlements'] = [], []
+        script = """
+import {assessAnchorCandidates,SINGLE_ANCHOR_METHOD} from './src/anchorAssessment.js';
+import {validateLedger} from './src/forecastLedger.js';
+let s='';for await(const c of process.stdin)s+=c;const l=JSON.parse(s),r=l.forecasts[0];
+const a=assessAnchorCandidates({field:r.field,odds:r.inputs.winOdds,placeQuotes:r.inputs.quotes});
+r.parameters.anchorSelection={method:SINGLE_ANCHOR_METHOD,minTop3:.5,suggested:a.suggested,selected:null,decision:'pending'};
+for(const [decision,selected] of [['selected',1],['skip',null]])l.forecasts.push({...r,id:decision,kind:'user',parentId:r.id,
+parameters:{...r.parameters,anchorSelection:{...r.parameters.anchorSelection,decision,selected}}});
+validateLedger(l,l.scope);process.stdout.write(JSON.stringify(l));
+"""
+        result = subprocess.run(['node', '--input-type=module', '-e', script], input=json.dumps(ledger), text=True,
+                                cwd=Path(__file__).resolve().parents[1], capture_output=True, check=True)
+        ledger = json.loads(result.stdout)
+        self.assertEqual(ledger['forecasts'][0]['parameters']['anchorSelection']['suggested'], [1])
+        with tempfile.TemporaryDirectory() as folder, closing(open_store(Path(folder)/'derived.sqlite')) as connection:
+            self.assertEqual(import_ledger(connection, ledger), 1)
+            self.assertEqual(saved_ledgers(connection)[0]['forecasts'][1]['parameters']['anchorSelection']['selected'], 1)
+        for overrides in ({'suggested': [1, 2]}, {'selected': [1, 2]}, {'selected': 2}, {'minTop3': 1.5}):
+            wrong = copy.deepcopy(ledger)
+            wrong['forecasts'][1]['parameters']['anchorSelection'].update(overrides)
+            with self.assertRaises(ValueError):
+                validate_ledger(wrong)
+        wrong = copy.deepcopy(ledger)
+        wrong['forecasts'][0]['inputs']['anchorTrendReference']['retrievedAt'] = '2026-11-15T15:20:00+09:00'
+        with self.assertRaises(ValueError):
+            validate_ledger(wrong)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node optional for browser schema roundtrip')
+    def test_two_anchor_choice_roundtrip_and_invalid_duplicate(self):
+        ledger = ledger_fixture()
+        record = ledger['forecasts'][0]
+        record['parameters'].update(budget=0, anchorSelection={
+            'method': 'win-value-two-v1', 'suggested': [1, 2], 'selected': [1, 2]})
+        record['metrics']['unspent'] = 0
+        record['inputs']['winOdds'] = {'1': 2.5, '2': 4.0}
+        ledger['purchases'], ledger['settlements'] = [], []
+        with tempfile.TemporaryDirectory() as folder, closing(open_store(Path(folder)/'derived.sqlite')) as connection:
+            self.assertEqual(import_ledger(connection, ledger), 1)
+            restored = saved_ledgers(connection)[0]
+            script = "import {validateLedger} from './src/forecastLedger.js';let s='';for await(const chunk of process.stdin)s+=chunk;const l=JSON.parse(s);validateLedger(l,l.scope);process.stdout.write('ok');"
+            result = subprocess.run(['node', '--input-type=module', '-e', script], input=json.dumps(restored), text=True,
+                                    cwd=Path(__file__).resolve().parents[1], capture_output=True, check=True)
+            self.assertEqual(result.stdout, 'ok')
+            self.assertEqual(restored['forecasts'][0]['parameters']['anchorSelection']['selected'], [1, 2])
+            record['parameters']['anchorSelection']['selected'] = [1, 1]
+            with self.assertRaises(ValueError):
+                validate_ledger(ledger)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node optional for browser schema roundtrip')
     def test_browser_ledger_roundtrip(self):
         ledger = ledger_fixture()
         with tempfile.TemporaryDirectory() as folder, closing(open_store(Path(folder)/'derived.sqlite')) as c:

@@ -2,6 +2,12 @@ import { createHash } from 'node:crypto'
 
 export const CAPTURE_OFFSETS = [-60, -30, -20, -15, -12, -11, -10, -5, 0, 5, 15, 30]
 const normalize = value => String(value ?? '').normalize('NFKC').replace(/[\s　]/g, '')
+const navigationTimes = new WeakMap()
+async function paceNavigation(context) {
+  const remaining=3500-(Date.now()-(navigationTimes.get(context)??0))
+  if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining))
+  navigationTimes.set(context,Date.now())
+}
 export const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex')
 export function safeJrdbUrl(input) {
   const url = new URL(input)
@@ -83,10 +89,11 @@ export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString
     const horseNo=numeric(rowValue(row,'umaban'))
     if (!Number.isInteger(horseNo) || !expected.has(horseNo) || seen.has(horseNo)) throw new Error('馬番が公式出走欄と一致しません。')
     seen.add(horseNo)
-    const name=String(rowValue(row,'bamei9m')).trim()
+    const displayedName=String(rowValue(row,'bamei9m')).trim()
+    const name=String(row.bamei9m?.fullName??displayedName).trim()
     if (normalize(name).replace(/[＊*]/g,'')!==normalize(expected.get(horseNo).name).replace(/[＊*]/g,'')) throw new Error('馬名が公式出走欄と一致しません。別レースの可能性があります。')
     const rankText=String(rowValue(row,'se_tyakujun'))
-    const cancelled=/取消|除外/.test(rankText)
+    const cancelled=/取消|除外/.test(rankText)||/^(?:取消|除外)[\s　]/.test(displayedName)
     horses.push({horseNo,name,cancelled,idm:numeric(rowValue(row,'idm')),paddockIndex:numeric(rowValue(row,'sirusi_padock')),
       horseWeight:numeric(rowValue(row,'bataiju')),horseWeightDelta:numeric(rowValue(row,'zogendsp')),
       runningStyle:String(rowValue(row,'txt_kyakusitsu')).trim(),winOdds:odds(rowValue(row,'tanodds')),
@@ -149,7 +156,9 @@ export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString
     paddockComments:raw.paddockComments??[], rawResultTable:raw.resultTables??[],rawPayoutTable:raw.payoutTables??[]}
   const eventId=hash(['LIVE_RACE',race.raceId,retrievedAt,sourceHash])
   const observation={eventId,kind:'LIVE_RACE',retrievedAt,sourceHash,payload}
-  const snapshots=[...history.snapshots]
+  // Keep pre-withdrawal tables as raw evidence; do not turn an old field into today's active field.
+  const snapshots=history.snapshots.filter(snapshot=>Object.keys(snapshot.odds).length===active.length
+    && active.every(horse=>snapshot.odds[horse.horseNo]!=null))
   if(Object.keys(winOdds).length===active.length&&!finalPrice) {
     snapshots.push({schemaVersion:2,id:hash(['win',eventId]),raceId:race.raceId,raceDate:race.raceDate,kind:'observed',time:clockText??new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit'}).format(new Date(observedAt)),
       observedAt,sourcePublishedAt,retrievedAt,source,odds:winOdds,revisionOf:null,activeHorseNumbers:payload.activeHorseNumbers,availabilityAt:retrievedAt,timingEvidence:'observed-visible-at'})
@@ -162,18 +171,58 @@ export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString
 
 export async function capturePage(page, race) {
   const sourceUrl=`https://jrdb.com/member/n_live_${race.raceDate}_${race.raceId}.html`
-  const response=await page.goto(sourceUrl,{waitUntil:'domcontentloaded',timeout:30000})
-  if(response&&[401,403].includes(response.status())) { const error=new Error('JRDBの認証期限が切れています。');error.code='auth_required';throw error }
-  try {await page.locator('#horse_grid0 tr[id] td[aria-describedby="horse_grid0_umaban"]').first().waitFor({timeout:12000})} catch {const e=new Error('対象馬柱を確認できません。ログイン状態を確認してください。');e.code='auth_required';throw e}
+  // JRDB's link handler switches the race; navigating to its href alone can show the previous race.
+  const context=page.context(),indexPage=await context.newPage()
+  let racePage
+  try {
+    await paceNavigation(context)
+    const index=await indexPage.goto('https://jrdb.com/member/new_index.php',{waitUntil:'domcontentloaded',timeout:30000})
+    if(index&&[401,403].includes(index.status())) {const error=new Error('JRDBの認証期限が切れています。');error.code='auth_required';throw error}
+    const dayPattern=new RegExp(`${Number(race.raceDate.slice(4,6))}\\s*月\\s*${Number(race.raceDate.slice(6,8))}日`)
+    await indexPage.getByRole('link',{name:dayPattern}).filter({visible:true}).first().click()
+    const link=indexPage.locator(`a[href*="n_live_${race.raceDate}_${race.raceId}.html"]`).filter({visible:true}).first()
+    await link.waitFor({state:'attached',timeout:12000})
+    const target=safeJrdbUrl(new URL(await link.getAttribute('href'),indexPage.url()).href)
+    if(target.pathname!==new URL(sourceUrl).pathname)throw new Error('掲載リンクが対象レースと一致しません。')
+    await paceNavigation(context)
+    const [opened]=await Promise.all([indexPage.waitForEvent('popup',{timeout:15000}),link.click()])
+    racePage=opened
+    await racePage.waitForLoadState('domcontentloaded')
+    if(safeJrdbUrl(racePage.url()).pathname!==target.pathname)throw new Error('開いた画面が対象レースと一致しません。')
+    return await captureLoadedRace(racePage,race,sourceUrl,context)
+  } finally {
+    await racePage?.close().catch(()=>{})
+    await indexPage.close().catch(()=>{})
+  }
+}
+
+async function captureLoadedRace(page,race,sourceUrl,context) {
+  try {
+    await page.waitForFunction(expected=>{
+      const norm=value=>String(value??'').normalize('NFKC').replace(/[\s＊*]/g,'')
+      const rows=Array.from(document.querySelectorAll('#horse_grid0 tr[id]')).filter(row=>row.querySelector('[aria-describedby="horse_grid0_umaban"]'))
+      return rows.length===expected.length&&rows.every(row=>{
+        const no=Number(row.querySelector('[aria-describedby="horse_grid0_umaban"]').innerText)
+        const cell=row.querySelector('[aria-describedby="horse_grid0_bamei9m"]')
+        const name=cell?.querySelector('[onclick]')?.getAttribute('onclick')?.match(/uma_grid\.bamei_click\(\s*"[^"]*"\s*,\s*"([^"]+)"/)?.[1]??cell?.innerText
+        return expected.some(horse=>Number(horse.horseNo)===no&&norm(horse.name)===norm(name))
+      })
+    },race.horses,{timeout:25000})
+  } catch {const error=new Error('対象の全頭馬柱を確認できません。このレースの取得を再試行してください。');error.code='race_unavailable';throw error}
   const raw=await page.evaluate(()=>{
     const tableRows=selector=>Array.from(document.querySelectorAll(selector)).map(row=>Array.from(row.querySelectorAll(':scope > th,:scope > td')).map(cell=>cell.innerText.trim()))
-    const rows=Array.from(document.querySelectorAll('#horse_grid0 tr[id]')).filter(row=>row.querySelector('[aria-describedby="horse_grid0_umaban"]')).map(row=>Object.fromEntries(Array.from(row.querySelectorAll('td[aria-describedby]')).map(cell=>[cell.getAttribute('aria-describedby').replace('horse_grid0_',''),cell.innerText.trim()])))
+    const rows=Array.from(document.querySelectorAll('#horse_grid0 tr[id]')).filter(row=>row.querySelector('[aria-describedby="horse_grid0_umaban"]')).map(row=>Object.fromEntries(Array.from(row.querySelectorAll('td[aria-describedby]')).map(cell=>{
+      const key=cell.getAttribute('aria-describedby').replace('horse_grid0_',''),text=cell.innerText.trim()
+      const fullName=key==='bamei9m'?cell.querySelector('[onclick]')?.getAttribute('onclick')?.match(/uma_grid\.bamei_click\(\s*"[^"]*"\s*,\s*"([^"]+)"/)?.[1]:null
+      return [key,fullName?{text,fullName}:text]
+    })))
     return {rows,weather:document.querySelector('#tenki_all')?.innerText??'',oddsLabel:document.querySelector('#infomation_block')?.innerText??'',
       resultTables:tableRows('#results table tr'),payoutTables:tableRows('#payback table tr'),paddockComments:[],
       historyTable:Array.from(document.querySelectorAll('#tabs-5 table tr')).map(row=>Array.from(row.querySelectorAll(':scope > th,:scope > td')).map(cell=>({text:cell.innerText.trim(),rowspan:cell.rowSpan,colspan:cell.colSpan})))}
   })
   const historyTab=page.locator('a[href="#tabs-5"]')
   if(await historyTab.count()){
+    await paceNavigation(context)
     await historyTab.click()
     try {await page.locator('#tabs-5 table tr').first().waitFor({timeout:10000})} catch { /* explicit empty history remains missing */ }
     raw.historyTable=await page.locator('#tabs-5 table tr').evaluateAll(rows=>rows.map(row=>Array.from(row.querySelectorAll(':scope > th,:scope > td')).map(cell=>({text:cell.innerText.trim(),rowspan:cell.rowSpan,colspan:cell.colSpan}))))

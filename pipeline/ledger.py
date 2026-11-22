@@ -3,12 +3,63 @@ from __future__ import annotations
 
 import json
 import math
+from itertools import permutations
 
 from .ingest import canonical, digest, iso, race_date, ticket_key
 
 
 def _money(value, positive=False):
     return type(value) is int and value >= (100 if positive else 0) and value % 100 == 0
+
+
+def _single_anchor_candidates(field, inputs, factor, threshold):
+    if type(threshold) not in (int, float) or not math.isfinite(threshold) or not 0 <= threshold <= 1:
+        raise ValueError('Invalid top-three threshold')
+    release = inputs.get('releaseFieldSize', len(field))
+    if type(release) is not int or not len(field) <= release <= 18:
+        raise ValueError('Invalid place betting field size')
+    places = inputs.get('placePositions')
+    places = places if places is not None else (3 if release >= 8 else 2)
+    if type(places) is not int or places not in (2, 3):
+        raise ValueError('Invalid place betting field size')
+    probabilities = {h['no']: h['probability'] for h in field}
+    top3, place = dict.fromkeys(probabilities, 0.0), dict.fromkeys(probabilities, 0.0)
+    total = 0.0
+    for order in permutations(probabilities, min(3, len(field))):
+        remaining, probability = list(probabilities), 1.0
+        for no in order:
+            probability *= probabilities[no] / sum(probabilities[n] for n in remaining)
+            remaining.remove(no)
+        total += probability
+        for no in order:
+            top3[no] += probability
+        if release >= 5:
+            for no in order[:places]:
+                place[no] += probability
+    quotes = {}
+    source_quotes = inputs.get('quotes', [])
+    if not isinstance(source_quotes, list) or any(not isinstance(quote, dict) for quote in source_quotes):
+        raise ValueError('Place quotes must be an array of records')
+    for quote in source_quotes:
+        if quote.get('type') != '複勝' or not isinstance(quote.get('numbers'), list) or len(quote['numbers']) != 1:
+            continue
+        no, price, upper = quote['numbers'][0], quote.get('odds'), quote.get('upper')
+        if type(no) is not int or no not in probabilities or type(price) not in (int, float) or not math.isfinite(price) or price < 1:
+            continue
+        if upper is not None and (type(upper) not in (int, float) or not math.isfinite(upper) or upper < price):
+            continue
+        if no in quotes:
+            raise ValueError('Duplicate place quote')
+        quotes[no] = price
+    ranked = sorted(field, key=lambda h: (-min(1, top3[h['no']] / total), -h['probability'], h['no']))
+    result = []
+    for horse in ranked:
+        no = horse['no']
+        win_value = horse['probability'] * max(1, inputs['winOdds'][str(no)] * factor) > 1 + 1e-10
+        place_value = no in quotes and release >= 5 and place[no] / total * max(1, quotes[no] * factor) > 1 + 1e-10
+        if top3[no] / total + 1e-10 >= threshold and (win_value or place_value):
+            result.append(no)
+    return result[:2]
 
 
 def _validate_ticket_field(ticket, field):
@@ -80,6 +131,52 @@ def validate_ledger(value):
             probability_sum += probability
         if abs(probability_sum - 1) > 1e-6:
             raise ValueError('Forecast probabilities must sum to one')
+        selection = parameters.get('anchorSelection')
+        if selection is not None:
+            if not isinstance(selection, dict) or selection.get('method') not in ('win-value-two-v1', 'place-value-single-v2'):
+                raise ValueError('Invalid anchor method')
+            suggested, selected = selection.get('suggested'), selection.get('selected')
+            factor, prices = parameters.get('oddsFactor'), inputs.get('winOdds')
+            if type(factor) not in (int, float) or not math.isfinite(factor) or not 0.2 - 1e-12 <= factor <= 1 or not isinstance(prices, dict):
+                raise ValueError('Invalid anchor prices')
+            if any(type(prices.get(str(h['no']))) not in (int, float) or not math.isfinite(prices[str(h['no'])]) or prices[str(h['no'])] < 1 for h in field):
+                raise ValueError('Complete anchor prices required')
+            if selection['method'] == 'win-value-two-v1':
+                for pair in (suggested, selected):
+                    if not isinstance(pair, list) or len(pair) != 2 or any(type(n) is not int or n not in numbers for n in pair) or pair[0] == pair[1]:
+                        raise ValueError('Two distinct forecast horses are required')
+                ranked = sorted(field, key=lambda h: (-h['probability'], h['no']))
+                qualifies = lambda h: h['probability'] * max(1, prices[str(h['no'])] * factor) > 1 + 1e-10
+                expected = [h['no'] for h in ranked if qualifies(h)] + [h['no'] for h in ranked if not qualifies(h)]
+                if suggested != expected[:2] or (forecast['kind'] == 'ace' and selected != suggested):
+                    raise ValueError('Two-anchor selection does not match the frozen forecast')
+            else:
+                expected = _single_anchor_candidates(field, inputs, factor, selection.get('minTop3'))
+                decision = selection.get('decision')
+                if (not isinstance(suggested, list) or suggested != expected
+                        or any(type(n) is not int for n in suggested)
+                        or decision not in ('pending', 'selected', 'skip')
+                        or (decision == 'selected' and (type(selected) is not int or selected not in suggested))
+                        or (decision != 'selected' and selected is not None)
+                        or (decision == 'pending' and not suggested)
+                        or (forecast['kind'] == 'ace' and (selected is not None or decision != ('pending' if suggested else 'skip')))):
+                    raise ValueError('Single-anchor selection does not match frozen conditions')
+                reference = inputs.get('anchorTrendReference')
+                if reference is not None:
+                    if not isinstance(reference, dict):
+                        raise ValueError('Invalid odds trend reference')
+                    direct = reference.get('timingEvidence') == 'observed-visible-at' and reference.get('availabilityAt') == reference.get('retrievedAt')
+                    if (reference.get('schemaVersion') != 2 or reference.get('kind') != 'observed'
+                            or reference.get('raceId') != scope['raceId'] or race_date(reference.get('raceDate')) != race_date(scope['raceDate'])
+                            or set(reference.get('odds', {})) != {str(no) for no in numbers}
+                            or any(type(v) not in (int, float) or not math.isfinite(v) or v < 1 for v in reference['odds'].values())
+                            or not iso(reference['observedAt']) < iso(inputs['observedAt'])
+                            or not iso(reference['observedAt']) <= iso(reference['retrievedAt']) <= min(cutoff, iso(inputs['retrievedAt']))
+                            or (reference.get('sourcePublishedAt') is None and not direct)
+                            or (reference.get('sourcePublishedAt') is not None and not iso(reference['sourcePublishedAt']) <= iso(reference['observedAt']))):
+                        raise ValueError('Invalid odds trend reference')
+            if parameters['budget'] != 0 or forecast.get('allocations') != []:
+                raise ValueError('Anchor assessment must not contain an allocated budget')
         allocations = forecast.get('allocations')
         if not isinstance(allocations, list):
             raise ValueError('Forecast allocations required')

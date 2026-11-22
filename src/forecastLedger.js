@@ -1,4 +1,6 @@
 import { validCalibrationEvidence } from './forecastReview.js'
+import { ANCHOR_METHOD, SINGLE_ANCHOR_METHOD, assessAnchors, assessAnchorCandidates } from './anchorAssessment.js'
+import { oddsMomentum } from './oddsMomentum.js'
 export const LEDGER_VERSION = 1
 const MAX_RECORDS = 500
 const MAX_BYTES = 4_000_000
@@ -126,6 +128,42 @@ export function validateLedger(value, scope) {
     if (record.field.length < 2 || Math.abs(record.field.reduce((sum, horse) => sum + horse.probability, 0) - 1) > 1e-6) fail('予想確率の合計が1になっていません。')
     if (record.inputs.probabilityStack != null && !validCalibrationEvidence(record)) fail('校正前後の予想確率が一致しません。')
     if (record.parameters.anchor !== null && !numbers.has(record.parameters.anchor)) fail('軸馬が出走馬にありません。')
+    if (record.parameters.anchorSelection != null) {
+      const selection = record.parameters.anchorSelection
+      if (!plain(selection) || ![ANCHOR_METHOD, SINGLE_ANCHOR_METHOD].includes(selection.method)
+        || !Array.isArray(selection.suggested) || record.parameters.budget !== 0 || record.allocations.length !== 0) {
+        fail('軸馬記録の形式が正しくありません。')
+      }
+      if (selection.method === ANCHOR_METHOD) {
+        const assessment = assessAnchors({ field: record.field, odds: record.inputs.winOdds,
+          oddsFactor: record.parameters.oddsFactor, selected: selection.selected })
+        if (selection.suggested.length !== 2 || !Array.isArray(selection.selected) || !assessment.complete
+          || selection.suggested.some((no, index) => no !== assessment.suggested[index])
+          || record.kind === 'ace' && selection.selected.some((no, index) => no !== selection.suggested[index])) {
+          fail('2頭の軸馬・勝率・オッズの記録が一致しません。')
+        }
+      } else {
+        const assessment = assessAnchorCandidates({ field: record.field, odds: record.inputs.winOdds,
+          placeQuotes: record.inputs.quotes ?? [], oddsFactor: record.parameters.oddsFactor, minTop3: selection.minTop3,
+          releaseFieldSize: record.inputs.releaseFieldSize ?? record.field.length,
+          placePositions: record.inputs.placePositions ?? undefined, selected: selection.selected, skip: selection.decision === 'skip' })
+        if (!finite(selection.minTop3) || selection.selected !== null && !Number.isInteger(selection.selected)
+          || !['pending', 'selected', 'skip'].includes(selection.decision) || !assessment.complete
+          || selection.suggested.length !== assessment.suggested.length
+          || selection.suggested.some((no, index) => no !== assessment.suggested[index])
+          || selection.decision !== assessment.decision || selection.decision !== 'selected' && selection.selected !== null
+          || record.kind === 'ace' && (selection.selected !== null || selection.decision !== (selection.suggested.length ? 'pending' : 'skip'))) {
+          fail('軸候補・選択した1頭・見送り判断が保存条件と一致しません。')
+        }
+        if (record.inputs.anchorTrendReference != null) {
+          const reference = record.inputs.anchorTrendReference
+          const trend = oddsMomentum({ race: { id: scope.raceId, raceDate: scope.raceDate }, field: record.field,
+            current: { ...record.inputs, kind: 'observed', raceId: scope.raceId, raceDate: scope.raceDate, odds: record.inputs.winOdds },
+            events: [reference], cutoffAt: record.cutoffAt })
+          if (!trend.reference) fail('人気の推移の比較時点・レースが保存条件と一致しません。')
+        }
+      }
+    }
     const keys = new Set()
     for (const ticket of record.allocations) {
       validateTicket(ticket, true)
