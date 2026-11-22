@@ -1,6 +1,8 @@
 import { validCalibrationEvidence } from './forecastReview.js'
 import { ANCHOR_METHOD, SINGLE_ANCHOR_METHOD, assessAnchors, assessAnchorCandidates } from './anchorAssessment.js'
 import { oddsMomentum } from './oddsMomentum.js'
+import { validateGroupPlan } from './groupAnalysis.js'
+export const LEDGER_COLLECTIONS = ['forecasts', 'groupPlans', 'purchases', 'settlements']
 export const LEDGER_VERSION = 1
 const MAX_RECORDS = 500
 const MAX_BYTES = 4_000_000
@@ -79,7 +81,8 @@ function validateBase(record) {
 export function validateLedger(value, scope) {
   inspectJson(value)
   if (!plain(value) || value.schemaVersion !== LEDGER_VERSION || !sameScope(value.scope, scope)) fail('このユーザー・レースの記録ファイルではありません。')
-  if (Object.keys(value).some(key => !['schemaVersion', 'scope', 'forecasts', 'purchases', 'settlements'].includes(key))) fail('未対応の記録項目があります。')
+  if (Object.keys(value).some(key => !['schemaVersion', 'scope', ...LEDGER_COLLECTIONS].includes(key))) fail('未対応の記録項目があります。')
+  if (value.groupPlans != null && (!Array.isArray(value.groupPlans) || value.groupPlans.length > MAX_RECORDS)) fail('グループ判断の件数が不正です。')
   for (const name of ['forecasts', 'purchases', 'settlements']) {
     if (!Array.isArray(value[name]) || value[name].length > MAX_RECORDS) fail('記録件数または形式が正しくありません。')
   }
@@ -182,6 +185,12 @@ export function validateLedger(value, scope) {
     if (invested === 0 ? record.metrics.expectedReturn !== null : !finite(record.metrics.expectedReturn) || record.metrics.expectedReturn < 0) fail('予想の回収率が正しくありません。')
     forecasts.set(record.id, record)
   }
+  for (const plan of value.groupPlans ?? []) {
+    validateBase(plan)
+    if (ids.has(plan.id)) fail('重複した記録IDがあります。')
+    validateGroupPlan(plan,scope)
+    ids.add(plan.id); forecasts.set(plan.id,plan)
+  }
   const purchases = new Map()
   const supersededPurchases = new Set()
   for (const record of value.purchases) {
@@ -264,6 +273,12 @@ export function appendForecast(ledger, snapshot, now = new Date().toISOString())
   return { ledger: next, record }
 }
 
+export function appendGroupPlan(ledger, plan) {
+  const next = { ...ledger, groupPlans: [...(ledger.groupPlans ?? []), clone(plan)] }
+  validateLedger(next,ledger.scope)
+  return next
+}
+
 export function appendPurchase(ledger, { forecastId, tickets, note = '', replacesId = null }, now = new Date().toISOString()) {
   if (replacesId && !note.trim()) fail('購入記録を訂正する理由を入力してください。')
   const record = { id: id(), createdAt: now, forecastId, tickets: clone(tickets), note, replacesId }
@@ -316,15 +331,16 @@ export function importLedger(existing, raw) {
   if (typeof raw !== 'string' || raw.length > MAX_BYTES) fail('記録ファイルのサイズを確認してください。')
   const incoming = validateLedger(JSON.parse(raw), existing.scope)
   const next = { ...existing }
-  for (const name of ['forecasts', 'purchases', 'settlements']) {
-    const known = new Map(existing[name].map(record => [record.id, record]))
+  for (const name of LEDGER_COLLECTIONS) {
+    if (name === 'groupPlans' && !existing[name] && !incoming[name]) continue
+    const known = new Map((existing[name] ?? []).map(record => [record.id, record]))
     const addition = []
-    for (const record of incoming[name]) {
+    for (const record of incoming[name] ?? []) {
       const prior = known.get(record.id)
       if (prior && canonical(prior) !== canonical(record)) fail('同じIDの異なる記録があります。元データを保護するため取込みを中止しました。')
       if (!prior) addition.push(record)
     }
-    next[name] = [...existing[name], ...addition]
+    next[name] = [...(existing[name] ?? []), ...addition]
   }
   validateLedger(next, existing.scope)
   return clone(next)

@@ -6,6 +6,7 @@ import math
 from itertools import permutations
 
 from .ingest import canonical, digest, iso, race_date, ticket_key
+from .group_plans import validate_group_plan
 
 
 def _money(value, positive=False):
@@ -85,13 +86,18 @@ def validate_ledger(value):
     forecasts, purchases, settlements = [value.get(k) for k in ('forecasts', 'purchases', 'settlements')]
     if any(not isinstance(rows, list) or len(rows) > 500 for rows in (forecasts, purchases, settlements)):
         raise ValueError('Ledger arrays required')
+    groups = value.get('groupPlans', [])
+    if not isinstance(groups, list) or len(groups) > 500:
+        raise ValueError('Invalid group decisions')
     ids = set()
-    for item in forecasts + purchases + settlements:
+    for item in forecasts + groups + purchases + settlements:
         if not isinstance(item, dict) or not isinstance(item.get('id'), str) or not item['id'] or item['id'] in ids:
             raise ValueError('Ledger IDs must be nonempty and unique')
         ids.add(item['id'])
         iso(item.get('createdAt'))
-    by_forecast = {f['id']: f for f in forecasts}
+    for plan in groups:
+        validate_group_plan(plan, scope)
+    by_forecast = {f['id']: f for f in forecasts + groups}
     by_purchase = {p['id']: p for p in purchases}
     preceding_forecasts = {}
     for forecast in forecasts:
@@ -282,16 +288,16 @@ def _merge_ledgers(documents):
         key = canonical(ledger['scope'])
         if key not in grouped:
             grouped[key] = {'schemaVersion': 1, 'scope': ledger['scope'],
-                            'forecasts': {}, 'purchases': {}, 'settlements': {}}
-        for field in ('forecasts', 'purchases', 'settlements'):
-            for record in ledger[field]:
+                            'forecasts': {}, 'purchases': {}, 'settlements': {}, 'groupPlans': {}}
+        for field in ('forecasts', 'groupPlans', 'purchases', 'settlements'):
+            for record in ledger.get(field, []):
                 prior = grouped[key][field].get(record['id'])
                 if prior is not None and canonical(prior) != canonical(record):
                     raise ValueError('Stored immutable ledger record has conflicting versions')
                 grouped[key][field][record['id']] = record
     output = []
     for group in grouped.values():
-        for field in ('forecasts', 'purchases', 'settlements'):
+        for field in ('forecasts', 'groupPlans', 'purchases', 'settlements'):
             group[field] = list(group[field].values())
         output.append(validate_ledger(group))
     return output

@@ -17,14 +17,17 @@ export function useCompanion({ userId, race, horses }) {
       const data = await fetchCloudRace(target.race)
       if (current.current.userId !== target.userId || current.current.race?.id !== target.race?.id || current.current.race?.raceDate !== target.race?.raceDate) return
       await applyCloudData(target.userId, target.race, target.horses, data)
-      let receipts
+      let receipts = data.receipts, groupReceipts = data.groupReceipts
       if (target.race) {
         const local = readLedger(localStorage, ledgerScope(target.userId, target.race))
         if (local.error) throw new Error(local.error)
-        if (local.ledger.forecasts.length) receipts = (await syncLedgerToCloud(local.ledger)).receipts
+        if (local.ledger.forecasts.length || local.ledger.groupPlans?.length) {
+          const uploaded = await syncLedgerToCloud(local.ledger)
+          receipts = { ...receipts,...uploaded.receipts }; groupReceipts = { ...groupReceipts,...uploaded.groupReceipts }
+        }
       }
       if (current.current.userId !== target.userId || current.current.race?.id !== target.race?.id || current.current.race?.raceDate !== target.race?.raceDate) return
-      setSync(previous => ({ ...previous, data: { ...data, receipts }, error: null, loading: false,
+      setSync(previous => ({ ...previous, data: { ...data, receipts, groupReceipts }, error: null, loading: false,
         revision: previous.revision + 1, syncedAt: new Date().toISOString() }))
     } catch (error) {
       if (current.current.userId === target.userId && current.current.race?.id === target.race?.id && current.current.race?.raceDate === target.race?.raceDate) setSync(previous => ({ ...previous, loading: false, error: error.message }))

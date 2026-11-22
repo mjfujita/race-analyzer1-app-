@@ -402,7 +402,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   </div>
 }
 
-function PurchaseEditor({ forecast, purchase, disabled, onSave }) {
+export function PurchaseEditor({ forecast, purchase, disabled, onSave }) {
   const [text, setText] = useState(purchaseText(purchase?.tickets ?? forecast.allocations))
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
@@ -415,7 +415,7 @@ function PurchaseEditor({ forecast, purchase, disabled, onSave }) {
   </form>
 }
 
-function SettlementEditor({ purchase, settlement, payoutEvent, disabled, onSave }) {
+export function SettlementEditor({ purchase, settlement, payoutEvent, disabled, onSave }) {
   const [payouts, setPayouts] = useState(Object.fromEntries(purchase.tickets.map(ticket => [ticket.key, settlement?.payouts[ticket.key] == null ? '' : String(settlement.payouts[ticket.key])])))
   const [note, setNote] = useState('')
   const [error, setError] = useState('')

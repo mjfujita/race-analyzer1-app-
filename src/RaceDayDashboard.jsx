@@ -13,7 +13,7 @@ const arrow = <ArrowRight aria-hidden="true" className="h-4 w-4 shrink-0" />
 function forecastStatus(race, userId) {
   if (race.hasForecast || race.receipt) return 'saved'
   const { ledger, error } = readLedger(localStorage, ledgerScope(userId, race))
-  return error ? 'unknown' : ledger.forecasts.length > 0 ? 'local' : 'none'
+  return error ? 'unknown' : ledger.forecasts.length > 0 || ledger.groupPlans?.length > 0 ? 'local' : 'none'
 }
 
 function raceStatus(race, now) {

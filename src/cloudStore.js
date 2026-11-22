@@ -93,7 +93,7 @@ export async function applyCloudData(userId, race, horses, payload, storage = gl
     await writeLedgerExclusive(storage, merged, locks)
   }
   const saved = { race: incomingRace ?? race, observations: observationEvents, context: payload.context ?? null,
-    results: payload.results ?? null, status: payload.status ?? null, fetchedAt: new Date().toISOString() }
+    results: payload.results ?? null, groupReceipts: payload.groupReceipts ?? {}, status: payload.status ?? null, fetchedAt: new Date().toISOString() }
   storage.setItem(cacheKey(userId, race), JSON.stringify(saved))
   return { ...payload, cached: saved }
 }
