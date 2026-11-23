@@ -10,6 +10,7 @@ import {calibrateForecast,reviewStack} from './forecastReview.js'
 const pct=n=>`${(100*n).toFixed(1)}%`
 const signed=n=>n>0?`+${n}`:String(n)
 const styleCode=value=>({逃げ:1,先行:2,差し:3,追込:4})[value]??Number(value)
+const normalizeGoing=value=>({1:'良',2:'稍重',3:'重',4:'不良',稍:'稍重'})[String(value??'').trim()]??String(value??'').trim()
 const plain=value=>typeof value==='string'&&value.trim()?value.trim().slice(0,1000):null
 const conditionText=(label,record)=>record.runs===null?`${label}：比較材料未取得。`:record.runs===0?`${label}：取得近走に該当走なし。`:`${label}：${record.runs}走中${record.topThree}回が3着内。`
 const knownModel=(model,boundary)=>model&&validTimestamp(boundary)&&[model.generatedAt,model.adoptedAt??model.importedAt]
@@ -24,7 +25,7 @@ export function buildAceAssessment({race,horses=[],statistics=[],cloud=null,even
   const stats=new Map(statistics.filter(s=>!s.race_key||String(s.race_key)===String(race?.id)).map(s=>[Number(s.horse_no),s]))
   // Recalculate conditions from dated earlier starts; do not trust undated aggregate records.
   const safeHorses=horses.map(h=>({...h,running_style:styleCode(byNo.get(Number(h.no))?.style)||Number(stats.get(Number(h.no))?.running_style)||null,
-    pastRuns:(byNo.get(Number(h.no))?.pastRuns??[]).map(r=>({...r,field_size:r.fieldSize,dist:`${r.surface??''}${r.distance??''}m`}))}))
+    pastRuns:(byNo.get(Number(h.no))?.pastRuns??[]).map(r=>({...r,weather:plain((h.pastRuns??[]).find(raw=>String(raw.raceDate??raw.race_date??raw.date??'').replace(/[^0-9]/g,'')===r.date)?.weather),field_size:r.fieldSize,dist:`${r.surface??''}${r.distance??''}m`}))}))
   const safeStatistics=assessments.map(h=>({...stats.get(h.no),horse_no:h.no,idm:h.idm,running_style:safeHorses.find(row=>Number(row.no)===h.no)?.running_style,
     distance_runs:h.records.distance.runs,distance_top3:h.records.distance.topThree,venue_runs:h.records.venue.runs,
     venue_top3:h.records.venue.topThree,course_runs:h.records.course.runs,course_top3:h.records.course.topThree}))
@@ -75,7 +76,8 @@ export function buildAceAssessment({race,horses=[],statistics=[],cloud=null,even
     const carried=assessmentNumber(horse.weightCarried??horse.carriedWeight)
     const frame=assessmentNumber(horse.frameNo??horse.frame_no??stat.frame_no)
     const rider=plain(horse.jockey),trainer=plain(horse.trainer)
-    const goingRuns=source?.going?h.pastRuns.filter(r=>r.surface===contextRaceSurface(race)&&r.going===source.going&&r.rank!==null):[]
+    const goingKnown=h.pastRuns.filter(r=>r.surface===contextRaceSurface(race)&&['良','稍重','重','不良'].includes(normalizeGoing(r.going))&&r.rank!==null)
+    const goingRuns=source?.going?goingKnown.filter(r=>normalizeGoing(r.going)===normalizeGoing(source.going)):[]
     const supports=[],concerns=[]
     if(h.rank&&h.rank<=2)supports.push(`出走時IDMは${h.knownIdms}頭中${h.rank}位で、能力上位の比較材料です。`)
     else if(h.rank)concerns.push(`出走時IDMは${h.knownIdms}頭中${h.rank}位。上位馬を逆転するには別の裏付けが必要です。`)
@@ -98,7 +100,7 @@ export function buildAceAssessment({race,horses=[],statistics=[],cloud=null,even
     const factors=[
       {key:'ability',label:'能力',known:h.idm!==null,text:h.summary},
       {key:'recent',label:'近走',known:h.history.runs>0,text:h.pastRuns.length?h.pastRuns.slice(0,3).map(r=>`${r.date} ${r.surface??'区分不明'}${r.distance??'距離不明'}m ${r.rank??'着順不明'}着${r.last3f!==null?`・上がり3F ${r.last3f}秒`:''}`).join(' ／ '):'日付を確認できる過去走なし。'},
-      {key:'conditions',label:'今回の距離・コース・馬場',known:h.records.distance.runs>0||goingRuns.length>0,text:[conditionText('近い距離',h.records.distance),conditionText('同場同距離',h.records.course),source?.going?`今回の取得天候は${source.weather??'未取得'}、馬場は${source.going}。同区分・同馬場の取得近走は${goingRuns.length}走${goingRuns.length?`、3着内${goingRuns.filter(r=>r.rank<=3).length}回`:''}。`:'今回の馬場状態は締切前情報未取得。'].join(' ')},
+      {key:'conditions',label:'今回の距離・コース・馬場',known:h.records.distance.runs>0||goingRuns.length>0,text:[conditionText('近い距離',h.records.distance),conditionText('同場同距離',h.records.course),source?.going?`今回の取得天候は${source.weather??'未取得'}、馬場は${source.going}。${goingKnown.length?`同区分・同馬場の取得近走は${goingRuns.length}走${goingRuns.length?`、3着内${goingRuns.filter(r=>r.rank<=3).length}回`:''}。`:'同馬場の比較材料は未取得。'}`:'今回の馬場状態は締切前情報未取得。'].join(' ')},
       {key:'pace',label:'脚質・展開',known:knownStyles===active.length&&Boolean(ownStyle),text:knownStyles?`脚質取得${knownStyles}/${active.length}頭。逃げ${styleCounts[0]}・先行${styleCounts[1]}・差し${styleCounts[2]}・追込${styleCounts[3]}。${ownStyle?`この馬は${ownStyle}。`:''}${styleCounts[0]+styleCounts[1]>1?'前の馬が競り合う場合と、隊列が落ち着く場合を分けて考えます。':'先手を取れるか、位置取りを確認する必要があります。'}脚質の頭数だけで有利不利を断定しません。当日同場・同区分で能力差と取得時点を確認できる先行レースは${context.evidence.dayBias.races}件です。`:'脚質構成の比較材料未取得。'},
       {key:'training',label:'調教',known:rawTraining!==null||Boolean(trainingComment),text:rawTraining!==null?`取得調教指数 ${rawTraining}。比較検証のない一律加点は行いません。${trainingComment??''}`:trainingComment??'調教指数・コメント未取得。好調と推測して補いません。'},
       {key:'paddock',label:'パドック・馬体',known:pad.index!==null||pad.weight!==null||pad.comments.length>0,text:[padOrigins?`取得元 ${padOrigins}。`:'',pad.weight===null?'馬体重未取得。':`馬体重${pad.weight}kg${pad.delta===null?'（増減未取得）':`（${signed(pad.delta)}kg）`}。`,pad.index===null?'パドック点未取得。':`JRDBパドック点${pad.index}。`,pad.comments.length?`取得コメント「${pad.comments.join(' ／ ')}」`:'コメント未取得。','数値や文面だけから良否を決めつけず、未検証の確率加算は行いません。'].join(' ')},

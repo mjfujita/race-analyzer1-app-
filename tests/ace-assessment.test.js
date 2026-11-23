@@ -77,3 +77,10 @@ test('time-proven TYB is examined per horse without mixing a late record or anot
   assert.match(report.rows[1].factors.find(f=>f.key==='paddock').text,/パドック点7/)
   assert.ok(!report.rows[0].factors.find(f=>f.key==='paddock').text.includes('99'))
 })
+
+test('equivalent going codes are compared, while unknown past going is reported as missing',()=>{
+ const coded=build({horses:field.map(h=>({...h,pastRuns:h.pastRuns.map(r=>({...r,going:'2',weather:'雨'}))})),cloud:{context:source(undefined,{going:'稍重',weather:'雨'})}})
+ assert.match(coded.rows[0].factors.find(f=>f.key==='conditions').text,/同区分・同馬場の取得近走は3走/)
+ const unknown=build({horses:field.map(h=>({...h,pastRuns:h.pastRuns.map(r=>({...r,going:null}))}))})
+ assert.match(unknown.rows[0].factors.find(f=>f.key==='conditions').text,/同馬場の比較材料は未取得/)
+})
