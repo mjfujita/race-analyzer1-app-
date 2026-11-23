@@ -26,7 +26,7 @@ function Demo() {
   const onGroupDisplayChange=useCallback(value=>setGroupDisplay(previous=>JSON.stringify(previous)===JSON.stringify(value)?previous:value),[])
   const empty = state === 'empty'
   const { sync, refresh } = useCompanion({ userId: connected ? userId : null, race, horses })
-  const props = { groupDisplay,onGroupDisplayChange,race, horses:state==='assessment'?assessmentHorses:horses, statistics: empty ? [] : state==='assessment'?assessmentStatistics:statistics, earlierRaces, userId, cloudRevision: cloudRevision + sync.revision,
+  const props = { workspace:state.startsWith('pace-links'),groupDisplay,onGroupDisplayChange,race, horses:state==='assessment'?assessmentHorses:horses, statistics: empty||state==='pace-links-missing' ? [] : state==='assessment'?assessmentStatistics:statistics, earlierRaces, userId, cloudRevision: cloudRevision + sync.revision,
     syncedGroupReceipts:sync.data?.groupReceipts, loading:sync.loading,
     syncedReceipts: sync.data?.receipts, onSyncLedger: connected || state === 'cloud-test' ? syncLedgerToCloud : undefined,
     onOpenAbility: () => setTab('ability'), onOpenPace: () => setTab('pace'), onSelectRace: () => {}, onSelectHorse: () => {} }

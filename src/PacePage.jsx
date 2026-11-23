@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect,useRef,useState } from 'react'
 import { CloudSun, Flag } from 'lucide-react'
 import { decisionCutoff, formatRaceTime, raceTimestamp, validTimestamp } from './raceTime.js'
 import { readPaceResults, recordedPaceRows } from './paceHistory.js'
@@ -8,6 +8,7 @@ import { loadRuntimeModel, readCloudRace, enrichCloudHorses } from './cloudStore
 import { applyPredictionModels, availableAt, buildRaceContext } from './predictionModel.js'
 import { oddsStorageKey, readOddsHistory } from './oddsHistory.js'
 import RuntimeModelPanel from './RuntimeModelPanel.jsx'
+import HorseAssessments from './HorseAssessments.jsx'
 
 const card = 'rounded-2xl border border-slate-200 bg-white p-5 shadow-sm'
 const percent = new Intl.NumberFormat('ja-JP', { style: 'percent' })
@@ -46,6 +47,12 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
   const [recorded, setRecorded] = useState(() => readPaceResults(userId, race))
   const [error, setError] = useState('')
   const [asofOnly, setAsofOnly] = useState(true)
+  const [horseDetail,setHorseDetail]=useState(null)
+  const returnTarget=useRef(null),returnPosition=useRef(0),detailBack=useRef(null)
+  useEffect(()=>{
+    if(horseDetail){detailBack.current?.focus({preventScroll:true});detailBack.current?.scrollIntoView({block:'start'})}
+    else if(returnTarget.current?.isConnected){returnTarget.current.focus({preventScroll:true});window.scrollTo(0,returnPosition.current)}
+  },[horseDetail])
   const cloud = readCloudRace(userId, race)
   const models = loadRuntimeModel(userId)
   const enriched = enrichCloudHorses(horses, cloud?.race)
@@ -126,7 +133,17 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
     : paceLabel === '隊列が落ち着く可能性' ? '脚質構成から前残りに注意'
     : '前残りと差しの両方を想定'
 
-  return <div className="space-y-4">
+  function openHorse(no,event){
+    returnTarget.current=event.currentTarget;returnPosition.current=window.scrollY
+    setHorseDetail({no})
+  }
+  const horseLink=(horse,compact=false)=><button key={horse.no} type="button" title={horse.name} aria-label={`${horse.no}番 ${horse.name}の詳細`}
+    className={compact?'inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-blue-200 bg-white px-3 py-2 text-sm text-sky-800 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700':'min-h-11 text-left text-sky-800 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700'} onClick={event=>openHorse(horse.no,event)}>{compact?horse.no:`${horse.no} ${horse.name}`}</button>
+  return <>
+    {horseDetail&&<div className="rca-stack"><div><button type="button" className="rca-secondary" ref={detailBack} onClick={()=>setHorseDetail(null)}>← 展開・馬場へ戻る</button><p className="rca-muted mt-2">展開・馬場の表示条件と入力内容を保持しています。</p></div>
+      <HorseAssessments key={horseDetail.no} race={race} horses={enriched} statistics={statistics} userId={userId} initialHorseNo={horseDetail.no} detail />
+    </div>}
+    <div hidden={Boolean(horseDetail)} inert={Boolean(horseDetail)}><div className="space-y-4">
     {workspace && <div className="rca-page-title"><div><h1>展開と馬場を、事実から確認</h1><p>取得した脚質・馬場・先行レースの結果を確認します。</p></div></div>}
     <section className={card}>
       <h3 className="flex items-center gap-2 font-bold text-[#0B2545]"><CloudSun className="h-5 w-5" />天候・馬場</h3>
@@ -134,7 +151,7 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
       <p className="mt-1 text-xs text-slate-500">{context.source ? `締切以前のJRDB観測を参照。取得 ${formatRaceTime(context.source.retrievedAt)}` : 'レース情報に登録されている値です。時点を確認した観測は未取得です。'}</p>
     </section>
     <details open={!workspace} className={card}><summary className="font-semibold text-sky-800">使用モデルと当日補正の詳細</summary><RuntimeModelPanel prediction={prediction} context={context} observations={cloud?.observations} /></details>
-    {workspace && <section className="rca-panel"><h2>脚質の配置を見る</h2><p className="rca-muted">JRDBの脚質を分類して表示（参考）。取得済み {knownProfiles} / {profiles.length}頭。</p><div className="mt-4 grid gap-3 sm:grid-cols-4">{Object.entries(styles).map(([code,label]) => <div key={code} className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="font-semibold">{label}</p><div className="mt-3 flex flex-wrap gap-2">{profiles.filter(h => Number(h.style) === Number(code)).map(h => <span key={h.no} className="rounded-full bg-white border border-blue-200 px-3 py-1 text-sm" title={h.name}>{h.no}</span>)}{!profiles.some(h => Number(h.style) === Number(code)) && <span className="rca-muted">{knownProfiles === profiles.length ? '該当馬なし' : '未確認'}</span>}</div></div>)}</div>{knownProfiles < profiles.length && <p className="rca-notice">脚質未取得：{profiles.filter(h => !styles[h.style]).map(h => `${h.no}番`).join('・')}。取得した情報が揃うまで展開の判定を保留します。</p>}<p className="rca-muted mt-3">学習・検証した補正がある場合だけ確率へ反映します。</p></section>}
+    {workspace && <section className="rca-panel"><h2>脚質の配置を見る</h2><p className="rca-muted">JRDBの脚質を分類して表示（参考）。取得済み {knownProfiles} / {profiles.length}頭。</p><p className="rca-muted mt-2">馬番を押すと、その馬の評価・過去実績・パドック情報を確認できます。</p><div className="mt-4 grid gap-3 sm:grid-cols-4">{Object.entries(styles).map(([code,label]) => <div key={code} role="group" aria-label={`${label}の馬`} className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="font-semibold">{label}</p><div className="mt-3 flex flex-wrap gap-2">{profiles.filter(h => Number(h.style) === Number(code)).map(h => horseLink(h,true))}{!profiles.some(h => Number(h.style) === Number(code)) && <span className="rca-muted">{knownProfiles === profiles.length ? '該当馬なし' : '未確認'}</span>}</div></div>)}</div>{knownProfiles < profiles.length && <div className="rca-notice"><p>脚質未取得：{profiles.filter(h => !styles[h.style]).map(h => `${h.no}番`).join('・')}。取得した情報が揃うまで展開の判定を保留します。</p><div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="脚質未取得の馬">{profiles.filter(h=>!styles[h.style]).map(h=>horseLink(h,true))}</div></div>}<p className="rca-muted mt-3">学習・検証した補正がある場合だけ確率へ反映します。</p></section>}
     <details open={!workspace} className={card}><summary className="font-semibold text-sky-800">脚質構成からの参考シナリオ</summary>
     <section className={card}>
       <h3 className="flex items-center gap-2 font-bold text-[#0B2545]"><Flag className="h-5 w-5" />展開予想</h3>
@@ -205,7 +222,7 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
             </tr></thead>
             <tbody className="divide-y divide-slate-100">
               {profiles.map(horse => <tr key={horse.no}>
-                <th scope="row" className="p-2 font-medium">{horse.no} {horse.name}</th>
+                <th scope="row" className="p-2 font-medium">{horseLink(horse)}</th>
                 <td className="p-2">{styles[horse.style] ?? '未取得'}</td>
                 <td className="p-2">{horse.goingRuns ? `${horse.goingTop3} / ${horse.goingRuns}` : '該当走なし'}</td>
               </tr>)}
@@ -213,5 +230,5 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
           </table>
         </div>}
     </section>
-  </div>
+  </div></div></>
 }
