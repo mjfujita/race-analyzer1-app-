@@ -106,7 +106,7 @@ export function FrozenAnchorAssessment({ forecast }) {
 }
 
 export default function AnchorAssessmentPanel({ field, odds, placeQuotes, releaseFieldSize, placePositions,
-  momentum, stress, onStressChange, initialSelection, defaultThreshold = 50, canSave, saving, actualLive, onSave, onOpenAbility, onOpenPace }) {
+  momentum, stress, onStressChange, initialSelection, defaultThreshold = 50, canSave, saving, actualLive, onSave, onOpenAbility, onOpenPace,grouping }) {
   const saved = initialSelection?.method === SINGLE_ANCHOR_METHOD ? initialSelection : null
   const [selected, setSelected] = useState(saved?.selected ?? null)
   const [skip, setSkip] = useState(saved?.decision === 'skip')
@@ -165,15 +165,16 @@ export default function AnchorAssessmentPanel({ field, odds, placeQuotes, releas
     {summary.issues.map(issue => <p key={issue} className="text-sm text-amber-900">{issue}</p>)}
     <details className="text-sm">
       <summary className="cursor-pointer font-semibold text-sky-800">全頭の妙味と人気の推移</summary>
+      <p className="text-xs text-slate-600 mt-2">{grouping?.complete?`グループは表示中の単勝オッズで分類（${grouping.manual?'グループ画面の手動区切り':`自動・倍率${grouping.threshold}`}）。能力の順位ではありません。`:'全頭の単勝オッズが揃っていないため、グループは判定保留です。'}{grouping?.differentObservation?'別の観測時点の手動区切りは適用していません。':''}{grouping?.reset?'区切りを適用できないため自動分類を表示しています。':''}</p>
       <div className="mt-2 overflow-x-auto">
         <table className="w-full whitespace-nowrap text-left text-sm" aria-label="全頭の軸候補比較">
           <thead className="border-b border-slate-200 text-xs text-slate-600"><tr>
-            {['馬番・馬名', '推定勝率', '推定3着内率', '単勝オッズ', '単勝期待回収率', '複勝期待回収率・下限', '単勝変化率', '人気順位', '判断'].map(title => <th key={title} scope="col" className="p-2">{title}</th>)}
+            {['グループ・馬番・馬名', '推定勝率', '推定3着内率', '単勝オッズ', '単勝期待回収率', '複勝期待回収率・下限', '単勝変化率', '人気順位', '判断'].map(title => <th key={title} scope="col" className="p-2">{title}</th>)}
           </tr></thead>
           <tbody>{summary.rows.map(horse => {
             const trend = momentum?.rows.get(horse.no)
             return <tr key={horse.no} className={summary.suggested.includes(horse.no) ? 'bg-sky-50' : 'border-b border-slate-100'}>
-              <th scope="row" className="p-2">{horse.no}番 {horse.name}</th>
+              <th scope="row" className="p-2"><span className="rca-pill mr-2" aria-label={`グループ ${grouping?.complete?grouping.membership[horse.no]??'判定保留':'判定保留'}`}>{grouping?.complete?grouping.membership[horse.no]??'—':'—'}</span>{horse.no}番 {horse.name}</th>
               <td className="p-2">{percent(horse.probability)}</td><td className="p-2">{percent(horse.top3Probability)}</td>
               <td className="p-2">{comparisonPrice(horse.odds)}</td>
               <td className="p-2">{percent(horse.expectedReturn)}</td><td className="p-2">{percent(horse.placeReturn)}</td>

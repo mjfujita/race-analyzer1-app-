@@ -15,7 +15,7 @@ import { useDeviceSession } from './useDeviceSession.js'
 import { useCompanion } from './useCompanion.js'
 import { useRaceCatalog } from './useRaceCatalog.js'
 import { applyCloudData, fetchCloudRace, fetchRaceDashboard, enrichCloudHorses, syncLedgerToCloud } from './cloudStore.js'
-import React, { useState, useMemo, useEffect, useRef } from 'react'
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import {
   ChevronRight, Search, Target, TrendingUp, AlertTriangle,
   CheckCircle2, Sparkles, ArrowUpDown,
@@ -691,6 +691,8 @@ function MainApp({ session, onLogout }) {
   const [dates, setDates] = useState([])
 
   const [tab, setTab] = useState('today')
+  const [groupDisplay,setGroupDisplay]=useState(null)
+  const updateGroupDisplay=useCallback(value=>setGroupDisplay(previous=>JSON.stringify(previous)===JSON.stringify(value)?previous:value),[])
   const [dashboard, setDashboard] = useState({ data: null, loading: true, error: null })
   const [reviewForecastId, setReviewForecastId] = useState('')
   const [initialForecastId, setInitialForecastId] = useState('')
@@ -1726,12 +1728,12 @@ function MainApp({ session, onLogout }) {
             initialForecastId={initialForecastId}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
             onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
-          {tab === 'groups' && (raceInfo ? <GroupWorkspace race={analysisRace} horses={analysisHorses} statistics={analysisStatistics}
+          {tab === 'groups' && (raceInfo ? <GroupWorkspace groupDisplay={groupDisplay} onGroupDisplayChange={updateGroupDisplay} race={analysisRace} horses={analysisHorses} statistics={analysisStatistics}
             userId={session.user.id} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
             syncedGroupReceipts={sync.data?.groupReceipts}
             loading={sync.loading}
             review={sync.error ? null : sync.data?.forecastReview} onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
-          {tab === 'anchors' && (raceInfo ? <FinalForecastPage anchorMode embedded
+          {tab === 'anchors' && (raceInfo ? <FinalForecastPage groupDisplay={groupDisplay} anchorMode embedded
             key={`anchors:${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={analysisRace} horses={analysisHorses}
             userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
             syncedReceipts={receipts} review={sync.error ? null : sync.data?.forecastReview} initialForecastId={initialForecastId}

@@ -12,6 +12,7 @@ import AnchorAssessmentPanel, { FrozenAnchorAssessment } from './AnchorAssessmen
 import { readSettings } from './workspaceSettings.js'
 import { SINGLE_ANCHOR_METHOD } from './anchorAssessment.js'
 import { oddsMomentum } from './oddsMomentum.js'
+import {displayGroups} from './groupDisplay.js'
 import { buildAbilityField, analyzeMarket } from './marketModel.js'
 import { BET_TYPES, RISK_PROFILES, buildPortfolio, officialFrames, parseQuotes } from './portfolio.js'
 import { ledgerScope, readLedger, writeLedgerExclusive, appendForecast, appendPurchase, appendSettlement,
@@ -59,7 +60,7 @@ export default function FinalForecastPage(props) {
   return <ForecastWorkspace key={`${scope.userId}:${scope.raceDate}:${scope.raceId}`} {...props} scope={scope} />
 }
 
-function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger, syncedReceipts, review, initialForecastId, anchorMode = false, recordsOnly = false, embedded = false }) {
+function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbility, onOpenPace, cloudRevision = 0, onSyncLedger, syncedReceipts, review, initialForecastId, anchorMode = false, recordsOnly = false, embedded = false,groupDisplay }) {
   const [loaded] = useState(() => storedLedger(scope))
   const [ledger, setLedger] = useState(loaded.ledger)
   const [savedReceipts, setSavedReceipts] = useState({})
@@ -105,6 +106,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
   const [selectedForecastId, setSelectedForecastId] = useState(initialForecastId || latestSaved?.id || '')
   const [importing, setImporting] = useState(false)
   const current = usableHistory.find(item => item.id === snapshotId) ?? usableHistory[0]
+  const displayGrouping=useMemo(()=>displayGroups({race,field:horses,snapshot:current,preference:groupDisplay}),[race,horses,current,groupDisplay])
   const analysisCutoffAt = anchorMode && validTimestamp(current?.retrievedAt) && validTimestamp(cutoffAt)
     ? new Date(Math.min(Date.parse(current.retrievedAt), Date.parse(cutoffAt))).toISOString() : cutoffAt
   const snapshotModel = !anchorMode || model && [model.generatedAt, model.adoptedAt ?? model.importedAt]
@@ -304,7 +306,7 @@ function ForecastWorkspace({ race, horses, statistics, userId, scope, onOpenAbil
         {usableHistory.map(item => <option key={item.id} value={item.id}>{item.time} {snapshotTiming(item, race).eligible ? '時刻証跡あり' : '過去検証用'}</option>)}
       </select></label></details>
       {current && <p className="text-xs text-slate-600">観測 {formatRaceTime(current.observedAt)} ／ 取得 {formatRaceTime(current.retrievedAt)}。{timing.reason}</p>}
-      <AnchorAssessmentPanel field={prediction.field} odds={current?.odds ?? {}} stress={stress} onStressChange={setStress}
+      <AnchorAssessmentPanel field={prediction.field} odds={current?.odds ?? {}} stress={stress} onStressChange={setStress} grouping={displayGrouping}
         defaultThreshold={preferences.minTop3} initialSelection={latestSaved?.parameters.anchorSelection} placeQuotes={automaticQuotes}
         releaseFieldSize={config.releaseFieldSize} placePositions={config.placePositions} momentum={momentum}
         canSave={Boolean(ability.complete && market.complete && current && !loaded.error && !records.error)}
