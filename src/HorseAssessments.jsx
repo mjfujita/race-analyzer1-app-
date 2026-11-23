@@ -7,8 +7,8 @@ const recordText=record=>record.runs===null?'比較材料未取得':record.runs?
 const runDate=date=>date.length===8?`${date.slice(0,4)}/${date.slice(4,6)}/${date.slice(6)}`:`${date.slice(0,4)}/${date.slice(4,6)}（日付未取得）`
 const signed=value=>value>0?`+${value}`:value===0?'±0':String(value)
 
-export default function HorseAssessments({race,horses=[],statistics=[],userId,asOf=null}){
-  const [selected,setSelected]=useState('all'),[beforeCutoff,setBeforeCutoff]=useState(true)
+export default function HorseAssessments({race,horses=[],statistics=[],userId,asOf=null,initialHorseNo='all',detail=false}){
+  const [selected,setSelected]=useState(String(initialHorseNo)),[beforeCutoff,setBeforeCutoff]=useState(true)
   const assessments=useMemo(()=>assessHorses(race,horses,statistics),[race,horses,statistics])
   // Read the existing owner-scoped cache only; observations never change the probability model here.
   const cloud=readCloudRace(userId,race)
@@ -17,7 +17,7 @@ export default function HorseAssessments({race,horses=[],statistics=[],userId,as
   const sourceLabel=/^https?:\/\/(?:www\.)?jrdb\.com(?:\/|$)/i.test(source?.source??'')?'JRDB直前情報':'取得済み直前情報'
   const rows=assessments.filter(h=>selected==='all'||String(h.no)===selected).sort((a,b)=>a.no-b.no)
   return <section className="rca-stack" aria-label="各馬の評価">
-    <div className="rca-panel"><h1 className="text-xl font-bold text-[#0B2545]">各馬の能力・今回の評価</h1><p className="rca-muted mt-2">過去の実績、今回の条件、パドック・馬体重を1頭ずつ確認します。</p>
+    <div className="rca-panel"><h1 className="text-xl font-bold text-[#0B2545]">{detail&&rows.length===1?`${rows[0].no} ${rows[0].name}の詳細`:'各馬の能力・今回の評価'}</h1><p className="rca-muted mt-2">過去の実績、今回の条件、パドック・馬体重を1頭ずつ確認します。</p>
       <div className="flex flex-wrap items-center gap-4 mt-4"><label className="text-sm font-semibold flex flex-wrap items-center gap-2 min-w-0 max-w-full">表示する馬<select className="max-w-full min-w-0 rounded-lg border border-slate-300 p-2" value={selected} onChange={e=>setSelected(e.target.value)}><option value="all">全頭</option>{assessments.map(h=><option key={h.no} value={h.no}>{h.no} {h.name}</option>)}</select></label>
         <label className="text-sm flex gap-2 items-start"><input type="checkbox" className="mt-1" checked={beforeCutoff} onChange={e=>setBeforeCutoff(e.target.checked)} />発走10分前までに取得した直前情報のみ</label></div>
       <p className="rca-muted mt-3">直前情報の取得：{source?formatRaceTime(source.retrievedAt):'該当する記録なし'} ／ 判断締切：{formatRaceTime(context.cutoffAt)}</p>

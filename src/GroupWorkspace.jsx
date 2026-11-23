@@ -8,6 +8,7 @@ import { formatRaceTime, snapshotTiming, raceDateISO, raceTimestamp } from './ra
 import { parseQuotes, ticketKey } from './portfolio.js'
 import { PurchaseEditor, SettlementEditor } from './FinalForecastPage.jsx'
 import { downloadJson } from './fileIO.js'
+import HorseAssessments from './HorseAssessments.jsx'
 
 const yen = n => `${n.toLocaleString('ja-JP')}円`
 const betLabel = t => `${t.type} ${t.numbers.join(t.type === '3連複' ? '−' : '→')}`
@@ -50,6 +51,12 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   const [receipts,setReceipts] = useState(data.cloud?.groupReceipts ?? {})
   const [error,setError] = useState(''), [message,setMessage] = useState(''), [busy,setBusy] = useState(false)
   const saving = useRef(false)
+  const [horseDetail,setHorseDetail]=useState(null)
+  const returnTarget=useRef(null),returnPosition=useRef(0),detailBack=useRef(null)
+  useEffect(()=>{
+    if(horseDetail){detailBack.current?.focus({preventScroll:true});detailBack.current?.scrollIntoView({block:'start'})}
+    else if(returnTarget.current?.isConnected){returnTarget.current.focus({preventScroll:true});window.scrollTo(0,returnPosition.current)}
+  },[horseDetail])
   useEffect(() => {
     const next = load(userId,race)
     setData(next)
@@ -127,8 +134,17 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   function changeObservation(id) {
     setSnapshotId(id===data.history[0]?.id?'':id); setBoundaries(null); setSlotChoice(null); setOverrides({}); setQuoteText(''); setQuoteObservedAt(''); setQuoteRetrievedAt(null)
   }
+  function openHorse(no,event){
+    returnTarget.current=event.currentTarget;returnPosition.current=window.scrollY
+    setHorseDetail({no,asOf:current?.retrievedAt??null})
+  }
   const disabled = busy || Boolean(data.error) || Boolean(analysis.error) || !grouping?.complete || field.some(h => h.cancelled)
-  return <div className="rca-stack rca-groups">
+  return <>
+    {horseDetail&&<div className="rca-stack" aria-label="グループから開いた馬の詳細">
+      <div><button type="button" className="rca-secondary" ref={detailBack} onClick={()=>setHorseDetail(null)}>← グループ・買い目へ戻る</button><p className="rca-muted mt-2">グループ・買い目の入力内容を保持しています。</p></div>
+      <HorseAssessments key={horseDetail.no} {...{race,horses,statistics,userId,cloudRevision}} initialHorseNo={horseDetail.no} detail asOf={horseDetail.asOf} />
+    </div>}
+    <div hidden={Boolean(horseDetail)} inert={Boolean(horseDetail)}><div className="rca-stack rca-groups">
     <div className="rca-page-title"><div><h1>グループ・買い目比較</h1><p>人気のまとまりと能力を確認し、着順を変えた案を比較します。</p></div>{onOpenAbility && <button className="rca-secondary" onClick={onOpenAbility}>能力・適性を詳しく見る</button>}</div>
     {loading && <p role="status" className="rca-notice">保存済みデータを読み込み中です。</p>}
     {(error || data.error) && <p role="alert" className="rca-error">{error || data.error}</p>}{message && <p role="status" className="rca-notice">{message}</p>}
@@ -144,11 +160,11 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       {!current && <p className="rca-notice">実オッズの取得待ちです。能力・適性から記録・取込みできます。</p>}
       {current && <p className="rca-notice">{timing.eligible ? '締切前の時刻証跡あり。保存時にも判定します。' : `過去検証用：${timing.reason}`} 取得元：{current.source ?? '未記録'}。{grouping?.manual ? '手動調整中（自動案も保存）' : '自動グループ'}</p>}
       {analysis.error && <p role="alert" className="rca-error">{analysis.error}</p>}
-      {grouping && <><div className="rca-group-cards">{grouping.groups.map(g => <div key={g.label} className="rca-group-card"><strong>{g.label}</strong><span>{g.horses.length}頭 · {g.horses[0].odds}〜{g.horses.at(-1).odds}倍</span><p>{g.horses.map(h => `${h.no} ${h.name}`).join(' ／ ')}</p></div>)}</div>
+      {grouping && <><p className="rca-muted mt-3">馬名を押すと、その馬の評価・過去走・パドック情報を確認できます。</p><div className="rca-group-cards">{grouping.groups.map(g => <div key={g.label} className="rca-group-card"><strong>{g.label}</strong><span>{g.horses.length}頭 · {g.horses[0].odds}〜{g.horses.at(-1).odds}倍</span><ul className="rca-group-horses" aria-label={`${g.label}グループの馬`}>{g.horses.map(h=><li key={h.no}><button type="button" className="rca-group-horse-link" aria-label={`${h.no}番 ${h.name}の詳細`} onClick={event=>openHorse(h.no,event)}><span>{h.no} {h.name}</span><span aria-hidden="true">›</span></button></li>)}</ul></div>)}</div>
       {!grouping.complete && <p role="alert" className="rca-error">オッズ未取得：{grouping.missing.join('・')}番。全頭が揃うまで保存を保留します。</p>}
       <div className="overflow-x-auto"><table className="rca-list-table" aria-label="グループと能力の比較"><thead><tr>{['区切り','群・馬番・馬名','単勝／推移','取得済みの能力材料','候補'].map(t => <th key={t}>{t}</th>)}</tr></thead><tbody>{grouping.groups.flatMap(g => g.horses).map((h,i,rows) => <tr key={h.no}>
         <td><input type="checkbox" aria-label={`${h.no}番の前で区切る`} disabled={i === 0 || h.odds === rows[i-1]?.odds} checked={grouping.boundaries.includes(h.no)} onChange={() => { setBoundaries(toggle(grouping.boundaries,h.no)); setSlotChoice(null); setOverrides({}) }} /></td>
-        <th scope="row"><span className="rca-pill">{grouping.membership[h.no]}</span> {h.no} {h.name}</th>
+        <th scope="row"><span className="rca-pill">{grouping.membership[h.no]}</span> <button type="button" className="rca-horse-name" aria-label={`${h.no}番 ${h.name}の詳細`} onClick={event=>openHorse(h.no,event)}>{h.no} {h.name}</button></th>
         <td>{h.odds.toFixed(1)}倍{previous?.odds[h.no] && <small className="block">{((h.odds/previous.odds[h.no]-1)*100).toFixed(1)}% · 群 {previousGroups?.membership[h.no] ?? '—'}（自動）→{grouping.membership[h.no]}{grouping.manual ? '（手動）' : '（自動）'}</small>}</td>
         <td className="rca-evidence">{field.find(row => row.no === h.no)?.evidence}<small className="block">距離実績は同じ芝・ダートの±200m、直近５走。取得済み参考情報・確率への変換なし</small></td>
         <td><input type="checkbox" aria-label={`${h.no}番を候補に含める`} checked={!excluded.includes(h.no)} onChange={() => { setExcluded(toggle(excluded,h.no)); setOverrides({}) }} /></td>
@@ -187,7 +203,7 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <p className="rca-muted">このレースの実購入の精算済み損益：{yen(summarizeLedger(ledger).profit)}。予想だけの試算は含みません。</p>
       <div className="flex flex-wrap gap-3 mt-4"><button className="rca-secondary" onClick={() => downloadJson(`race-records-${race.id}.json`,JSON.parse(exportLedger(ledger)))}>記録をJSONで書き出す</button><button className="rca-secondary" disabled={busy || Boolean(data.error)} onClick={() => persist(ledger,'保存済み記録を再送しました。')}>保存済み記録を再同期</button></div>
     </section>
-  </div>
+  </div></div></>
 }
 
 export function GroupPlanResult({ plan, outcome, receipt, ownerId }) {

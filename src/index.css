@@ -82,6 +82,12 @@ button:disabled { cursor: not-allowed; }
 .rca-group-card { border:1px solid #dce5ef; border-radius:12px; padding:16px; min-width:0; overflow-wrap:anywhere; background:#f9fbfd; }
 .rca-group-card strong { display:block; font-size:23px; color:#0b2545; margin:5px 0; }
 .rca-group-card span,.rca-group-card p,.rca-group-card small { font-size:13px; line-height:1.8; }
+.rca-group-horses { display:grid; gap:4px; margin-top:10px; padding:0; list-style:none; }
+.rca-group-horse-link { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; min-height:44px; padding:8px 10px; border:1px solid #dce5ef; border-radius:8px; background:#fff; color:#195d94; text-align:left; font-weight:650; cursor:pointer; }
+.rca-group-horse-link span:first-child { min-width:0; overflow-wrap:anywhere; }
+.rca-group-horse-link:hover { background:#eaf3fc; border-color:#8ab4db; }
+.rca-horse-name { min-height:44px; color:#195d94; text-decoration:underline; text-underline-offset:3px; cursor:pointer; text-align:left; }
+.rca-group-horse-link:focus-visible,.rca-horse-name:focus-visible { outline:3px solid #236dba; outline-offset:2px; }
 .rca-group-selected { border-color:#397cca; background:#eef6ff; box-shadow:inset 0 0 0 1px #397cca; }
 .rca-group-slots { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:20px 0; }
 .rca-group-slots fieldset { border:1px solid #dce5ef; border-radius:10px; padding:12px; }
