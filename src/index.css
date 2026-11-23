@@ -177,3 +177,23 @@ button:disabled { cursor: not-allowed; }
 .rca-group-probability .rca-group-contribution strong { display:inline; font-size:13px; margin:0; }
 
 .rca-group-strength-metrics>div { background:#e4f1fd; border:1px solid #b8d6f0; }
+
+.rca-group-card-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+.rca-group-card .rca-group-horse-details { margin:12px 0 0; }
+.rca-group-horse-details[open]>.rca-group-summary .rca-group-close { display:inline; }
+.rca-group-horse-details[open]>.rca-group-summary .rca-group-open { display:none; }
+.rca-group-horse-details[open]>.rca-group-summary svg { transform:rotate(180deg); }
+.rca-group-add { display:grid; grid-template-columns:repeat(auto-fit,minmax(80px,1fr)); gap:8px; }
+.rca-group-add button { min-height:44px; padding:10px 6px; font-size:12px; }
+.rca-group-add button[aria-pressed=true] { color:white; background:#195d94; border-color:#195d94; }
+.rca-group-review-button { width:100%; margin-top:10px; min-height:44px; }
+.rca-card-prediction { margin:18px 0; padding:14px; border:1px solid #cfe3f2; border-radius:12px; }
+.rca-card-prediction>h3 { font-size:16px; font-weight:700; }
+.rca-card-prediction>p { margin:10px 0; }
+.rca-groups .rca-group-customize { width:100%; min-width:0; table-layout:fixed; }
+.rca-group-customize .rca-cut-column,.rca-group-customize .rca-include-column { width:44px; }
+.rca-group-customize .rca-odds-column { width:68px; }
+.rca-groups .rca-group-customize tbody th,.rca-groups .rca-group-customize td:nth-child(3) { min-width:0; }
+.rca-groups .rca-group-customize th,.rca-groups .rca-group-customize td { padding:8px 4px; font-size:12px; overflow-wrap:anywhere; }
+.rca-group-customize .rca-horse-name { max-width:100%; font-size:13px; }
+.rca-group-customize .rca-pill { display:inline-flex; padding:2px 6px; font-size:11px; }

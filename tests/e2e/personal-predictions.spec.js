@@ -156,7 +156,7 @@ test('personal registration reaches authenticated cloud storage and restores wit
   await page.getByRole('button',{name:'グループ・買い目',exact:true}).click()
   await page.getByLabel('2番の前で区切る',{exact:true}).check()
   await page.getByLabel('3番を候補に含める',{exact:true}).uncheck()
-  await page.getByRole('button',{name:'私の予想を登録',exact:true}).click()
+  await page.getByRole('button',{name:'私の予想を開く',exact:true}).click()
   await page.getByRole('button',{name:'新しい予想を入力する',exact:true}).click()
   await page.getByRole('group',{name:'1着のグループ',exact:true}).getByRole('checkbox',{name:/^C/}).check()
   await page.getByRole('group',{name:'2着のグループ',exact:true}).getByRole('checkbox',{name:/^A/}).check()

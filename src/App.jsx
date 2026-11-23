@@ -1652,7 +1652,7 @@ function MainApp({ session, onLogout }) {
   const RaceInfoHeader = () => <><div className="rca-page-title"><div><button type="button" className="text-xs text-slate-500 mb-3" onClick={() => setTab('today')}>本日のレース ›</button><h1>{raceInfo.place ?? raceInfo.course ?? PLACE_NAMES[raceInfo.placeCode]}{raceInfo.raceNo}R <span className="text-lg font-normal text-slate-500">{raceInfo.name}</span></h1><p>{fmtDate(raceInfo.raceDate)}　{/^\d+$/.test(String(raceInfo.distance)) ? `${analysisRace.surface ?? ''}${raceInfo.distance}m` : raceInfo.distance}　{raceInfo.fieldSize}頭　{fmtTime(String(raceInfo.postTime ?? '').replace(':','')) ? `${fmtTime(String(raceInfo.postTime).replace(':',''))} 発走` : '発走時刻未取得'}</p></div><button type="button" className="rca-secondary" onClick={() => openRaceList(raceInfo.raceDate)}>別のレースを選ぶ</button></div><CaptureControls key={`${raceInfo.raceDate}:${raceInfo.id}`} race={raceInfo} onSync={refreshCompanion} syncing={sync.loading} syncError={sync.error} /></>
 
   return (
-    <WorkspaceShell tab={tab} onNavigate={navigate} onLogout={onLogout} email={session.user.email}
+    <WorkspaceShell tab={tab} raceKey={`${raceInfo?.raceDate??''}:${raceInfo?.id??''}`} onNavigate={navigate} onLogout={onLogout} email={session.user.email}
       raceHeader={showRaceHeader ? RaceInfoHeader() : null} footer={<span>UI {UI_VERSION} · {COMMIT_HASH}</span>}>
           {tab === 'today' && <RaceDayDashboard userId={session.user.id} dashboard={dashboard} placeNames={PLACE_NAMES}
             onNavigate={setTab} onOpenRace={race => loadCollectedRace(race, { fromDashboard: true })}
