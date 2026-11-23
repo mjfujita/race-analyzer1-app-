@@ -14,11 +14,16 @@ test('PC approval and one-use phone pairing survive reload, while revocation blo
   const companion=createCompanionHandler({service,ownerId,authenticateUser:authenticateAccount,
     authenticateDevice:async req=>(await auth.authenticateDevice(req))?.user,checkDeviceWrite:checkDeviceOrigin})
   let code
+  const sessionFailure=new Map()
   async function wire(context){
     await context.route('https://*.supabase.co/**',route=>route.fulfill({status:503,json:{message:'fixture unavailable'}}))
     await context.route('https://*.supabase.co/auth/v1/logout*',route=>route.fulfill({status:200,json:{}}))
     await context.route('**/api/**',async route=>{
       const req=route.request(),url=new URL(req.url()),headers=await req.allHeaders()
+      if(url.pathname==='/api/device'&&req.method()==='GET'&&!url.search&&sessionFailure.has(context)){
+        const malformed=sessionFailure.get(context)==='malformed'
+        return route.fulfill({status:malformed?200:503,json:malformed?{}:{error:{code:'device_unavailable'}}})
+      }
       const response=await request(url.pathname==='/api/device'?device:companion,{
         method:req.method(),token:headers.authorization?.slice(7)??null,
         headers:{...headers,host:url.host},query:Object.fromEntries(url.searchParams),body:req.postData()??undefined,
@@ -65,6 +70,29 @@ test('PC approval and one-use phone pairing survive reload, while revocation blo
     await mobile.reload()
     await mobile.getByRole('button',{name:'端末認証',exact:true}).click()
     await expect(mobile.getByText('本人のスマホ（この端末）')).toBeVisible()
+    const approvedCookie=(await phone.cookies()).find(c=>c.name==='__Host-race_device')
+    expect(approvedCookie.expires-Date.now()/1000).toBeGreaterThan(179*86400)
+    // A transient recheck failure must block interaction, retain the current
+    // screen and cookie, and never falsely request another phone registration.
+    sessionFailure.set(phone,'unavailable')
+    await mobile.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')))
+    await expect(mobile.getByRole('heading',{name:'端末の承認を確認できません',exact:true})).toBeVisible()
+    await expect(mobile.getByRole('heading',{name:'この端末は未承認です',exact:true})).toHaveCount(0)
+    await expect(mobile.getByRole('button',{name:'端末一覧を更新'})).toBeHidden()
+    expect((await phone.cookies()).find(c=>c.name==='__Host-race_device')).toEqual(approvedCookie)
+    sessionFailure.delete(phone)
+    await mobile.getByRole('button',{name:'認証を再確認',exact:true}).click()
+    await expect(mobile.getByText('本人のスマホ（この端末）')).toBeVisible()
+    // A failed initial check (including a malformed 200) is distinct from a
+    // verified null session. Recovery does not require JWT or a new QR.
+    sessionFailure.set(phone,'malformed')
+    await mobile.reload()
+    await expect(mobile.getByRole('heading',{name:'端末の承認を確認できません',exact:true})).toBeVisible()
+    await expect(mobile.getByRole('heading',{name:'この端末は未承認です',exact:true})).toHaveCount(0)
+    sessionFailure.delete(phone)
+    await mobile.getByRole('button',{name:'認証を再確認',exact:true}).click()
+    await mobile.getByRole('button',{name:'端末認証',exact:true}).click()
+    await expect(mobile.getByText('本人のスマホ（この端末）')).toBeVisible()
     expect(await mobile.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
     await mobile.screenshot({path:'.qa/device-phone-fixture.png',fullPage:true})
     const replayResult=await request(device,{method:'POST',token:null,body:{action:'claim',code},headers:{host:'127.0.0.1:4183',origin:'http://127.0.0.1:4183','x-race-device':'1'}})
@@ -80,6 +108,32 @@ test('PC approval and one-use phone pairing survive reload, while revocation blo
     await expect(page.getByRole('heading',{name:'開催情報を確認中',exact:true})).toBeVisible()
     expect(errors).toEqual([])
   }finally{await pc.close();await phone.close()}
+})
+
+test('a stalled session check times out and recovers on network return without re-enrollment',async({page})=>{
+  let stalled=false,requests=0
+  await page.route('https://*.supabase.co/**',route=>route.fulfill({status:503,json:{message:'fixture unavailable'}}))
+  await page.route('**/api/device',route=>{
+    if(route.request().method()==='POST')return route.fulfill({json:{devices:[],currentId:'fixture-phone'}})
+    requests++
+    if(stalled)return // Leave the request pending until the client's deadline aborts it.
+    return route.fulfill({json:{session:{user:{id:'fixture-owner'},device:{id:'fixture-phone'}}}})
+  })
+  await page.route('**/api/companion**',route=>route.fulfill({status:503,json:{error:{message:'fixture unavailable'}}}))
+  await page.goto('/')
+  await page.getByRole('button',{name:'端末認証',exact:true}).click()
+  await expect(page.getByText('この端末は承認済みです。次回から同じURLを開くだけで利用できます。')).toBeVisible()
+  await page.clock.install()
+  const before=requests
+  stalled=true
+  await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')))
+  await expect.poll(()=>requests).toBeGreaterThan(before)
+  await page.clock.runFor(15001)
+  await expect(page.getByRole('heading',{name:'端末の承認を確認できません',exact:true})).toBeVisible()
+  await expect(page.getByRole('heading',{name:'この端末は未承認です',exact:true})).toHaveCount(0)
+  stalled=false
+  await page.evaluate(()=>window.dispatchEvent(new Event('online')))
+  await expect(page.getByText('この端末は承認済みです。次回から同じURLを開くだけで利用できます。')).toBeVisible()
 })
 
 test('cookie-only PACI download uses the protected endpoint and opens a gzip SQLite database',async({page})=>{

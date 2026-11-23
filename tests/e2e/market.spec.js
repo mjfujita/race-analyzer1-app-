@@ -49,6 +49,7 @@ test('invalid budget, incomplete data, corrupt storage, and unauthenticated stat
   await expect(page.getByText('締切以前の記録なし',{exact:true})).toHaveCount(1)
   await page.goto('/market-preview.html?state=error')
   await expect(page.getByRole('alert')).toBeVisible()
+  await page.route('**/api/device',route=>route.fulfill({json:{session:null}}))
   await page.goto('/')
   await expect(page.getByRole('heading',{name:'この端末は未承認です'})).toBeVisible()
   await page.getByRole('button',{name:'本人確認による復旧'}).click()
