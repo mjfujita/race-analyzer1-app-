@@ -40,6 +40,9 @@ export function fetchRaceDashboard(signal) {
 export function fetchRaceCatalog(signal) {
   return request('/api/companion?catalog=1', { signal })
 }
+export function fetchRaceProgress(raceDate,signal){
+  return request(`/api/companion?progress=1&raceDate=${encodeURIComponent(raceDate)}`,{signal})
+}
 
 export function requestRaceCapture(race,signal) {
   return request('/api/companion', { signal,body: { action: 'request-capture', raceId: String(race.id), raceDate: raceDateISO(race)?.replaceAll('-', '') } })

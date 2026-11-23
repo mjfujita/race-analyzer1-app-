@@ -7,6 +7,8 @@ import DataManagement from './DataManagement.jsx'
 import WorkspaceShell, { isRacePage } from './WorkspaceShell.jsx'
 import ReviewWorkspace from './ReviewWorkspace.jsx'
 import RaceDayDashboard from './RaceDayDashboard.jsx'
+import RaceCatalogList from './RaceCatalogList.jsx'
+import RaceOverview from './RaceOverview.jsx'
 import GroupWorkspace from './GroupWorkspace.jsx'
 import DeviceManager, { DeviceGate } from './DeviceManager.jsx'
 import CaptureControls from './CaptureControls.jsx'
@@ -796,20 +798,20 @@ function MainApp({ session, onLogout }) {
     } catch (err) { console.error(err); alert('評価データの読み込みに失敗: ' + err.message) }
   }
 
-  const loadCollectedRace = async (item, { fromDashboard = false } = {}) => {
+  const loadCollectedRace = async (item, { fromDashboard = false, goTab = null } = {}) => {
     const raceKey = item.id ?? item.raceId
     try {
       setInitialForecastId(fromDashboard ? item.receipt?.forecastId ?? '' : '')
-      if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, item.hasGroupPlan ? 'groups' : 'anchors', fromDashboard ? item : null); return }
+      if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, goTab ?? (item.hasGroupPlan ? 'groups' : 'anchors'), item); return }
       const metadata = { ...item, id: raceKey }
       const payload = await fetchCloudRace(metadata)
-      const received = payload.race
-      if (!received?.horses?.length) throw new Error('このレースは出走馬を取得中です。')
-      await applyCloudData(session.user.id, metadata, received.horses, payload)
+      const received = payload.race ?? (goTab === 'raceInfo' ? { ...metadata, horses: [] } : null)
+      if (!received?.horses?.length && goTab !== 'raceInfo') throw new Error('このレースは出走馬を取得中です。')
+      await applyCloudData(session.user.id, metadata, received.horses ?? [], payload)
       setRaceInfo({ ...received, id: raceKey, liveOnly: true, place: received.place ?? PLACE_NAMES[received.placeCode],
         surface: received.surface ?? SURFACE_NAMES[received.surfaceCode] })
-      setHorses(received.horses.map(horse => ({ ...horse, id: horse.id ?? `${raceKey}-${horse.no}`, pastRuns: horse.pastRuns ?? [] })))
-      setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab(item.hasGroupPlan ? 'groups' : 'anchors')
+      setHorses((received.horses ?? []).map(horse => ({ ...horse, id: horse.id ?? `${raceKey}-${horse.no}`, pastRuns: horse.pastRuns ?? [] })))
+      setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab(goTab ?? (item.hasGroupPlan ? 'groups' : 'anchors'))
     } catch (error) {
       if (fromDashboard) throw error
       alert(error.message)
@@ -977,30 +979,10 @@ function MainApp({ session, onLogout }) {
             </div></details>}
           </div>
         )}
-        <div className="grid gap-4 md:grid-cols-[repeat(auto-fit,minmax(230px,1fr))]">
-          {groups.map((g) => (
-            <div key={g.place_code} className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-4 py-3 bg-[#0B2545] text-white flex items-center justify-between">
-                <span className="font-bold tracking-wide">{g.place}</span><span className="text-xs text-slate-300">{g.items.length}R</span>
-              </div>
-              <div className="divide-y divide-slate-100">
-                {g.items.map((r) => (
-                  <button key={r.race_key} onClick={() => r.cloudRace ? loadCollectedRace(r.cloudRace) : loadAsTarget(r.race_key)} className="w-full text-left px-3 py-2.5 hover:bg-slate-50 flex items-start gap-2.5">
-                    <div className="shrink-0 w-9 text-center">
-                      <div className="text-sm font-bold text-[#0B2545] tabular-nums">{r.race_no}R</div>
-                      <div className="text-[10px] text-slate-400 tabular-nums">{fmtTime(r.post_time)}</div>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-slate-800 truncate">{r.race_name}</div>
-                      <div className="text-[11px] text-slate-500 tabular-nums mt-0.5">{r.surface}{r.distance}m ・ {r.field_size}頭</div>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-slate-300 self-center" />
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        <RaceCatalogList groups={groups} date={archiveDate} onOpen={async row=>{
+          const metadata=row.cloudRace??{id:row.race_key,raceDate:archiveDate,place:row.place,placeCode:row.place_code,raceNo:row.race_no,name:row.race_name,postTime:row.post_time,surface:row.surface,distance:row.distance,fieldSize:row.field_size}
+          await loadCollectedRace(metadata,{fromDashboard:true,goTab:'raceInfo'})
+        }} />
         {!db && renderDbStatus()}
       </div>
     )
@@ -1667,7 +1649,7 @@ function MainApp({ session, onLogout }) {
   // ================================================================
   const navigate = id => id === 'forecastReview' ? openForecastReview() : setTab(id)
   const showRaceHeader = raceInfo && (isRacePage(tab) || tab === 'records')
-  const RaceInfoHeader = () => <><div className="rca-page-title"><div><button type="button" className="text-xs text-slate-500 mb-3" onClick={() => setTab('today')}>本日のレース ›</button><h1>{raceInfo.place ?? raceInfo.course ?? PLACE_NAMES[raceInfo.placeCode]}{raceInfo.raceNo}R <span className="text-lg font-normal text-slate-500">{raceInfo.name}</span></h1><p>{fmtDate(raceInfo.raceDate)}　{/^\d+$/.test(String(raceInfo.distance)) ? `${analysisRace.surface ?? ''}${raceInfo.distance}m` : raceInfo.distance}　{raceInfo.fieldSize}頭　{fmtTime(String(raceInfo.postTime ?? '').replace(':','')) ? `${fmtTime(String(raceInfo.postTime).replace(':',''))} 発走` : '発走時刻未取得'}</p></div><button type="button" className="rca-secondary" onClick={() => openRaceList()}>別のレースを選ぶ</button></div><CaptureControls key={`${raceInfo.raceDate}:${raceInfo.id}`} race={raceInfo} onSync={refreshCompanion} syncing={sync.loading} syncError={sync.error} /></>
+  const RaceInfoHeader = () => <><div className="rca-page-title"><div><button type="button" className="text-xs text-slate-500 mb-3" onClick={() => setTab('today')}>本日のレース ›</button><h1>{raceInfo.place ?? raceInfo.course ?? PLACE_NAMES[raceInfo.placeCode]}{raceInfo.raceNo}R <span className="text-lg font-normal text-slate-500">{raceInfo.name}</span></h1><p>{fmtDate(raceInfo.raceDate)}　{/^\d+$/.test(String(raceInfo.distance)) ? `${analysisRace.surface ?? ''}${raceInfo.distance}m` : raceInfo.distance}　{raceInfo.fieldSize}頭　{fmtTime(String(raceInfo.postTime ?? '').replace(':','')) ? `${fmtTime(String(raceInfo.postTime).replace(':',''))} 発走` : '発走時刻未取得'}</p></div><button type="button" className="rca-secondary" onClick={() => openRaceList(raceInfo.raceDate)}>別のレースを選ぶ</button></div><CaptureControls key={`${raceInfo.raceDate}:${raceInfo.id}`} race={raceInfo} onSync={refreshCompanion} syncing={sync.loading} syncError={sync.error} /></>
 
   return (
     <WorkspaceShell tab={tab} onNavigate={navigate} onLogout={onLogout} email={session.user.email}
@@ -1699,7 +1681,7 @@ function MainApp({ session, onLogout }) {
               </p>
             </section>
           </RaceDayDashboard>}
-          {tab === 'races' && <><div className="rca-page-title"><div><h1>過去開催・PACIレース一覧</h1><p>既存DBと同期済み開催を確認できます。</p></div><button type="button" className="rca-secondary" onClick={() => setTab('today')}>本日のレースへ</button></div><TabRaces /></>}
+          {tab === 'races' && <><div className="rca-page-title"><div><h1>過去開催・PACIレース一覧</h1><p>既存DBと同期済み開催を確認できます。</p></div><button type="button" className="rca-secondary" onClick={() => setTab('today')}>本日のレースへ</button></div>{TabRaces()}</>}
           {tab === 'forecastReview' && <ReviewWorkspace key={`${reviewForecastId}:${sync.revision}`} userId={session.user.id} initialForecastId={reviewForecastId}
             review={sync.data?.forecastReview} loading={sync.loading} error={sync.error} onRefresh={refreshCompanion}
             onOpenGroupRecords={async scope => { await loadCollectedRace({ id:scope.raceId,raceDate:scope.raceDate },{ fromDashboard:true }); setTab('groups') }}
@@ -1707,6 +1689,7 @@ function MainApp({ session, onLogout }) {
           {tab === 'automation' && <DataManagement userId={session.user.id} race={raceInfo} sync={sync} onRefresh={refreshCompanion} onSelectRace={loadCollectedRace}
             onRefreshDb={refreshDb} onOpenArchive={() => openRaceList()} diagnostics={`DB ${diag?.latestDate ?? '未取得'} / ${diag?.evaluator ?? '評価版未取得'}`} />}
           {tab === 'devices' && <DeviceManager />}
+          {tab === 'raceInfo' && (raceInfo ? <RaceOverview race={analysisRace} horses={analysisHorses} data={cloudRace ? sync.data : null} loading={sync.loading} error={sync.error} onNavigate={setTab} /> : <EmptyRace />)}
           {tab === 'analysis' && <TabAnalysis />}
           {tab === 'ability' && <AbilityPage workspace review={sync.error ? null : sync.data?.forecastReview} race={analysisRace} horses={analysisHorses} userId={session.user.id}
             cloudRevision={sync.revision} statistics={analysisStatistics}

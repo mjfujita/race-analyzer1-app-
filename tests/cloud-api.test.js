@@ -139,6 +139,28 @@ test('JRA calendar separates JRA races from local simulcasts and rejects invalid
   assert.equal(await jraSchedule('20270101', async () => new Response('', { status: 404 })), 'unconfirmed')
 })
 
+test('race progress is owner-only, read-only, per-day and independent of saved predictions',async()=>{
+  const {service,handler,store}=setup(),data=bundle()
+  data.races[0].race.postTime='1500'
+  data.races[0].context={raceId:scope.raceId,raceDate:scope.raceDate,retrievedAt:at,horses:[{horseNo:1},{horseNo:2}],results:[{horseNo:2,rank:1},{horseNo:1,rank:2}]}
+  await service.ingestBundle(data)
+  const query={progress:'1',raceDate:scope.raceDate}
+  assert.equal((await request(handler,{query,token:null})).status,401)
+  assert.equal((await request(handler,{query,token:'other-token'})).status,403)
+  assert.equal((await request(handler,{query,token:'companion-only-secret-for-tests-123456'})).status,401)
+  for(const wrong of [{progress:'1'},{...query,raceDate:'20260230'},{...query,ownerId:'other'}])assert.equal((await request(handler,{query:wrong})).status,400)
+  const count=store.files.size,response=await request(handler,{query})
+  assert.equal(response.status,200);assert.match(response.headers['Cache-Control'],/no-store/)
+  assert.equal(response.body.races[0].result.state,'available')
+  assert.equal(response.body.races[0].result.retrievedAt,at)
+  assert.equal(JSON.stringify(response.body).includes('horses'),false)
+  assert.equal(store.files.size,count)
+  assert.deepEqual((await service.getRaceProgress({raceDate:'20251231'})).races,[])
+  const path=[...store.files.keys()].find(p=>p.includes('/observations/'))
+  store.files.get(path).ownerId='other'
+  assert.equal((await request(handler,{query})).status,409)
+})
+
 test('worker can pull one owner-bound ledger without broader reads, writes or cross-owner scope', async () => {
   const { service, handler, store } = setup()
   await service.ingestBundle(bundle())

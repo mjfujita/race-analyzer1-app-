@@ -164,7 +164,7 @@ test('the four-menu workspace preserves settings, evidence pages and purchase re
   await main.getByRole('button',{ name:'本日のレース',exact:true }).click()
   await page.getByRole('button',{ name:'軸候補を確認',exact:true }).click()
   const sub = page.getByRole('navigation',{ name:'選択中のレースの分析' })
-  await expect(sub.getByRole('button')).toHaveText(['グループ・買い目','私の予想','軸候補','能力・適性','オッズ推移','展開・馬場'])
+  await expect(sub.getByRole('button')).toHaveText(['レース情報','グループ・買い目','私の予想','軸候補','能力・適性','オッズ推移','展開・馬場'])
   await sub.getByRole('button',{name:'私の予想',exact:true}).click()
   await expect(page.getByRole('heading',{name:'私の予想',exact:true})).toBeVisible()
   await expect(page.getByRole('button',{name:'新しい予想を入力する',exact:true})).toBeEnabled()
