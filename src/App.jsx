@@ -1728,7 +1728,12 @@ function MainApp({ session, onLogout }) {
             initialForecastId={initialForecastId}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
             onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
-          {tab === 'groups' && (raceInfo ? <GroupWorkspace groupDisplay={groupDisplay} onGroupDisplayChange={updateGroupDisplay} race={analysisRace} horses={analysisHorses} statistics={analysisStatistics}
+          {tab === 'groups' && (raceInfo ? <GroupWorkspace onOpenPersonal={() => setTab('personal')} groupDisplay={groupDisplay} onGroupDisplayChange={updateGroupDisplay} race={analysisRace} horses={analysisHorses} statistics={analysisStatistics}
+            userId={session.user.id} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
+            syncedGroupReceipts={sync.data?.groupReceipts}
+            loading={sync.loading}
+            review={sync.error ? null : sync.data?.forecastReview} onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
+          {tab === 'personal' && (raceInfo ? <GroupWorkspace personalOnly onOpenGroups={() => setTab('groups')} groupDisplay={groupDisplay} onGroupDisplayChange={updateGroupDisplay} race={analysisRace} horses={analysisHorses} statistics={analysisStatistics}
             userId={session.user.id} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
             syncedGroupReceipts={sync.data?.groupReceipts}
             loading={sync.loading}
