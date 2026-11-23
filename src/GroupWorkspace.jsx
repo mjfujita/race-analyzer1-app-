@@ -85,7 +85,7 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   const [quoteObservedAt,setQuoteObservedAt] = useState(''), [quoteRetrievedAt,setQuoteRetrievedAt] = useState(null)
   const [note,setNote] = useState(''), [selectedId,setSelectedId] = useState('')
   const [composerSource,setComposerSource] = useState(null)
-  const [quickType,setQuickType]=useState('馬単'),[quickChoice,setQuickChoice]=useState(null)
+  const [quickType,setQuickType]=useState('3連単'),[quickChoice,setQuickChoice]=useState(null)
   const composerHeading=useRef(null)
   useEffect(()=>{if(composerSource){composerHeading.current?.focus({preventScroll:true});window.scrollTo({top:0,behavior:'instant'})}},[composerSource])
   const recordsHeading = useRef(null)
