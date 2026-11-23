@@ -1,0 +1,56 @@
+import {test,expect} from '@playwright/test'
+import {horses,statistics} from '../../dev/fixtures.js'
+const styles={1:'逃げ',2:'先行',3:'差し',4:'追込'}
+
+test('every running-style number opens the matching horse and returns without losing conditions or form input',async({page})=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message))
+ await page.clock.setFixedTime(new Date('2026-11-15T07:00:00Z'))
+ await page.goto('/market-preview.html?state=pace-links')
+ await page.getByRole('button',{name:'展開・天候',exact:true}).click()
+ await page.getByRole('checkbox',{name:/発走10分前までに取得した結果のみ/}).uncheck()
+ await page.getByText('取込エラーの訂正・結果の補完',{exact:true}).click()
+ await page.getByLabel('実出走頭数',{exact:true}).fill('12')
+ await page.getByLabel('1着馬の4角',{exact:true}).fill('2')
+ const before=await page.evaluate(()=>JSON.stringify(localStorage))
+ for(const h of horses){
+  const style=styles[statistics.find(s=>s.horse_no===h.no).running_style]
+  const link=page.getByRole('group',{name:`${style}の馬`,exact:true}).getByRole('button',{name:`${h.no}番 ${h.name}の詳細`,exact:true})
+  await link.focus();await link.press('Enter')
+  await expect(page.getByRole('heading',{name:`${h.no} ${h.name}の詳細`,exact:true})).toBeVisible()
+  await expect(page.getByLabel('表示する馬')).toHaveValue(String(h.no))
+  await expect(page.getByRole('region',{name:'各馬の評価',exact:true}).getByRole('article')).toHaveCount(1)
+  await expect(page.getByRole('heading',{name:'パドック・直前情報',exact:true})).toBeVisible()
+  await expect(page.getByRole('heading',{name:'脚質の配置を見る',exact:true})).toBeHidden()
+  const back=page.getByRole('button',{name:'← 展開・馬場へ戻る',exact:true})
+  await expect(back).toBeFocused();await back.press('Enter')
+  await expect(link).toBeFocused()
+  await expect(page.getByRole('checkbox',{name:/発走10分前までに取得した結果のみ/})).not.toBeChecked()
+  await expect(page.getByLabel('実出走頭数',{exact:true})).toHaveValue('12')
+  await expect(page.getByLabel('1着馬の4角',{exact:true})).toHaveValue('2')
+ }
+ expect(await page.evaluate(()=>JSON.stringify(localStorage))).toBe(before)
+ await page.locator('section').filter({has:page.getByRole('heading',{name:'出走馬ごとの根拠',exact:true})}).getByRole('button',{name:'3番 架空馬Cの詳細',exact:true}).click()
+ await expect(page.getByRole('heading',{name:'3 架空馬Cの詳細',exact:true})).toBeVisible()
+ expect(errors).toEqual([])
+})
+
+test('mobile style chips and unknown-style chips are accessible, with missing evidence and return position preserved',async({page})=>{
+ await page.setViewportSize({width:390,height:844})
+ await page.goto('/market-preview.html?state=pace-links-missing')
+ await page.getByRole('button',{name:'展開・天候',exact:true}).click()
+ const unknown=page.getByRole('group',{name:'脚質未取得の馬',exact:true})
+ await expect(unknown.getByRole('button')).toHaveCount(8)
+ const link=unknown.getByRole('button',{name:'6番 架空馬Fの詳細',exact:true})
+ await link.scrollIntoViewIfNeeded();const box=await link.boundingBox()
+ expect(box.width).toBeGreaterThanOrEqual(44);expect(box.height).toBeGreaterThanOrEqual(44)
+ const before=await page.evaluate(()=>scrollY)
+ await link.click()
+ await expect(page.getByRole('heading',{name:'6 架空馬Fの詳細',exact:true})).toBeVisible()
+ await expect(page.getByText('コメント未取得',{exact:true})).toBeVisible()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'.qa/pace-horse-detail-mobile.jpg',fullPage:false})
+ await page.getByRole('button',{name:'← 展開・馬場へ戻る',exact:true}).click()
+ await expect(link).toBeFocused()
+ expect(Math.abs(await page.evaluate(()=>scrollY)-before)).toBeLessThan(3)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+})
