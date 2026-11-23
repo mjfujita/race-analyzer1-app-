@@ -13,7 +13,17 @@ import { syncLedgerToCloud } from '../src/cloudStore.js'
 import { useCompanion } from '../src/useCompanion.js'
 import { race, horses, statistics, assessmentHorses, aceHorses, assessmentStatistics, earlierRaces, demoSnapshots } from './fixtures.js'
 
-const state = new URLSearchParams(location.search).get('state') ?? 'normal'
+const state = import.meta.env.MODE === 'phone-review' ? 'groups-local-review' : new URLSearchParams(location.search).get('state') ?? 'normal'
+// LAN HTTP is not a secure browser context. Keep UUID generation usable only
+// in the isolated fixture build; production authentication is not involved.
+if (import.meta.env.MODE === 'phone-review' && !globalThis.crypto.randomUUID) {
+  globalThis.crypto.randomUUID = () => {
+    const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16))
+    bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128
+    const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('')
+    return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`
+  }
+}
 const userId = `synthetic-demo-${state}`
 const useAssessmentFixture = state.startsWith('ace') || state === 'groups-local-review'
 const connected = state === 'connected-test' || state.startsWith('groups-connected') || state.startsWith('personal-connected')
