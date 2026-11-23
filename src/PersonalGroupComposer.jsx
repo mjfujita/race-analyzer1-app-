@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { createGroupPlan, formationTickets, groupBudget, groupOdds } from './groupAnalysis.js'
 import { personalMethods, personalSelection } from './personalGroupPrediction.js'
 import { formatRaceTime, snapshotTiming } from './raceTime.js'
+import GroupSelectionNumbers from './GroupSelectionNumbers.jsx'
 
 const control = 'rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm max-w-full'
 const yen = n => `${n.toLocaleString('ja-JP')}円`
@@ -16,11 +17,13 @@ export default function PersonalGroupComposer({ source, disabled, busy, onSave }
   const [memo,setMemo] = useState(''), [error,setError] = useState('')
   const grouping = useMemo(() => groupOdds(source.field,source.snapshot.odds,source.threshold,source.boundaries),[source])
   const analysis = useMemo(() => {
+    const result={}
     try {
       const selection = personalSelection({grouping,type,method,slots,box,axis,opponents,position})
       const tickets = formationTickets(grouping,selection.slots,type,source.excluded)
+      Object.assign(result,selection,{tickets})
       return { ...selection,tickets,totals:groupBudget(tickets,Number(budget),Number(unit),overrides) }
-    } catch (problem) { return {error:problem.message} }
+    } catch (problem) { return {...result,error:problem.message} }
   },[grouping,type,method,slots,box,axis,opponents,position,source.excluded,budget,unit,overrides])
   const timing = snapshotTiming(source.snapshot,source.race)
   const cutoffPassed = !timing.eligible || Date.now() > Date.parse(timing.cutoffAt ?? '')
@@ -50,12 +53,13 @@ export default function PersonalGroupComposer({ source, disabled, busy, onSave }
         <p className="rca-muted">軸の馬：{grouping.groups.find(g=>g.label===axis)?.horses.filter(h=>!source.excluded.includes(h.no)).map(h=>`${h.no} ${h.name}`).join(' ／ ') || '未選択'}</p>
         {groups('相手のグループ',opponents,setOpponents)}</>}
       {type==='3連複' && <p className="rca-muted">3連複は着順不問です。1〜3頭目の組み合わせから、異なる3頭を選びます。</p>}
+      <GroupSelectionNumbers grouping={grouping} slots={analysis.slots} type={type} excluded={source.excluded} box={method==='box'} />
       <div className="rca-group-controls"><label>予定予算の上限<input className={control} type="number" min="100" max="10000" step="100" value={budget} onChange={e=>setBudget(e.target.value)} /></label>
         <label>1点の予定金額<input className={control} type="number" min="100" max="10000" step="100" value={unit} onChange={e=>{setUnit(e.target.value);setOverrides({})}} /></label>
         <button type="button" className="rca-secondary" disabled={!analysis.tickets?.length || !Number.isInteger(Number(budget)) || Number(budget)%100!==0 || Number(budget)>10000 || Number(budget)<analysis.tickets.length*100} onClick={()=>{setUnit(String(Math.floor(Number(budget)/analysis.tickets.length/100)*100));setOverrides({})}}>予算内で均等配分</button></div>
       {analysis.error && <p role="alert" className="rca-error">{analysis.error}</p>}
       {analysis.totals && <div className="rca-notice" aria-live="polite"><strong>{analysis.totals.allocations.length}点 ／ 投入予定 {yen(analysis.totals.invested)}</strong><p>予算上限 {yen(Number(budget))} ／ 未使用 {yen(analysis.totals.unspent)}</p>{analysis.totals.overBudget && <p role="alert" className="rca-error">予算を超えています。グループか金額を調整してください。</p>}{!analysis.tickets.length && <p>グループを選んでください。異なる馬の組み合わせが必要です。</p>}</div>}
-      <details><summary>買い目と金額を確認・調整（{analysis.tickets?.length ?? 0}点）</summary><p className="rca-muted">100円単位で調整できます。0円の買い目は登録から除きます。表示は先頭100点までです。</p><div className="overflow-x-auto"><table className="rca-list-table" aria-label="私の予想の買い目"><thead><tr><th>買い目</th><th>予定金額</th></tr></thead><tbody>{analysis.tickets?.slice(0,100).map(t=><tr key={t.key}><th scope="row">{label(t)}</th><td><input className={`${control} w-28`} aria-label={`${label(t)}の予定金額`} type="number" min="0" max="10000" step="100" value={overrides[t.key]??unit} onChange={e=>setOverrides({...overrides,[t.key]:Number(e.target.value)})} /></td></tr>)}</tbody></table></div></details>
+      <details open={Boolean(analysis.tickets?.length)}><summary>買い目と金額を確認・調整（{analysis.tickets?.length ?? 0}点）</summary><p className="rca-muted">100円単位で調整できます。0円の買い目は登録から除きます。表示は先頭100点までです。</p><div className="overflow-x-auto"><table className="rca-list-table" aria-label="私の予想の買い目"><thead><tr><th>買い目</th><th>予定金額</th></tr></thead><tbody>{analysis.tickets?.slice(0,100).map(t=><tr key={t.key}><th scope="row">{label(t)}</th><td><input className={`${control} w-28`} aria-label={`${label(t)}の予定金額`} type="number" min="0" max="10000" step="100" value={overrides[t.key]??unit} onChange={e=>setOverrides({...overrides,[t.key]:Number(e.target.value)})} /></td></tr>)}</tbody></table></div></details>
       <label>予想メモ<textarea className={`${control} block w-full mt-2`} rows={3} maxLength={3500} placeholder="例：Bを勝ち候補、Aは2着。人気上位でも勝ち切れないと判断。" value={memo} onChange={e=>setMemo(e.target.value)} /></label>
       {error && <p role="alert" className="rca-error">{error}</p>}
       <button type="button" className="rca-primary self-start" disabled={!!analysis.error || !analysis.totals?.allocations.length || analysis.totals.overBudget} onClick={save}>{busy?'登録中…':'私の予想を登録する'}</button>

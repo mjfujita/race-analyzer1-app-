@@ -153,3 +153,10 @@ button:disabled { cursor: not-allowed; }
 .rca-personal .rca-list-table { min-width: 0; table-layout: fixed; }
 .rca-personal .rca-list-table tbody th { min-width: 0; overflow-wrap: anywhere; }
 .rca-personal .rca-list-table td input { width: 100%; min-width: 0; }
+.rca-selection-numbers { border:1px solid #c8def2; border-radius:12px; padding:14px; background:#f4f9ff; min-width:0; }
+.rca-selection-numbers h3 { font-size:15px; font-weight:750; color:#0b2545; }
+.rca-selection-numbers>dl { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin-top:12px; }
+.rca-selection-numbers>dl>div { border-radius:8px; padding:12px; background:white; min-width:0; }
+.rca-selection-numbers dt { font-size:13px; font-weight:700; color:#415d7a; }
+.rca-selection-labels { margin-top:5px; font-size:13px; color:#23629d; overflow-wrap:anywhere; }
+.rca-selection-values { margin-top:6px; font-size:18px; line-height:1.6; font-weight:750; color:#0b2545; overflow-wrap:anywhere; }

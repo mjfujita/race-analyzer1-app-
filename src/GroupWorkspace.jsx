@@ -13,6 +13,7 @@ import HorseAssessments from './HorseAssessments.jsx'
 import GroupHorsePrediction from './GroupHorsePrediction.jsx'
 import {useAceAssessment} from './useAceAssessment.js'
 import PersonalGroupComposer from './PersonalGroupComposer.jsx'
+import GroupSelectionNumbers from './GroupSelectionNumbers.jsx'
 import {displayGroups,matchingGroupPreference} from './groupDisplay.js'
 
 const yen = n => `${n.toLocaleString('ja-JP')}円`
@@ -214,6 +215,7 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <div className="rca-group-slots">{analysis.slots.map((slot,i) => <fieldset key={i}><legend>{i+1}着のグループ</legend>{grouping.groups.map(g => <label key={g.label}><input type="checkbox" checked={slot.includes(g.label)} onChange={() => { setSlotChoice(analysis.slots.map((s,index) => index === i ? toggle(s,g.label) : s)); setOverrides({}) }} />{g.label}</label>)}</fieldset>)}</div>
       <div className="rca-group-controls"><label>１レースの予算上限<input className={control} type="number" min="0" max="10000" step="100" value={budget} onChange={e => setBudget(e.target.value)} /></label><label>１点の基本金額<input className={control} type="number" min="100" max="10000" step="100" value={unit} onChange={e => { setUnit(e.target.value); setOverrides({}) }} /></label></div>
       <div className="rca-group-cards">{analysis.alternatives.map(a => <label key={a.id} className={`rca-group-card ${variant === a.id ? 'rca-group-selected' : ''}`}><span><input type="radio" name="group-variant" checked={variant === a.id} onChange={() => { setVariant(a.id); setOverrides({}) }} /> {a.label}</span><strong>{a.tickets.length}点</strong><p>{a.type} · {yen(a.tickets.length*Number(unit))}</p><small>{a.slots.slice(0,a.type === '馬単' ? 2 : 3).map(s => s.join('・') || '未選択').join(a.type === '3連複' ? ' − ' : ' → ')}</small></label>)}</div>
+      {analysis.selected&&<GroupSelectionNumbers grouping={grouping} slots={analysis.selected.slots} type={analysis.selected.type} excluded={excluded} />}
       <details><summary>組合せの実オッズを入力する</summary><p className="rca-muted">１行に「3連単 14-9-6 1085.8」などを入力。入力済みの実価格だけで払戻を試算します。</p>
         <label>価格の観測日時（日本時間）<input className={control} type="datetime-local" value={quoteObservedAt ? quoteObservedAt.slice(0,16) : ''} onChange={e => setQuoteObservedAt(e.target.value ? `${e.target.value}:00+09:00` : '')} /></label>
         <textarea className={`${control} mt-3 w-full`} aria-label="組合せの実オッズ" rows={4} value={quoteText} onChange={e => { setQuoteText(e.target.value); setQuoteRetrievedAt(new Date().toISOString()) }} />
