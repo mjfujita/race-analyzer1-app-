@@ -1,0 +1,47 @@
+import {useMemo,useState} from 'react'
+import {readCloudRace} from './cloudStore.js'
+import {assessHorses,assessmentContext,horsePaddock,venueNames} from './horseAssessment.js'
+import {formatRaceTime,validTimestamp} from './raceTime.js'
+
+const recordText=record=>record.runs===null?'比較材料未取得':record.runs?`${record.topThree}/${record.runs}走が3着内`:'該当走なし'
+const runDate=date=>date.length===8?`${date.slice(0,4)}/${date.slice(4,6)}/${date.slice(6)}`:`${date.slice(0,4)}/${date.slice(4,6)}（日付未取得）`
+const signed=value=>value>0?`+${value}`:value===0?'±0':String(value)
+
+export default function HorseAssessments({race,horses=[],statistics=[],userId,asOf=null}){
+  const [selected,setSelected]=useState('all'),[beforeCutoff,setBeforeCutoff]=useState(true)
+  const assessments=useMemo(()=>assessHorses(race,horses,statistics),[race,horses,statistics])
+  // Read the existing owner-scoped cache only; observations never change the probability model here.
+  const cloud=readCloudRace(userId,race)
+  const context=assessmentContext(race,cloud,{beforeCutoff,asOf})
+  const source=context.source
+  const sourceLabel=/^https?:\/\/(?:www\.)?jrdb\.com(?:\/|$)/i.test(source?.source??'')?'JRDB直前情報':'取得済み直前情報'
+  const rows=assessments.filter(h=>selected==='all'||String(h.no)===selected).sort((a,b)=>a.no-b.no)
+  return <section className="rca-stack" aria-label="各馬の評価">
+    <div className="rca-panel"><h1 className="text-xl font-bold text-[#0B2545]">各馬の能力・今回の評価</h1><p className="rca-muted mt-2">過去の実績、今回の条件、パドック・馬体重を1頭ずつ確認します。</p>
+      <div className="flex flex-wrap items-center gap-4 mt-4"><label className="text-sm font-semibold flex flex-wrap items-center gap-2 min-w-0 max-w-full">表示する馬<select className="max-w-full min-w-0 rounded-lg border border-slate-300 p-2" value={selected} onChange={e=>setSelected(e.target.value)}><option value="all">全頭</option>{assessments.map(h=><option key={h.no} value={h.no}>{h.no} {h.name}</option>)}</select></label>
+        <label className="text-sm flex gap-2 items-start"><input type="checkbox" className="mt-1" checked={beforeCutoff} onChange={e=>setBeforeCutoff(e.target.checked)} />発走10分前までに取得した直前情報のみ</label></div>
+      <p className="rca-muted mt-3">直前情報の取得：{source?formatRaceTime(source.retrievedAt):'該当する記録なし'} ／ 判断締切：{formatRaceTime(context.cutoffAt)}</p>
+      {beforeCutoff&&validTimestamp(asOf)&&<p className="rca-muted mt-1">選択オッズの取得時点 {formatRaceTime(asOf)} までの情報に限定しています。</p>}
+      {source&&<p className="rca-muted mt-1">取得元：{sourceLabel} ／ 公開時刻：{formatRaceTime(source.sourcePublishedAt)}{source.weather?` ／ 天候 ${source.weather}`:''}{source.going?` ／ 馬場 ${source.going}`:''}</p>}
+      {context.referenceOnly&&<p className="rca-notice mt-3">{context.afterCutoff?'締切後':'参照時点より後'}の参考情報を表示中です。事前評価・勝率の補正には使用しません。</p>}
+      {beforeCutoff&&context.hasLater&&<p className="rca-muted mt-2">表示上限より後に取得した情報もあります。チェックを外すと参考情報として確認できます。</p>}
+      <details className="mt-3 text-sm"><summary className="font-semibold text-sky-800 cursor-pointer">評価の読み方・対象範囲</summary><p className="rca-muted mt-2">今回の評価は、出走時IDMの相対順位と取得した近走の事実から作った説明です。IDMは高い値ほど上位、同値は同順位。実績はレース当日より前の直近最大5走で、同じ芝・ダート等の区分を比較します。近い距離は±200m、同場同距離は競馬場と距離が一致する走です。日付不明・同日以降の走は評価に使いません。距離実績やパドック点を機械的に加点せず、勝率・買い目は変更しません。</p></details>
+    </div>
+    {!rows.length&&<p className="rca-panel rca-muted">出走馬の評価材料は未取得です。</p>}
+    <div className="grid gap-4 xl:grid-cols-2">{rows.map(h=>{
+      const paddock=horsePaddock(source,h.no)
+      return <article key={h.no} className="rca-panel min-w-0" aria-label={`${h.no}番 ${h.name}の評価`}>
+        <header className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-bold text-[#0B2545]">{h.no} {h.name}</h2><p className="rca-muted mt-1">{h.cancelled?'出走取消':h.rank?`IDM ${h.idm} ／ ${h.rank}位（取得${h.knownIdms}/${h.activeCount}頭）`:'IDM未取得'}{h.style?` ／ 脚質 ${h.style}`:''}</p></div></header>
+        <section className="mt-4 rounded-xl border border-blue-100 bg-blue-50/60 p-3"><h3 className="font-semibold text-sm text-[#0B2545]">今回の評価</h3><p className="text-sm leading-relaxed mt-2">{h.summary}</p><ul className="mt-2 text-xs text-slate-600 space-y-1">{h.warnings.map(text=><li key={text}>{text}</li>)}</ul></section>
+        <section className="mt-4"><h3 className="font-semibold text-sm">過去の実績</h3><p className="text-sm mt-2">{h.history.runs?`取得した近走${h.history.runs}走：${h.history.first}勝・2着${h.history.second}回・3着${h.history.third}回`:'比較できる着順は未取得です。'}</p>
+          <dl className="grid grid-cols-3 gap-2 mt-3 text-xs">{[['近い距離',h.records.distance],['同じ競馬場',h.records.venue],['同場同距離',h.records.course]].map(([label,value])=><div key={label} className="rounded-lg bg-slate-50 p-2"><dt className="text-slate-500">{label}</dt><dd className="font-semibold mt-1 break-words">{recordText(value)}</dd></div>)}</dl>
+          <details className="mt-3 text-sm"><summary className="font-semibold text-sky-800 cursor-pointer">過去走の内訳（{h.pastRuns.length}走）</summary>{h.pastRuns.length?<div className="overflow-x-auto mt-2" role="region" aria-label={`${h.no}番の過去走`}><table className="rca-list-table text-xs whitespace-nowrap"><thead><tr>{['日付','競馬場・条件','馬場','着順','上がり3F'].map(label=><th scope="col" key={label}>{label}</th>)}</tr></thead><tbody>{h.pastRuns.map((run,i)=><tr key={`${run.date}:${i}`}><td>{runDate(run.date)}</td><td>{venueNames[run.placeCode]??'競馬場未取得'} {run.surface??'区分未取得'}{run.distance?`${run.distance}m`:''}</td><td>{run.going??'未取得'}</td><td>{run.rank??'未取得'}{run.fieldSize?`/${run.fieldSize}頭`:''}</td><td>{run.last3f===null?'未取得':`${run.last3f.toFixed(1)}秒`}</td></tr>)}</tbody></table></div>:<p className="rca-muted mt-2">当日より前の日付を確認できる過去走がありません。</p>}</details>
+        </section>
+        <section className="mt-4 border-t border-slate-100 pt-4"><h3 className="font-semibold text-sm">パドック・直前情報</h3><dl className="grid grid-cols-2 gap-2 mt-2 text-sm"><div><dt className="text-xs text-slate-500">馬体重・増減</dt><dd className="font-semibold mt-1">{paddock.weight===null?'未発表・未取得':`${paddock.weight}kg${paddock.delta===null?'（増減未取得）':`（${signed(paddock.delta)}kg）`}`}</dd></div><div><dt className="text-xs text-slate-500">JRDBパドック点</dt><dd className="font-semibold mt-1">{paddock.index===null?'未発表・未取得':paddock.index}</dd></div></dl>
+          <div className="text-sm mt-3"><p className="text-xs text-slate-500">パドック・返し馬コメント</p>{paddock.comments.length?paddock.comments.map((text,i)=><p key={i} className="mt-1 whitespace-pre-wrap break-words">{text}</p>):<p className="mt-1 text-slate-500">コメント未取得</p>}</div>
+          <p className="rca-muted mt-3">{source?`${sourceLabel}を ${formatRaceTime(source.retrievedAt)} に取得。`:'この表示条件で確認できる直前情報はありません。'} 点数の良否やコメントは推測で補いません。上部の「JRDBへ最新取得を依頼」で更新を依頼できます。</p>
+        </section>
+      </article>
+    })}</div>
+  </section>
+}

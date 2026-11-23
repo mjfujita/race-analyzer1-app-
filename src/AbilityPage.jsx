@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronsUpDown, Gauge } from 'lucide-react'
 import { appendOddsSnapshot, createOddsSnapshot, importOddsSnapshots, oddsStorageKey, readOddsEvents, readOddsHistory } from './oddsHistory.js'
-import { nearDistanceRecord } from './initialForecast.js'
+import HorseAssessments from './HorseAssessments.jsx'
+import { assessHorses } from './horseAssessment.js'
 import { formatRaceTime, raceDateISO, snapshotTiming } from './raceTime.js'
 import { downloadJson } from './fileIO.js'
 
@@ -30,12 +31,12 @@ function recordRate(topThree, runs) {
   return runs > 0 && topThree != null ? topThree / runs : null
 }
 
-export default function AbilityPage({ race, horses, statistics, userId, cloudRevision = 0, onSelectRace, onSelectHorse, workspace = false }) {
+export default function AbilityPage({ race, horses, statistics = [], userId, cloudRevision = 0, onSelectRace, onSelectHorse, workspace = false }) {
   const storageKey = oddsStorageKey(userId, race)
-  return <AbilityTable key={storageKey} {...{ race, horses, statistics, storageKey, cloudRevision, onSelectRace, onSelectHorse, workspace }} />
+  return <AbilityTable key={storageKey} {...{ race, horses, statistics, storageKey, userId, cloudRevision, onSelectRace, onSelectHorse, workspace }} />
 }
 
-function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onSelectRace, onSelectHorse, workspace }) {
+function AbilityTable({ race, horses, statistics, storageKey, userId, cloudRevision, onSelectRace, onSelectHorse, workspace }) {
   const [sort, setSort] = useState({ key: 'rank', ascending: true })
   const [history, setHistory] = useState(() => readOddsHistory(storageKey))
   useEffect(() => { setHistory(readOddsHistory(storageKey)) }, [storageKey, cloudRevision])
@@ -83,16 +84,19 @@ function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onS
   }
 
   const statsByHorse = new Map(statistics.map(row => [Number(row.horse_no), row]))
+  const assessments = new Map(assessHorses(race,horses,statistics).map(row=>[row.no,row]))
   const rows = horses.map(horse => {
-    const stats = statsByHorse.get(Number(horse.no))
-    const fallback = nearDistanceRecord(race, horse)
-    const distanceTop3 = stats?.distance_top3 ?? fallback?.similarTopThree
-    const distanceRuns = stats?.distance_runs ?? fallback?.similarRuns
+    const assessment=assessments.get(Number(horse.no))
+    const stats = {...statsByHorse.get(Number(horse.no)),idm:assessment.idm,
+      venue_top3:assessment.records.venue.topThree,venue_runs:assessment.records.venue.runs,
+      course_top3:assessment.records.course.topThree,course_runs:assessment.records.course.runs}
+    const distanceTop3 = assessment.records.distance.topThree
+    const distanceRuns = assessment.records.distance.runs
     const odds = snapshot?.odds[horse.no]
     const previousOdds = previousSnapshot?.odds[horse.no]
     const oddsChange = odds != null && previousOdds > 0 ? (odds / previousOdds - 1) * 100 : null
     const values = {
-      rank: horse.predictedFavRank,
+      rank: assessment.rank,
       number: Number(horse.no),
       odds,
       oddsChange,
@@ -104,8 +108,8 @@ function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onS
     }
     return { ...horse, stats, distanceTop3, distanceRuns, values }
   })
-  const firstRank = Math.min(...rows.map(horse => horse.predictedFavRank ?? Infinity))
-  const leaders = rows.filter(horse => horse.predictedFavRank === firstRank)
+  const firstRank = Math.min(...rows.map(horse => horse.values.rank ?? Infinity))
+  const leaders = rows.filter(horse => horse.values.rank === firstRank)
   rows.sort((a, b) => {
     const av = a.values[sort.key]
     const bv = b.values[sort.key]
@@ -116,19 +120,20 @@ function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onS
   })
   const displayedColumns = workspace ? columns.filter(c => c.key !== 'ability') : columns
   return (
+    <div className="rca-stack"><HorseAssessments {...{race,horses,statistics,userId,cloudRevision}} asOf={selectedTime?snapshot?.retrievedAt:null} />
     <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
       <div className="space-y-2 border-b border-slate-100 p-5">
-        <h3 className="flex items-center gap-2 font-bold text-[#0B2545]"><Gauge className="h-5 w-5" />能力・適性</h3>
+        <h2 className="flex items-center gap-2 font-bold text-[#0B2545]"><Gauge className="h-5 w-5" />全頭の数値比較</h2>
         <p className="text-sm text-slate-700">{leaders.length
           ? `出走時IDMの上位は ${leaders.map(horse => `${horse.no}番 ${horse.name}`).join('、')}。JRDBの出走時IDMで最上位です。`
           : '出走時IDMの順位が揃うと、能力の上位を表示します。'}</p>
         <p className="text-xs text-slate-500">実績は直近5走の3着内／出走数。同じ芝・ダート区分で集計します。近い距離は今回の±200m、同場同距離は競馬場と距離が一致する走です。実績列は3着内率で並び替えます。</p>
-        {!statistics.length && <p className="text-xs text-slate-500">IDM実数と競馬場別実績は、能力データ付きのDBの取得後に表示します。</p>}
+        {rows.every(h=>h.values.idm==null) && <p className="text-xs text-slate-500">出走時IDMは未取得です。条件実績は日付を確認できた近走から表示します。</p>}
         {rows.length > 0 && <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-3 text-xs">
             <span className="text-slate-600">{snapshot ? `単勝オッズ ${snapshot.time}時点（日本時間）` : '単勝オッズは未入力です。'}</span>
             {history.length > 1 && <label>表示時刻
-              <select value={snapshot.id} onChange={e => { setSelectedTime(e.target.value); setEdit(false) }}
+              <select aria-label="表示時刻" value={snapshot.id} onChange={e => { setSelectedTime(e.target.value); setEdit(false) }}
                 className="ml-1 rounded border border-slate-300 bg-white px-2 py-1">
                 {history.map(item => <option key={item.id} value={item.id}>{item.time}</option>)}
               </select>
@@ -198,7 +203,7 @@ function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onS
               {rows.map(horse => {
                 const stats = horse.stats
                 return <tr key={horse.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-semibold tabular-nums text-[#0B2545]">{horse.predictedFavRank ?? '—'}</td>
+                  <td className="px-4 py-3 font-semibold tabular-nums text-[#0B2545]">{horse.values.rank ?? '—'}</td>
                   <td className="px-4 py-3 tabular-nums">{horse.no}</td>
                   <td className="px-4 py-3"><button type="button" onClick={() => onSelectHorse(horse.id)}
                     className="font-semibold text-[#2B6CB0] hover:underline">{horse.name}</button></td>
@@ -217,5 +222,6 @@ function AbilityTable({ race, horses, statistics, storageKey, cloudRevision, onS
           </table>
         </div>}
     </section>
+    </div>
   )
 }

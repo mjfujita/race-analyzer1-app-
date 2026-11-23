@@ -10,7 +10,7 @@ import GroupWorkspace from '../src/GroupWorkspace.jsx'
 import { oddsStorageKey } from '../src/oddsHistory.js'
 import { syncLedgerToCloud } from '../src/cloudStore.js'
 import { useCompanion } from '../src/useCompanion.js'
-import { race, horses, statistics, earlierRaces, demoSnapshots } from './fixtures.js'
+import { race, horses, statistics, assessmentHorses, assessmentStatistics, earlierRaces, demoSnapshots } from './fixtures.js'
 
 const state = new URLSearchParams(location.search).get('state') ?? 'normal'
 const userId = `synthetic-demo-${state}`
@@ -23,7 +23,7 @@ function Demo() {
   const [cloudRevision, setCloudRevision] = useState(0)
   const empty = state === 'empty'
   const { sync, refresh } = useCompanion({ userId: connected ? userId : null, race, horses })
-  const props = { race, horses, statistics: empty ? [] : statistics, earlierRaces, userId, cloudRevision: cloudRevision + sync.revision,
+  const props = { race, horses:state==='assessment'?assessmentHorses:horses, statistics: empty ? [] : state==='assessment'?assessmentStatistics:statistics, earlierRaces, userId, cloudRevision: cloudRevision + sync.revision,
     syncedGroupReceipts:sync.data?.groupReceipts, loading:sync.loading,
     syncedReceipts: sync.data?.receipts, onSyncLedger: connected || state === 'cloud-test' ? syncLedgerToCloud : undefined,
     onOpenAbility: () => setTab('ability'), onOpenPace: () => setTab('pace'), onSelectRace: () => {}, onSelectHorse: () => {} }
