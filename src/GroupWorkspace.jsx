@@ -9,6 +9,8 @@ import { parseQuotes, ticketKey } from './portfolio.js'
 import { PurchaseEditor, SettlementEditor } from './FinalForecastPage.jsx'
 import { downloadJson } from './fileIO.js'
 import HorseAssessments from './HorseAssessments.jsx'
+import GroupHorsePrediction from './GroupHorsePrediction.jsx'
+import {useAceAssessment} from './useAceAssessment.js'
 import PersonalGroupComposer from './PersonalGroupComposer.jsx'
 import {displayGroups,matchingGroupPreference} from './groupDisplay.js'
 
@@ -103,6 +105,7 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
     } catch (problem) { return { ...result,error:problem.message } }
   },[field,current,threshold,boundaries,slotChoice,excluded,quoteText,variant,budget,unit,overrides])
   const grouping = analysis.grouping
+  const ace=useAceAssessment({race,horses,statistics,userId,cloudRevision,review,asOf:current?.retrievedAt??null,enabled:!personalOnly&&Boolean(current)})
   useEffect(()=>{
     if(current&&grouping)onGroupDisplayChange?.({raceId:String(race.id),raceDate:race.raceDate,snapshotId:current.id,
       threshold:grouping.threshold,boundaries:grouping.manual?grouping.boundaries:null,followLatest:snapshotId==='',excluded})
@@ -195,7 +198,8 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       {!current && <p className="rca-notice">実オッズの取得待ちです。能力・適性から記録・取込みできます。</p>}
       {current && <p className="rca-notice">{timing.eligible ? '締切前の時刻証跡あり。保存時にも判定します。' : `過去検証用：${timing.reason}`} 取得元：{current.source ?? '未記録'}。{grouping?.manual ? '手動調整中（自動案も保存）' : '自動グループ'}</p>}
       {analysis.error && <p role="alert" className="rca-error">{analysis.error}</p>}
-      {grouping && <><p className="rca-muted mt-3">馬名を押すと、その馬の評価・過去走・パドック情報を確認できます。</p><div className="rca-group-cards">{grouping.groups.map(g => <div key={g.label} className="rca-group-card"><strong>{g.label}</strong><span>{g.horses.length}頭 · {g.horses[0].odds}〜{g.horses.at(-1).odds}倍</span><ul className="rca-group-horses" aria-label={`${g.label}グループの馬`}>{g.horses.map(h=><li key={h.no}><button type="button" className="rca-group-horse-link" aria-label={`${h.no}番 ${h.name}の詳細`} onClick={event=>openHorse(h.no,event)}><span>{h.no} {h.name}</span><span aria-hidden="true">›</span></button></li>)}</ul></div>)}</div>
+      {grouping && <><p className="rca-muted mt-3">馬名を押すと、その馬の評価・過去走・パドック情報を確認できます。</p><p className="rca-muted mt-2">確率の参照上限：{formatRaceTime(ace.boundary)}。詳細画面と同じACE予想を表示しています。</p>{ace.error&&<p role="alert" className="rca-error">予想指標を表示できません。{ace.error}</p>}<div className="rca-group-cards rca-group-prediction-cards">{grouping.groups.map(g => <div key={g.label} className="rca-group-card"><strong>{g.label}</strong><span>{g.horses.length}頭 · {g.horses[0].odds}〜{g.horses.at(-1).odds}倍</span><ul className="rca-group-horses" aria-label={`${g.label}グループの馬`}>{g.horses.map(h=><li key={h.no}><GroupHorsePrediction horse={h} assessment={ace.rows.find(row=>row.no===h.no)} returnUsable={ace.current?.id===current?.id} onOpen={openHorse} /></li>)}</ul></div>)}</div>
+      <p className="rca-muted">確率・回収率は研究用の試算です。2・3着率と3着内率は未校正の参考値です。単勝期待回収率は、選択オッズが参照時点・締切の条件を満たす場合に表示します。プラス材料・懸念は馬名から詳細で確認できます。</p>
       {!grouping.complete && <p role="alert" className="rca-error">オッズ未取得：{grouping.missing.join('・')}番。全頭が揃うまで保存を保留します。</p>}
       <div className="overflow-x-auto"><table className="rca-list-table" aria-label="グループと能力の比較"><thead><tr>{['区切り','群・馬番・馬名','単勝／推移','取得済みの能力材料','候補'].map(t => <th key={t}>{t}</th>)}</tr></thead><tbody>{grouping.groups.flatMap(g => g.horses).map((h,i,rows) => <tr key={h.no}>
         <td><input type="checkbox" aria-label={`${h.no}番の前で区切る`} disabled={i === 0 || h.odds === rows[i-1]?.odds} checked={grouping.boundaries.includes(h.no)} onChange={() => { setBoundaries(toggle(grouping.boundaries,h.no)); setSlotChoice(null); setOverrides({}) }} /></td>

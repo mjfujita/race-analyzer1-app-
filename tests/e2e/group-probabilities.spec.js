@@ -1,0 +1,63 @@
+import {test,expect} from '@playwright/test'
+
+async function open(page){
+  await page.clock.setFixedTime(new Date('2026-11-15T06:25:00Z'))
+  await page.goto('/market-preview.html?state=ace-group-probabilities')
+  await page.getByRole('button',{name:'グループ・買い目',exact:true}).click()
+  await page.getByLabel('観測時点').selectOption('demo-1')
+}
+const summary=page=>page.getByRole('article',{name:'1番 架空馬Aの予想指標',exact:true})
+
+test('group horse probabilities match the full ACE detail at the selected observation without changing drafts or ledgers',async({page})=>{
+  const errors=[];page.on('pageerror',e=>errors.push(e.message))
+  await open(page)
+  await expect(page.getByRole('article',{name:/の予想指標$/})).toHaveCount(8)
+  const card=summary(page),values=await card.getByRole('definition').allTextContents()
+  expect(values.slice(0,4).every(v=>/^\d+\.\d%$/.test(v))).toBe(true)
+  expect(values[4]).toBe('5.5倍');expect(values[5]).toMatch(/^\d+\.\d%$/)
+  await page.getByLabel('１レースの予算上限').fill('9000')
+  await page.getByLabel('判断の根拠・不確かな点').fill('数値を比較してから軸を決める')
+  const before=await page.evaluate(()=>JSON.stringify(localStorage))
+  await card.getByRole('button',{name:'1番 架空馬Aの詳細',exact:true}).click()
+  const detail=page.getByRole('region',{name:'1番のACE予想',exact:true})
+  await expect(detail.getByRole('definition')).toHaveText(values.slice(0,4))
+  await page.getByRole('button',{name:'← グループ・買い目へ戻る',exact:true}).click()
+  await expect(page.getByLabel('１レースの予算上限')).toHaveValue('9000')
+  await expect(page.getByLabel('判断の根拠・不確かな点')).toHaveValue('数値を比較してから軸を決める')
+  expect(await page.evaluate(()=>JSON.stringify(localStorage))).toBe(before)
+  await page.setViewportSize({width:390,height:844})
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await card.scrollIntoViewIfNeeded();await page.screenshot({path:'.qa/group-probabilities-mobile.jpg',fullPage:false})
+  await page.setViewportSize({width:1440,height:1000})
+  await card.scrollIntoViewIfNeeded();await page.screenshot({path:'.qa/group-probabilities-desktop.jpg',fullPage:false})
+  expect(errors).toEqual([])
+})
+
+test('later odds and future model cannot contaminate protected probabilities or imply a return on the selected late price',async({page})=>{
+  await open(page)
+  const before=(await summary(page).getByRole('definition').allTextContents()).slice(0,4)
+  await page.clock.setFixedTime(new Date('2026-11-15T07:00:00Z'))
+  await page.evaluate(async()=>{
+    const {saveModel}=await import('/src/modelStore.js')
+    const {oddsStorageKey}=await import('/src/oddsHistory.js')
+    const {race}=await import('/dev/fixtures.js')
+    const user='synthetic-demo-ace-group-probabilities',key=oddsStorageKey(user,race)
+    const rows=JSON.parse(localStorage.getItem(key)),last=rows.at(-1)
+    saveModel(user,{schemaVersion:1,modelType:'idm-temperature',id:'future-model',temperature:.1,trainedThrough:'2025-01-01',generatedAt:'2026-11-15T06:55:00Z',status:'research',validation:{}})
+    localStorage.setItem(key,JSON.stringify([...rows,{...last,id:'late-group-price',time:'15:45',observedAt:'2026-11-15T06:45:00Z',sourcePublishedAt:'2026-11-15T06:45:00Z',retrievedAt:'2026-11-15T06:46:00Z',odds:{...last.odds,1:99}}]))
+  })
+  await page.getByRole('button',{name:'同期データを再読込（開発確認）'}).click()
+  await expect(summary(page).getByRole('definition')).toHaveText([...before,'5.5倍',/^\d+\.\d%$/])
+  await page.getByLabel('観測時点').selectOption('late-group-price')
+  await expect(summary(page).getByRole('definition')).toHaveText([...before,'99.0倍','判定保留'])
+})
+
+test('missing dated history leaves group probabilities on hold and keeps the horse detail accessible',async({page})=>{
+  await page.goto('/market-preview.html?state=groups-probability-missing')
+  const card=summary(page)
+  const values=await card.getByRole('definition').allTextContents()
+  expect(values.slice(0,4)).toEqual(['判定保留','判定保留','判定保留','判定保留'])
+  await expect(card).toContainText('比較材料が足りないため')
+  await card.getByRole('button',{name:'1番 架空馬Aの詳細',exact:true}).click()
+  await expect(page.getByRole('heading',{name:'1 架空馬Aの詳細',exact:true})).toBeVisible()
+})
