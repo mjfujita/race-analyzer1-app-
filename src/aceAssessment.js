@@ -113,6 +113,7 @@ export function buildAceAssessment({race,horses=[],statistics=[],cloud=null,even
   })
   const leaders=rows.filter(h=>!h.held&&h.rank<=2).sort((a,b)=>a.rank-b.rank||a.no-b.no)
   return {rows,boundary,cutoffAt,current:pricesUsable?current:null,source,model:ability.model,
+    outcomes:outcome.outcomes.map(({order,probability})=>({order,probability})),
     appliedFeatures:features,calibrationId:prediction.calibrationId??null,
     summary:leaders.length?`勝ち候補として比較するのは ${leaders.map(h=>`${h.no}番 ${h.name}`).join('、')}。取得した材料の懸念を確認し、着順固定と投資妙味は分けて判断します。`:'全頭の比較材料や過去走が足りず、今回の軸候補は判定保留です。',
     issues:[...ability.issues,...prediction.issues],version:'ace-evidence-review-v1'}

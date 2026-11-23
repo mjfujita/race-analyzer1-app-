@@ -35,6 +35,7 @@ test('future, post-cutoff, wrong-race, result and payout information cannot chan
     {kind:'LIVE_RACE',payload:source('2026-11-15T06:28:00Z',{raceId:'another',going:'不良'})},{kind:'HJC',payload:{raceId:race.id,payouts:[{horseNo:8,per100:99999}]}}]},
     events:[...demoSnapshots(),{...demoSnapshots()[1],id:'late-snapshot',retrievedAt:'2026-11-15T06:45:00Z',observedAt:'2026-11-15T06:45:00Z',sourcePublishedAt:'2026-11-15T06:45:00Z',time:'15:45',odds:{1:100,2:1.1}}]})
   assert.deepEqual(changed.rows,base.rows)
+  assert.deepEqual(changed.outcomes,base.outcomes)
   assert.ok(changed.source.retrievedAt<=changed.boundary)
   const futureRuns=build({horses:field.map(h=>({...h,pastRuns:[run('20261116',1),run('20261115',1),...h.pastRuns]}))})
   // Extra source exclusions may be reported elsewhere; prediction and inspected valid starts are unchanged.

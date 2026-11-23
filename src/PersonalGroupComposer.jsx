@@ -3,6 +3,7 @@ import { createGroupPlan, formationTickets, groupBudget, groupOdds } from './gro
 import { personalMethods, personalSelection } from './personalGroupPrediction.js'
 import { formatRaceTime, snapshotTiming } from './raceTime.js'
 import GroupSelectionNumbers from './GroupSelectionNumbers.jsx'
+import GroupProbabilitySummary from './GroupProbabilitySummary.jsx'
 
 const control = 'rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm max-w-full'
 const yen = n => `${n.toLocaleString('ja-JP')}円`
@@ -42,6 +43,7 @@ export default function PersonalGroupComposer({ source, disabled, busy, onSave }
     <h2>グループから買い目を登録</h2>
     <p className="rca-muted">ご自身の選択を記録します。グループを選ぶと、その中の馬を全て組み合わせます。同じ馬を重ねた買い目や重複は除きます。</p>
     <p className="rca-notice">入力の基準：観測 {formatRaceTime(source.snapshot.observedAt)} ／ 取得 {formatRaceTime(source.snapshot.retrievedAt)}。入力中に同期しても、このグループとオッズは変わりません。{source.excluded.length > 0 && ` 候補から除外：${source.excluded.join('・')}番。`}</p>
+    {source.groupProbabilities?.length>0&&<details className="rca-personal-group-probabilities"><summary>グループの確率・中心馬を確認</summary><p className="rca-muted">入力開始時点の試算を表示しています。確率の参照上限：{formatRaceTime(source.probabilityBoundary)}。同期しても入力中は変わりません。</p>{source.groupProbabilities.map(summary=><div key={summary.label}><h3>{summary.label}群</h3><GroupProbabilitySummary summary={summary} /></div>)}</details>}
     <fieldset disabled={disabled || busy} className="rca-stack min-w-0">
       <div className="rca-group-controls"><label>券種<select aria-label="券種" className={control} value={type} onChange={e=>{setType(e.target.value);setPosition(0);setOverrides({})}}>{['馬単','3連単','3連複'].map(t=><option key={t}>{t}</option>)}</select></label>
         <label>買い方<select aria-label="買い方" className={control} value={method} onChange={e=>{setMethod(e.target.value);setOverrides({})}}>{Object.entries(personalMethods).map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label></div>
