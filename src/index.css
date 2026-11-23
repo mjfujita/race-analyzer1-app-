@@ -89,6 +89,14 @@ button:disabled { cursor: not-allowed; }
 .rca-horse-name { min-height:44px; color:#195d94; text-decoration:underline; text-underline-offset:3px; cursor:pointer; text-align:left; }
 .rca-group-horse-link:focus-visible,.rca-horse-name:focus-visible { outline:3px solid #236dba; outline-offset:2px; }
 .rca-group-prediction-cards { grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); align-items:start; }
+.rca-group-summary { display:flex; justify-content:space-between; align-items:center; gap:12px; min-height:64px; cursor:pointer; list-style:none; }
+.rca-group-summary::-webkit-details-marker { display:none; }
+.rca-group-summary:focus-visible { outline:3px solid #236dba; outline-offset:5px; border-radius:4px; }
+.rca-group-card .rca-group-toggle { display:flex; gap:5px; align-items:center; color:#195d94; white-space:nowrap; }
+.rca-group-card .rca-group-close { display:none; }
+.rca-group-card[open]>.rca-group-summary .rca-group-close { display:inline; }
+.rca-group-card[open]>.rca-group-summary .rca-group-open { display:none; }
+.rca-group-card[open]>.rca-group-summary svg { transform:rotate(180deg); }
 .rca-group-horse-card { border:1px solid #dce5ef; border-radius:10px; background:white; min-width:0; margin-top:6px; }
 .rca-group-horse-card .rca-group-horse-link { border:0; border-bottom:1px solid #e6edf5; border-radius:10px 10px 0 0; padding:12px; }
 .rca-group-horse-card .rca-group-horse-link span { font-size:14px; }
@@ -145,3 +153,27 @@ button:disabled { cursor: not-allowed; }
 .rca-personal .rca-list-table { min-width: 0; table-layout: fixed; }
 .rca-personal .rca-list-table tbody th { min-width: 0; overflow-wrap: anywhere; }
 .rca-personal .rca-list-table td input { width: 100%; min-width: 0; }
+.rca-selection-numbers { border:1px solid #c8def2; border-radius:12px; padding:14px; background:#f4f9ff; min-width:0; }
+.rca-selection-numbers h3 { font-size:15px; font-weight:750; color:#0b2545; }
+.rca-selection-numbers>dl { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin-top:12px; }
+.rca-selection-numbers>dl>div { border-radius:8px; padding:12px; background:white; min-width:0; }
+.rca-selection-numbers dt { font-size:13px; font-weight:700; color:#415d7a; }
+.rca-selection-labels { margin-top:5px; font-size:13px; color:#23629d; overflow-wrap:anywhere; }
+.rca-selection-values { margin-top:6px; font-size:18px; line-height:1.6; font-weight:750; color:#0b2545; overflow-wrap:anywhere; }
+
+.rca-group-probability { min-width:0; margin:12px 0 18px; padding:14px; border:1px solid #cfe3f2; border-radius:12px; background:#f0f7fc; }
+.rca-group-probability h3 { font-size:15px; font-weight:750; color:#0b2545; margin:0 0 8px; }
+.rca-group-probability-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin:12px 0; }
+.rca-group-probability-metrics>div { min-width:0; background:white; padding:10px; border-radius:8px; }
+.rca-group-probability-metrics dt { color:#526d88; font-size:12px; }
+.rca-group-probability-metrics dd { font-size:21px; font-weight:750; color:#0b2545; margin-top:4px; }
+.rca-group-contribution { font-size:13px; line-height:1.8; overflow-wrap:anywhere; }
+.rca-group-contributors { margin:12px 0; }
+.rca-group-contributors li { display:flex; flex-wrap:wrap; gap:4px 10px; padding:8px 0; border-bottom:1px solid #dce7ef; font-size:13px; }
+.rca-group-contributors li>span { color:#526d88; }
+.rca-group-probability>.rca-muted { font-size:12px; line-height:1.8; }
+.rca-personal-group-probabilities { margin:12px 0; }
+
+.rca-group-probability .rca-group-contribution strong { display:inline; font-size:13px; margin:0; }
+
+.rca-group-strength-metrics>div { background:#e4f1fd; border:1px solid #b8d6f0; }
