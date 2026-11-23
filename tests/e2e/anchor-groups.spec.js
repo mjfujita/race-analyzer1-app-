@@ -1,9 +1,11 @@
 import {test,expect} from '@playwright/test'
+async function expand(page){for(const item of await page.locator('.rca-group-horse-details > summary').all())if(!await item.evaluate(el=>el.parentElement.open))await item.click()}
 
 test('all-horse table shows matching groups, shares manual cuts at the same observation and preserves probabilities',async({page})=>{
  const errors=[];page.on('pageerror',e=>errors.push(e.message))
  await page.clock.setFixedTime(new Date('2026-11-15T06:30:00Z'))
  await page.goto('/market-preview.html?state=groups-anchor-labels')
+ await expand(page)
  const cards=page.locator('.rca-group-horses')
  const labels={}
  for(const group of await cards.all()){
@@ -18,6 +20,7 @@ test('all-horse table shows matching groups, shares manual cuts at the same obse
  const probabilities=await table.locator('tbody tr').evaluateAll(rows=>rows.map(row=>[row.querySelector('th').textContent.replace(/^[A-Z—]/,''),...Array.from(row.querySelectorAll('td')).slice(0,2).map(td=>td.textContent)]))
  await page.getByRole('button',{name:'グループ・買い目',exact:true}).click()
  const cut=page.getByLabel('1番の前で区切る',{exact:true});await cut.setChecked(!await cut.isChecked())
+ await expand(page)
  const expected={}
  for(const group of await cards.all())for(const button of await group.getByRole('button').all())expected[Number((await button.getAttribute('aria-label')).match(/^\d+/)[0])]=(await group.getAttribute('aria-label'))[0]
  await page.getByRole('button',{name:'軸候補・妙味判断',exact:true}).click()

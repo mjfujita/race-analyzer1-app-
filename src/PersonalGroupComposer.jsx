@@ -11,8 +11,8 @@ const toggle = (list,value) => list.includes(value) ? list.filter(x => x !== val
 const label = t => `${t.type} ${t.numbers.join(t.type === '3連複' ? '−' : '→')}`
 
 export default function PersonalGroupComposer({ source, disabled, busy, onSave }) {
-  const [type,setType] = useState('馬単'), [method,setMethod] = useState('formation')
-  const [slots,setSlots] = useState([[],[],[]]), [box,setBox] = useState([])
+  const [type,setType] = useState(source.initialType??'馬単'), [method,setMethod] = useState('formation')
+  const [slots,setSlots] = useState(()=>source.initialSlots?.map(s=>[...s])??[[],[],[]]), [box,setBox] = useState([])
   const [axis,setAxis] = useState(''), [opponents,setOpponents] = useState([]), [position,setPosition] = useState(0)
   const [budget,setBudget] = useState('10000'), [unit,setUnit] = useState('100'), [overrides,setOverrides] = useState({})
   const [memo,setMemo] = useState(''), [error,setError] = useState('')

@@ -70,7 +70,10 @@ test('the signed-in home shows race progress, opens the correct forecast, and li
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path: '.qa/race-day-dashboard-mobile.png', fullPage: true })
 
+  await page.getByRole('button', { name: '軸候補を確認', exact: true }).scrollIntoViewIfNeeded()
+  expect(await page.evaluate(()=>window.scrollY)).toBeGreaterThan(0)
   await page.getByRole('button', { name: '軸候補を確認', exact: true }).click()
+  await expect.poll(()=>page.evaluate(()=>window.scrollY)).toBe(0)
   await expect(page.getByRole('button', { name: '軸候補', exact: true })).toHaveAttribute('aria-current', 'page')
   await expect(page.getByLabel('予算上限（円）')).toHaveCount(0)
   await expect(page.getByRole('heading', { name: '妙味のある候補から軸を1頭選ぶ' })).toBeVisible()

@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test'
 import {horses} from '../../dev/fixtures.js'
+async function expand(page){for(const item of await page.locator('.rca-group-horse-details > summary').all())if(!await item.evaluate(el=>el.parentElement.open))await item.click()}
 
 test('every grouped horse opens its own detail and keyboard return preserves the draft',async({page})=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message))
@@ -10,6 +11,7 @@ test('every grouped horse opens its own detail and keyboard return preserves the
   await page.getByLabel('判断の根拠・不確かな点').fill('編集中の根拠を残したまま能力を見る')
   const boundary=page.getByLabel('1番の前で区切る',{exact:true})
   const expectedBoundary=!await boundary.isChecked();await boundary.setChecked(expectedBoundary)
+  await expand(page)
   const cardLinks=page.locator('.rca-group-horses').getByRole('button')
   await expect(cardLinks).toHaveCount(8)
   const before=await page.evaluate(()=>JSON.stringify(localStorage))
@@ -33,7 +35,7 @@ test('every grouped horse opens its own detail and keyboard return preserves the
     await expect(boundary).toBeChecked({checked:expectedBoundary})
   }
   expect(await page.evaluate(()=>JSON.stringify(localStorage))).toBe(before)
-  const table=page.getByRole('table',{name:'グループと能力の比較',exact:true})
+  const table=page.getByRole('table',{name:'グループのカスタマイズ',exact:true})
   await table.getByRole('button',{name:'3番 架空馬Cの詳細',exact:true}).click()
   await expect(page.getByRole('heading',{name:'3 架空馬Cの詳細',exact:true})).toBeVisible()
   expect(errors).toEqual([])
@@ -42,6 +44,7 @@ test('every grouped horse opens its own detail and keyboard return preserves the
 test('mobile horse links have usable touch targets, preserve scroll on return, and handle missing evidence',async({page})=>{
   await page.setViewportSize({width:390,height:844})
   await page.goto('/market-preview.html?state=groups-horse-mobile')
+  await expand(page)
   const link=page.locator('.rca-group-horses').getByRole('button',{name:'7番 架空馬Gの詳細',exact:true})
   await link.scrollIntoViewIfNeeded()
   const box=await link.boundingBox();expect(box.height).toBeGreaterThanOrEqual(44)

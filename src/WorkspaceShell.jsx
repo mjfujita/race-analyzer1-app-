@@ -1,3 +1,4 @@
+import {useLayoutEffect} from 'react'
 import { Target, LayoutDashboard, History, Database, LogOut, Gauge, Route, TrendingUp, Layers, ShieldCheck, PenLine } from 'lucide-react'
 
 const mainItems = [
@@ -7,7 +8,8 @@ const mainItems = [
 const raceItems = [['raceInfo', 'レース情報', LayoutDashboard], ['groups', 'グループ・買い目', Layers], ['personal', '私の予想', PenLine], ['anchors', '軸候補', Target], ['ability', '能力・適性', Gauge], ['winOdds', 'オッズ推移', TrendingUp], ['pace', '展開・馬場', Route]]
 export const isRacePage = tab => raceItems.some(([id]) => id === tab)
 
-export default function WorkspaceShell({ tab, onNavigate, onLogout, email, children, raceHeader, footer }) {
+export default function WorkspaceShell({ tab, onNavigate, onLogout, email, children, raceHeader, footer, raceKey }) {
+  useLayoutEffect(()=>{window.scrollTo({top:0,left:0,behavior:'instant'})},[tab,raceKey])
   const active = isRacePage(tab) ? 'anchors' : tab === 'records' ? 'forecastReview' : ['races'].includes(tab) ? 'today' : tab
   const nav = mobile => <nav aria-label={mobile ? 'モバイル開催メニュー' : '開催メニュー'} className={mobile ? 'rca-bottom-nav' : 'rca-main-nav'}>
     {mainItems.map(([id, label, Icon]) => <button key={id} type="button" aria-current={active === id ? 'page' : undefined} onClick={() => onNavigate(id)}><Icon size={18} aria-hidden="true" /><span>{label}</span></button>)}

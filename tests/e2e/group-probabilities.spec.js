@@ -1,10 +1,12 @@
 import {test,expect} from '@playwright/test'
+async function expand(page){for(const item of await page.locator('.rca-group-horse-details > summary').all())if(!await item.evaluate(el=>el.parentElement.open))await item.click()}
 
 async function open(page){
   await page.clock.setFixedTime(new Date('2026-11-15T06:25:00Z'))
   await page.goto('/market-preview.html?state=ace-group-probabilities')
   await page.getByRole('button',{name:'グループ・買い目',exact:true}).click()
   await page.getByLabel('観測時点').selectOption('demo-1')
+  await expand(page)
 }
 const summary=page=>page.getByRole('article',{name:'1番 架空馬Aの予想指標',exact:true})
 
@@ -51,12 +53,14 @@ test('later odds and future model cannot contaminate protected probabilities or 
   await expect(summary(page).getByRole('definition')).toHaveText([...before,'5.5倍',/^\d+\.\d%$/])
   await expect(page.getByRole('region',{name:'B群の推定確率',exact:true}).getByRole('definition')).toHaveText(groupBefore)
   await page.getByLabel('観測時点').selectOption('late-group-price')
+  await expand(page)
   await expect(summary(page).getByRole('definition')).toHaveText([...before,'99.0倍','判定保留'])
   // The selected late price may change group membership; the protected horse probabilities stay unchanged.
 })
 
 test('missing dated history leaves group probabilities on hold and keeps the horse detail accessible',async({page})=>{
   await page.goto('/market-preview.html?state=groups-probability-missing')
+  await expand(page)
   const card=summary(page)
   const values=await card.getByRole('definition').allTextContents()
   expect(values.slice(0,4)).toEqual(['判定保留','判定保留','判定保留','判定保留'])
@@ -74,24 +78,26 @@ test('group probability, average and leader share update with candidate changes 
   const b=page.getByRole('region',{name:'B群の推定確率',exact:true})
   const aValues=await a.getByRole('definition').allTextContents()
   const two=await page.getByRole('article',{name:'2番 架空馬Bの予想指標',exact:true}).getByRole('definition').allTextContents()
-  expect(aValues).toEqual([two[0],`${(parseFloat(two[0])*8/100).toFixed(2)}倍`,two[0],two[2],two[3],two[1]])
+  expect(aValues).toEqual([two[0],two[2],two[3],two[1]])
+  await expect(page.getByRole('region',{name:'A群の比較と中心馬',exact:true}).getByRole('definition')).toHaveText([two[0],`${(parseFloat(two[0])*8/100).toFixed(2)}倍`])
   const bValues=await b.getByRole('definition').allTextContents()
-  expect(bValues[5]).toBe('100.0%') // seven of eight horses; at least one must be top three.
-  await expect(b).toContainText('中心馬 1番 架空馬A')
-  for(let i=2;i<5;i++)expect(Math.abs(parseFloat(aValues[i])+parseFloat(bValues[i])-100)).toBeLessThan(.11)
-  expect(Math.abs(parseFloat(bValues[2])/7-parseFloat(bValues[0]))).toBeLessThan(.11)
+  expect(bValues[3]).toBe('100.0%') // seven of eight horses; at least one must be top three.
+  await expect(page.getByRole('region',{name:'B群の比較と中心馬',exact:true})).toContainText('中心馬 1番 架空馬A')
+  for(let i=0;i<3;i++)expect(Math.abs(parseFloat(aValues[i])+parseFloat(bValues[i])-100)).toBeLessThan(.11)
+  expect(Math.abs(parseFloat(bValues[0])/7-parseFloat((await page.getByRole('region',{name:'B群の比較と中心馬',exact:true}).getByRole('definition').allTextContents())[0]))).toBeLessThan(.11)
   const before=await page.evaluate(()=>JSON.stringify(localStorage))
-  await b.locator('.rca-group-contributors > summary').click()
-  await expect(b).toContainText('群内寄与')
-  await b.getByRole('button',{name:'1番 架空馬Aの詳細',exact:true}).click()
+  const basis=page.getByRole('region',{name:'B群の比較と中心馬',exact:true})
+  await basis.locator('.rca-group-contributors > summary').click()
+  await expect(basis).toContainText('群内寄与')
+  await basis.getByRole('button',{name:'1番 架空馬Aの詳細',exact:true}).click()
   await expect(page.getByRole('heading',{name:'1 架空馬Aの詳細',exact:true})).toBeVisible()
   await page.getByRole('button',{name:'← グループ・買い目へ戻る',exact:true}).click()
   expect(await page.evaluate(()=>JSON.stringify(localStorage))).toBe(before)
   await page.getByLabel('1番を候補に含める',{exact:true}).uncheck()
   await expect(b).toContainText('対象 6頭 ／ 出走 8頭 ／ 候補から除外 1頭')
-  await expect(b).not.toContainText('中心馬 1番')
+  await expect(basis).not.toContainText('中心馬 1番')
   await expect(a.getByRole('definition')).toHaveText(aValues)
-  expect(parseFloat((await b.getByRole('definition').allTextContents())[2])).toBeLessThan(parseFloat(bValues[2]))
+  expect(parseFloat((await b.getByRole('definition').allTextContents())[0])).toBeLessThan(parseFloat(bValues[0]))
   await page.getByLabel('6番の前で区切る',{exact:true}).check()
   await expect(page.getByRole('region',{name:'C群の推定確率',exact:true})).toContainText('対象 3頭')
   await page.getByRole('button',{name:'私の予想',exact:true}).click()

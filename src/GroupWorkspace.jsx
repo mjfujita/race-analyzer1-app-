@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import {ChevronDown} from 'lucide-react'
-import { groupOdds, compareGroupPlans, groupBudget, createGroupPlan, reviewGroupPlan, groupOutcome, groupReceiptVerified } from './groupAnalysis.js'
+import { groupOdds, formationTickets, compareGroupPlans, groupBudget, createGroupPlan, reviewGroupPlan, groupOutcome, groupReceiptVerified } from './groupAnalysis.js'
 import { ledgerScope, emptyLedger, readLedger, appendGroupPlan, writeLedgerExclusive, importLedger, exportLedger,
   appendPurchase, appendSettlement, activePurchases, latestSettlement, summarizeLedger } from './forecastLedger.js'
 import { readOddsHistory, readOddsEvents, oddsStorageKey } from './oddsHistory.js'
 import { readCloudRace } from './cloudStore.js'
-import { formatRaceTime, snapshotTiming, raceDateISO, raceTimestamp } from './raceTime.js'
+import { formatRaceTime, snapshotTiming, raceDateISO } from './raceTime.js'
 import { parseQuotes, ticketKey } from './portfolio.js'
 import { PurchaseEditor, SettlementEditor } from './FinalForecastPage.jsx'
 import { downloadJson } from './fileIO.js'
 import HorseAssessments from './HorseAssessments.jsx'
-import GroupHorsePrediction from './GroupHorsePrediction.jsx'
+import GroupPredictionCard from './GroupPredictionCard.jsx'
 import {useAceAssessment} from './useAceAssessment.js'
 import PersonalGroupComposer from './PersonalGroupComposer.jsx'
 import GroupSelectionNumbers from './GroupSelectionNumbers.jsx'
@@ -86,6 +85,9 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   const [quoteObservedAt,setQuoteObservedAt] = useState(''), [quoteRetrievedAt,setQuoteRetrievedAt] = useState(null)
   const [note,setNote] = useState(''), [selectedId,setSelectedId] = useState('')
   const [composerSource,setComposerSource] = useState(null)
+  const [quickType,setQuickType]=useState('馬単'),[quickChoice,setQuickChoice]=useState(null)
+  const composerHeading=useRef(null)
+  useEffect(()=>{if(composerSource){composerHeading.current?.focus({preventScroll:true});window.scrollTo({top:0,behavior:'instant'})}},[composerSource])
   const recordsHeading = useRef(null)
   const current = data.history.find(s => s.id === snapshotId) ?? data.history[0]
   const field = useMemo(() => horses.map(h => ({ no:Number(h.no), name:h.name ?? '', ...(h.frameNo ? { frameNo:h.frameNo } : {}),
@@ -110,6 +112,9 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   },[field,current,threshold,boundaries,slotChoice,excluded,quoteText,variant,budget,unit,overrides])
   const grouping = analysis.grouping
   const ace=useAceAssessment({race,horses,statistics,userId,cloudRevision,review,asOf:current?.retrievedAt??null,enabled:Boolean(current)})
+  const quickBasis=JSON.stringify([current?.id,current?.odds,grouping?.boundaries,excluded])
+  const quickSlots=quickChoice?.basis===quickBasis?quickChoice.slots:[[],[],[]]
+  const quickTickets=grouping?formationTickets(grouping,quickSlots,quickType,excluded):[]
   const groupProbabilities=useMemo(()=>summarizeGroupProbabilities(grouping,ace,excluded),[grouping,ace,excluded])
   useEffect(()=>{
     if(current&&grouping)onGroupDisplayChange?.({raceId:String(race.id),raceDate:race.raceDate,snapshotId:current.id,
@@ -118,15 +123,12 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   const previous = data.history.filter(s => s.id !== current?.id && Date.parse(s.retrievedAt) < Date.parse(current?.retrievedAt) && Date.parse(s.observedAt) < Date.parse(current?.observedAt)
     && field.every(h => Number.isFinite(s.odds?.[h.no]) && s.odds[h.no] >= 1))
     .sort((a,b) => Date.parse(a.observedAt)-Date.parse(b.observedAt))[0]
-  let previousGroups
-  try { previousGroups = previous ? groupOdds(field,previous.odds,Number(threshold)) : null } catch { /* Invalid controls are reported by analysis. */ }
   const frozen = ledger.groupPlans?.find(p => p.id === selectedId) ?? ledger.groupPlans?.at(-1)
   const outcome = frozen ? groupOutcome(frozen,review,data.cloud) : null
   const purchase = frozen ? activePurchases(ledger).find(p => p.forecastId === frozen.id) : null
   const settlement = purchase ? latestSettlement(ledger,purchase.id) : null
   const payouts = (data.cloud?.observations ?? []).filter(e => e.kind === 'HJC' && e.payload?.status === 'published').sort((a,b) => Date.parse(b.retrievedAt)-Date.parse(a.retrievedAt))[0]
   const timing = snapshotTiming(current,race)
-  const postAt=raceTimestamp(race,race.postTime??race.post_time)
 
   async function persist(next,success) {
     if (saving.current) return false
@@ -154,15 +156,15 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       if (await persist(appendGroupPlan(ledger,plan),decision === 'skip' ? '見送り判断を固定しました。' : 'グループと比較案を固定しました。')) setSelectedId(plan.id)
     } catch (problem) { setError(problem.message) }
   }
-  function startPersonal() {
+  function startPersonal(initial=null) {
     if (disabled || loading) return
     setComposerSource(JSON.parse(JSON.stringify({race,field,snapshot:current,referenceSnapshot:previous ?? null,
-      threshold:Number(threshold),boundaries,excluded,groupProbabilities,probabilityBoundary:ace.boundary})))
+      threshold:Number(threshold),boundaries,excluded,groupProbabilities,probabilityBoundary:ace.boundary,...(initial?.type?{initialType:initial.type,initialSlots:initial.slots}:{})})))
     setError(''); setMessage('')
   }
   async function savePersonal(plan) {
     if (await persist(appendGroupPlan(ledger,plan),'私の予想を登録しました。')) {
-      setSelectedId(plan.id); setComposerSource(null)
+      setSelectedId(plan.id); setComposerSource(null); setQuickChoice(null)
       requestAnimationFrame(() => {recordsHeading.current?.focus();recordsHeading.current?.scrollIntoView({block:'start'})})
     }
   }
@@ -180,39 +182,38 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <HorseAssessments key={horseDetail.no} {...{race,horses,statistics,userId,cloudRevision,review}} initialHorseNo={horseDetail.no} detail asOf={horseDetail.asOf} />
     </div>}
     <div hidden={Boolean(horseDetail)} inert={Boolean(horseDetail)}><div className="rca-stack rca-groups">
-    <div className="rca-page-title"><div><h1>{personalOnly?'私の予想':'グループ・買い目比較'}</h1><p>{personalOnly?'選んだグループ・券種・買い方・予定金額を残し、結果と振り返ります。':'人気のまとまりと能力を確認し、着順を変えた案を比較します。'}</p></div>{onOpenAbility && <button className="rca-secondary" onClick={onOpenAbility}>能力・適性を詳しく見る</button>}</div>
+    <div className="rca-page-title"><div><h1>{personalOnly||composerSource?'私の予想':'グループ・買い目比較'}</h1><p>{personalOnly||composerSource?'選んだグループ・券種・買い方・予定金額を残し、結果と振り返ります。':'人気のまとまりと能力を確認し、着順を変えた案を比較します。'}</p></div>{onOpenAbility && <button className="rca-secondary" onClick={onOpenAbility}>能力・適性を詳しく見る</button>}</div>
     {loading && <p role="status" className="rca-notice">保存済みデータを読み込み中です。</p>}
     {(error || data.error) && <p role="alert" className="rca-error">{error || data.error}</p>}{message && <p role="status" className="rca-notice">{message}</p>}
-    {!personalOnly && onOpenPersonal && <div className="rca-notice"><p>ご自身の買い方を残すには「私の予想」へ。馬単・3連単・3連複をグループで選んで登録できます。</p><button className="rca-primary mt-3" onClick={onOpenPersonal}>私の予想を登録</button></div>}
-    {personalOnly && <>{!composerSource ? <section className="rca-panel"><h2>自分で選んだ買い目を残す</h2><p className="rca-muted">まずグループを確認し、券種と買い方を選びます。選択は空欄から始まります。</p>
+    {!personalOnly&&!composerSource&&onOpenPersonal&&<div><button className="rca-secondary" onClick={onOpenPersonal}>私の予想を開く</button></div>}
+    {personalOnly && !composerSource && <section className="rca-panel"><h2>自分で選んだ買い目を残す</h2><p className="rca-muted">まずグループを確認し、券種と買い方を選びます。選択は空欄から始まります。</p>
       <div className="rca-group-cards my-4">{grouping?.groups.map(g=><div className="rca-group-card" key={g.label}><strong>{g.label}</strong><p>{g.horses.filter(h=>!excluded.includes(h.no)).map(h=>`${h.no} ${h.name}`).join(' ／ ') || '候補なし'}</p><GroupProbabilitySummary summary={groupProbabilities.find(s=>s.label===g.label)} /></div>)}</div>
       {!current || !grouping?.complete ? <p className="rca-notice">全頭の単勝オッズの取得待ちです。データの同期後に登録できます。</p> : <p className="rca-muted">観測 {formatRaceTime(current.observedAt)} ／ 取得 {formatRaceTime(current.retrievedAt)}。この観測とグループを基準に入力します。</p>}
       {analysis.error && <p role="alert" className="rca-error">{analysis.error}</p>}
       {field.some(h=>h.cancelled) && <p className="rca-error">取消を含むレースは新しい予想の登録を保留します。保存済み記録は確認できます。</p>}
-      <div className="flex flex-wrap gap-3 mt-4"><button className="rca-primary" disabled={disabled || loading} onClick={startPersonal}>新しい予想を入力する</button>{onOpenGroups && <button className="rca-secondary" onClick={onOpenGroups}>グループを確認・調整する</button>}</div>
-    </section> : <><PersonalGroupComposer source={composerSource} disabled={Boolean(data.error) || field.some(h=>h.cancelled)} busy={busy} onSave={savePersonal} /><div><button className="rca-secondary" disabled={busy} onClick={()=>setComposerSource(null)}>入力をやめて戻る</button></div></>}</>}
-    {!personalOnly && <><section className="rca-panel"><h2>１ · 単勝オッズでグループを作る</h2><div className="rca-group-controls">
+      <div className="flex flex-wrap gap-3 mt-4"><button className="rca-primary" disabled={disabled || loading} onClick={()=>startPersonal()}>新しい予想を入力する</button>{onOpenGroups && <button className="rca-secondary" onClick={onOpenGroups}>グループを確認・調整する</button>}</div>
+    </section>}
+    {composerSource&&<><div ref={composerHeading} tabIndex={-1}><PersonalGroupComposer source={composerSource} disabled={Boolean(data.error) || field.some(h=>h.cancelled)} busy={busy} onSave={savePersonal} /></div><div><button className="rca-secondary" disabled={busy} onClick={()=>setComposerSource(null)}>入力をやめて戻る</button></div></>}
+    {!personalOnly && !composerSource && <><section className="rca-panel"><h2>１ · 単勝オッズでグループを作る</h2><div className="rca-group-controls">
       <label>観測時点<select className={control} value={current?.id ?? ''} onChange={e => changeObservation(e.target.value)}>{data.history.map(s => <option key={s.id} value={s.id}>{formatRaceTime(s.observedAt)} · 取得 {formatRaceTime(s.retrievedAt)}</option>)}</select></label>
       <label>自動で区切る倍率<input className={control} type="number" min="1.1" max="5" step="0.1" value={threshold} onChange={e => { setThreshold(e.target.value); setBoundaries(null); setSlotChoice(null); setOverrides({}) }} /></label>
       <button className="rca-secondary" onClick={() => { setBoundaries(null); setSlotChoice(null); setOverrides({}) }}>自動案に戻す</button>
-    </div>{current&&<p className="rca-muted mt-3">{snapshotId?'過去の観測時点を選択中です。':'最新の保存済み観測を表示中です。新しい観測の同期後に自動で切り替わります。'}</p>}
-    {current&&current.id!==data.history[0]?.id&&<div role="status" className="rca-notice mt-3">より新しい観測があります。作成中のグループ・買い目は自動で変更していません。<button className="rca-secondary ml-2" onClick={()=>changeObservation(data.history[0].id)}>最新の観測を表示</button></div>}
-    <p className="rca-muted mt-2">観測時点はJRDBのオッズ時刻、取得はMacが読み取った時刻です。再取得してもJRDB側の時刻が同じ場合、観測時点は変わりません。</p>
-    {postAt&&Date.parse(postAt)<=Date.now()&&<p className="rca-notice mt-2">発走時刻を過ぎたレースです。確定オッズ・結果は、レース前の観測として追加しません。後から取得した過去オッズも、取得時刻を遡らせず過去検証として扱います。</p>}
-    <p className="rca-muted">次の馬のオッズが設定倍率以上に開く位置で区切ります。同じ倍率の馬は分割しません。A・Bは人気順のまとまりで、能力順位ではありません。</p>
-      {!current && <p className="rca-notice">実オッズの取得待ちです。能力・適性から記録・取込みできます。</p>}
-      {current && <p className="rca-notice">{timing.eligible ? '締切前の時刻証跡あり。保存時にも判定します。' : `過去検証用：${timing.reason}`} 取得元：{current.source ?? '未記録'}。{grouping?.manual ? '手動調整中（自動案も保存）' : '自動グループ'}</p>}
+    </div>
+    {current&&current.id!==data.history[0]?.id&&<div role="status" className="rca-notice">新しい観測があります。<button className="rca-secondary ml-2" onClick={()=>changeObservation(data.history[0].id)}>最新の観測を表示</button></div>}
+    {current&&!timing.eligible&&<span className="rca-pill">過去検証</span>}
+    {!current&&<p className="rca-notice">実オッズの取得待ちです。</p>}
       {analysis.error && <p role="alert" className="rca-error">{analysis.error}</p>}
-      {grouping && <><p className="rca-muted mt-3">馬名を押すと、その馬の評価・過去走・パドック情報を確認できます。</p><p className="rca-muted mt-2">確率の参照上限：{formatRaceTime(ace.boundary)}。詳細画面と同じACE予想を表示しています。</p>{ace.error&&<p role="alert" className="rca-error">予想指標を表示できません。{ace.error}</p>}<div className="rca-group-cards rca-group-prediction-cards">{grouping.groups.map(g => <details key={g.label} className="rca-group-card" open><summary className="rca-group-summary" aria-label={`${g.label}グループを開閉`}><span><strong>{g.label}</strong><span>{g.horses.length}頭 · {g.horses[0].odds}〜{g.horses.at(-1).odds}倍</span></span><span className="rca-group-toggle" aria-hidden="true"><span className="rca-group-close">閉じる</span><span className="rca-group-open">開く</span><ChevronDown size={18}/></span></summary><GroupProbabilitySummary summary={groupProbabilities.find(s=>s.label===g.label)} onOpen={openHorse} /><ul className="rca-group-horses" aria-label={`${g.label}グループの馬`}>{g.horses.map(h=><li key={h.no}><GroupHorsePrediction horse={h} assessment={ace.rows.find(row=>row.no===h.no)} returnUsable={ace.current?.id===current?.id} onOpen={openHorse} /></li>)}</ul></details>)}</div>
-      <p className="rca-muted">確率・回収率は研究用の試算です。2・3着率と3着内率は未校正の参考値です。単勝期待回収率は、選択オッズが参照時点・締切の条件を満たす場合に表示します。プラス材料・懸念は馬名から詳細で確認できます。</p>
+      {grouping&&<>{ace.error&&<p role="alert" className="rca-error">予想指標を表示できません。{ace.error}</p>}
+      <div className="rca-group-controls"><label>カードから追加する券種<select className={control} value={quickType} onChange={e=>{setQuickType(e.target.value);setQuickChoice(null)}}>{['馬単','3連単','3連複'].map(type=><option key={type}>{type}</option>)}</select></label></div>
+      <div className="rca-group-cards rca-group-prediction-cards">{grouping.groups.map(g=><GroupPredictionCard key={g.label} group={g} summary={groupProbabilities.find(s=>s.label===g.label)} assessments={ace.rows} returnUsable={ace.current?.id===current?.id} onOpen={openHorse} type={quickType} slots={quickSlots} ticketCount={quickTickets.length} onReview={()=>startPersonal({type:quickType,slots:quickSlots})} disabled={disabled||loading} onToggle={(position,label)=>setQuickChoice({basis:quickBasis,slots:quickSlots.map((slot,i)=>i===position?toggle(slot,label):slot)})} />)}</div>
+      <section className="rca-card-prediction" aria-label="カードから選択した予想"><h3>予想に追加したグループ</h3><GroupSelectionNumbers grouping={grouping} slots={quickSlots} type={quickType} excluded={excluded} /><p aria-live="polite">{quickTickets.length}点</p><div className="flex flex-wrap gap-3"><button type="button" className="rca-primary" disabled={disabled||loading||!quickTickets.length} onClick={()=>startPersonal({type:quickType,slots:quickSlots})}>選択した内容で予想を入力</button><button type="button" className="rca-secondary" onClick={()=>setQuickChoice(null)}>選択を解除</button></div></section>
       {!grouping.complete && <p role="alert" className="rca-error">オッズ未取得：{grouping.missing.join('・')}番。全頭が揃うまで保存を保留します。</p>}
-      <div className="overflow-x-auto"><table className="rca-list-table" aria-label="グループと能力の比較"><thead><tr>{['区切り','群・馬番・馬名','単勝／推移','取得済みの能力材料','候補'].map(t => <th key={t}>{t}</th>)}</tr></thead><tbody>{grouping.groups.flatMap(g => g.horses).map((h,i,rows) => <tr key={h.no}>
+      <h3 className="mt-6">グループをカスタマイズ</h3><div className="overflow-x-auto"><table className="rca-list-table rca-group-customize" aria-label="グループのカスタマイズ"><colgroup><col className="rca-cut-column"/><col/><col className="rca-odds-column"/><col className="rca-include-column"/></colgroup><thead><tr>{['区切り','群・馬番・馬名','単勝','候補'].map(t => <th key={t}>{t}</th>)}</tr></thead><tbody>{grouping.groups.flatMap(g => g.horses).map((h,i,rows) => <tr key={h.no}>
         <td><input type="checkbox" aria-label={`${h.no}番の前で区切る`} disabled={i === 0 || h.odds === rows[i-1]?.odds} checked={grouping.boundaries.includes(h.no)} onChange={() => { setBoundaries(toggle(grouping.boundaries,h.no)); setSlotChoice(null); setOverrides({}) }} /></td>
         <th scope="row"><span className="rca-pill">{grouping.membership[h.no]}</span> <button type="button" className="rca-horse-name" aria-label={`${h.no}番 ${h.name}の詳細`} onClick={event=>openHorse(h.no,event)}>{h.no} {h.name}</button></th>
-        <td>{h.odds.toFixed(1)}倍{previous?.odds[h.no] && <small className="block">{((h.odds/previous.odds[h.no]-1)*100).toFixed(1)}% · 群 {previousGroups?.membership[h.no] ?? '—'}（自動）→{grouping.membership[h.no]}{grouping.manual ? '（手動）' : '（自動）'}</small>}</td>
-        <td className="rca-evidence">{field.find(row => row.no === h.no)?.evidence}<small className="block">距離実績は同じ芝・ダートの±200m、直近５走。取得済み参考情報・確率への変換なし</small></td>
+        <td>{h.odds.toFixed(1)}倍</td>
         <td><input type="checkbox" aria-label={`${h.no}番を候補に含める`} checked={!excluded.includes(h.no)} onChange={() => { setExcluded(toggle(excluded,h.no)); setOverrides({}) }} /></td>
-      </tr>)}</tbody></table></div>{previous && <p className="rca-muted">変化率の比較元：{formatRaceTime(previous.observedAt)}。グループ名は構成人数により変わります。人気上昇を能力上昇とは扱いません。</p>}</>}
+      </tr>)}</tbody></table></div></>}
     </section>
     {grouping && <section className="rca-panel"><h2>２ · 着順パターンと券種を比較する</h2><p className="rca-muted">初期選択は比較用です。システムが有利な着順を推奨したものではありません。</p>
       <div className="rca-group-slots">{analysis.slots.map((slot,i) => <fieldset key={i}><legend>{i+1}着のグループ</legend>{grouping.groups.map(g => <label key={g.label}><input type="checkbox" checked={slot.includes(g.label)} onChange={() => { setSlotChoice(analysis.slots.map((s,index) => index === i ? toggle(s,g.label) : s)); setOverrides({}) }} />{g.label}</label>)}</fieldset>)}</div>
