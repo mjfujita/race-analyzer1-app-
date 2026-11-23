@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {assessHorses,assessmentContext,horsePaddock,assessmentNumber} from '../src/horseAssessment.js'
+import {assessHorses,assessmentContext,horsePaddock,assessmentNumber,assessmentTime} from '../src/horseAssessment.js'
 
 const race={id:'05265501',raceDate:'20261115',postTime:'1540',placeCode:'05',surface:'芝',distance:1600,name:'架空の未勝利戦'}
 const now=Date.parse('2026-11-15T07:00:00Z')
@@ -68,4 +68,21 @@ test('zero paddock points and weight delta are valid, missing values and other h
   assert.equal(data.index,0);assert.equal(data.delta,0);assert.equal(data.weight,480);assert.deepEqual(data.comments,['取得したコメント'])
   assert.deepEqual(horsePaddock(null,1),{weight:null,delta:null,index:null,screenIdm:null,comments:[]})
   assert.equal(horsePaddock({horses:{bad:true},paddock:'bad'},1).weight,null)
+})
+
+test('JRDB tenths and already-normalized seconds display consistently without mutating source records',()=>{
+ assert.equal(assessmentTime(366),36.6)
+ assert.equal(assessmentTime(34.5),34.5)
+ assert.equal(assessmentTime(360,'tenths'),36)
+ assert.equal(assessmentTime(36,'seconds'),36)
+ assert.equal(assessmentTime(366,'seconds'),null)
+ assert.equal(assessmentTime(366,'milliseconds'),null)
+ assert.equal(assessmentTime(0),null)
+ const horse={no:1,idm:60,pastRuns:[run('20261110',2,{last3f:366,front3f:352})]}
+ const before=structuredClone(horse),[row]=assessHorses(race,[horse],[],now)
+ assert.equal(row.pastRuns[0].last3f,36.6)
+ assert.equal(row.pastRuns[0].front3f,35.2)
+ assert.deepEqual(horse,before)
+ const [raw]=assessHorses(race,[{no:1,pastRuns:[{...run('20261110'),last3f:undefined,last_3f:366}]}],[],now)
+ assert.equal(raw.pastRuns[0].last3f,36.6)
 })
