@@ -1,8 +1,6 @@
-import {useEffect,useMemo,useState} from 'react'
-import {readCloudRace,loadRuntimeModel} from './cloudStore.js'
-import {loadModel} from './modelStore.js'
-import {readOddsEvents,oddsStorageKey} from './oddsHistory.js'
-import {buildAceAssessment} from './aceAssessment.js'
+import {useMemo,useState} from 'react'
+import {readCloudRace} from './cloudStore.js'
+import {useAceAssessment} from './useAceAssessment.js'
 import AceHorseAssessment from './AceHorseAssessment.jsx'
 import PaddockInformation from './PaddockInformation.jsx'
 import {assessHorses,assessmentContext,paddockAvailability,venueNames} from './horseAssessment.js'
@@ -11,23 +9,13 @@ import {formatRaceTime,validTimestamp} from './raceTime.js'
 const recordText=record=>record.runs===null?'比較材料未取得':record.runs?`${record.topThree}/${record.runs}走が3着内`:'該当走なし'
 const runDate=date=>date.length===8?`${date.slice(0,4)}/${date.slice(4,6)}/${date.slice(6)}`:`${date.slice(0,4)}/${date.slice(4,6)}（日付未取得）`
 
-function readAceInputs(userId,race){
-  try{return {cloud:readCloudRace(userId,race),events:readOddsEvents(oddsStorageKey(userId,race)),model:loadModel(userId),runtimeModels:loadRuntimeModel(userId)}}
-  catch(problem){return {error:problem instanceof SyntaxError?'オッズの保存形式を読み取れません。既存記録は上書きしていません。':problem.message}}
-}
-
 export default function HorseAssessments({race,horses=[],statistics=[],userId,asOf=null,initialHorseNo='all',detail=false,cloudRevision=0,review=null}){
   const [selected,setSelected]=useState(String(initialHorseNo)),[beforeCutoff,setBeforeCutoff]=useState(true)
   const assessments=useMemo(()=>assessHorses(race,horses,statistics),[race,horses,statistics])
-  const [aceInputs,setAceInputs]=useState(()=>readAceInputs(userId,race))
-  useEffect(()=>{setAceInputs(readAceInputs(userId,race))},[userId,race,cloudRevision])
   // Read-only owner cache; the ACE analysis never adopts models or writes forecasts.
   const cloud=readCloudRace(userId,race)
   const context=assessmentContext(race,cloud,{beforeCutoff,asOf})
-  const ace=useMemo(()=>{
-    try{if(aceInputs.error)throw new Error(aceInputs.error);return buildAceAssessment({race,horses,statistics,...aceInputs,review,asOf})}
-    catch(problem){return {rows:[],summary:'ACEの今回予想を表示できません。保存データを確認してください。',error:problem.message}}
-  },[race,horses,statistics,asOf,aceInputs,review])
+  const ace=useAceAssessment({race,horses,statistics,userId,cloudRevision,review,asOf})
   const source=context.source
   const sourceLabel=/^https?:\/\/(?:www\.)?jrdb\.com(?:\/|$)/i.test(source?.source??'')?'JRDB直前情報':'取得済み直前情報'
   const rows=assessments.filter(h=>selected==='all'||String(h.no)===selected).sort((a,b)=>a.no-b.no)
