@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import {parsePaddockTab} from './paddock.mjs'
 
 export const CAPTURE_OFFSETS = [-60, -30, -20, -15, -12, -11, -10, -5, 0, 5, 15, 30]
 const normalize = value => String(value ?? '').normalize('NFKC').replace(/[\s　]/g, '')
@@ -145,6 +146,8 @@ export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString
   const results=horses.filter(h=>h.rank!==null&&Number.isInteger(h.rank)&&h.rank>=1&&h.rank<=race.fieldSize).map(h=>({horseNo:h.horseNo,rank:h.rank,
     cornerPass4:cornerPass4[h.horseNo]??null}))
   const resultKnown=results.length>0&&results.some(h=>h.rank===1)
+  const commentCapture=parsePaddockTab(raw.paddockTab,race,retrievedAt)
+  const {comments:paddockComments,...paddockCapture}=commentCapture
   const payload={...race,horses,fieldSize:active.length,releaseFieldSize:race.fieldSize,activeHorseNumbers:active.map(h=>h.horseNo),
     winOdds,baselineOdds,paddock:horses.map(h=>({horseNo:h.horseNo,paddockIndex:h.paddockIndex,horseWeight:h.horseWeight,horseWeightDelta:h.horseWeightDelta})),
     weather,going,observedAt,sourcePublishedAt,retrievedAt,availabilityAt:retrievedAt,timingEvidence:'observed-visible-at',source,sourceHash,
@@ -153,7 +156,7 @@ export function parseVisibleRace(raw, race, { retrievedAt=new Date().toISOString
     closingPublishedAt:null,closingRetrievedAt:finalPrice?retrievedAt:null,
     priceStatus:finalPrice?'final-visible':sourcePublishedAt?'timestamped':'publication-time-unverified',
     quotes:active.filter(h=>h.placeOddsLower).map(h=>({type:'複勝',numbers:[h.horseNo],odds:h.placeOddsLower,upper:h.placeOddsLower,rangeStatus:'lower-only'})),
-    paddockComments:raw.paddockComments??[], rawResultTable:raw.resultTables??[],rawPayoutTable:raw.payoutTables??[]}
+    paddockComments,paddockCapture, rawResultTable:raw.resultTables??[],rawPayoutTable:raw.payoutTables??[]}
   const eventId=hash(['LIVE_RACE',race.raceId,retrievedAt,sourceHash])
   const observation={eventId,kind:'LIVE_RACE',retrievedAt,sourceHash,payload}
   // Keep pre-withdrawal tables as raw evidence; do not turn an old field into today's active field.
@@ -217,9 +220,10 @@ async function captureLoadedRace(page,race,sourceUrl,context) {
       return [key,fullName?{text,fullName}:text]
     })))
     return {rows,weather:document.querySelector('#tenki_all')?.innerText??'',oddsLabel:document.querySelector('#infomation_block')?.innerText??'',
-      resultTables:tableRows('#results table tr'),payoutTables:tableRows('#payback table tr'),paddockComments:[],
+      resultTables:tableRows('#results table tr'),payoutTables:tableRows('#payback table tr'),
       historyTable:Array.from(document.querySelectorAll('#tabs-5 table tr')).map(row=>Array.from(row.querySelectorAll(':scope > th,:scope > td')).map(cell=>({text:cell.innerText.trim(),rowspan:cell.rowSpan,colspan:cell.colSpan})))}
   })
+  raw.paddockTab=await capturePaddockTab(page,race,context)
   const historyTab=page.locator('a[href="#tabs-5"]')
   if(await historyTab.count()){
     await paceNavigation(context)
@@ -228,4 +232,35 @@ async function captureLoadedRace(page,race,sourceUrl,context) {
     raw.historyTable=await page.locator('#tabs-5 table tr').evaluateAll(rows=>rows.map(row=>Array.from(row.querySelectorAll(':scope > th,:scope > td')).map(cell=>({text:cell.innerText.trim(),rowspan:cell.rowSpan,colspan:cell.colSpan}))))
   }
   return {raw,...parseVisibleRace(raw,race,{sourceUrl,retrievedAt:new Date().toISOString()})}
+}
+
+export async function capturePaddockTab(page,race,context){
+  const tab=page.locator('a[href="#tabs-1"]')
+  if(!await tab.count())return {status:'tab-missing',checkedAt:new Date().toISOString()}
+  try{
+    await paceNavigation(context)
+    await tab.click()
+    await page.waitForFunction(expected=>{
+      const norm=value=>String(value??'').normalize('NFKC').replace(/[\s＊*]/g,'')
+      const rows=Array.from(document.querySelectorAll('#horse_grid1 tr[id]')).filter(row=>row.querySelector('[aria-describedby="horse_grid1_umaban"]'))
+      return rows.length===expected.length&&rows.every(row=>{
+        const no=Number(row.querySelector('[aria-describedby="horse_grid1_umaban"]').innerText)
+        const cell=row.querySelector('[aria-describedby="horse_grid1_bamei9m"]')
+        const name=cell?.querySelector('[onclick]')?.getAttribute('onclick')?.match(/uma_grid\.bamei_click\(\s*"[^"]*"\s*,\s*"([^"]+)"/)?.[1]??cell?.innerText
+        return expected.some(horse=>Number(horse.horseNo)===no&&norm(horse.name)===norm(name))
+      })
+    },race.horses,{timeout:8000})
+    const data=await page.evaluate(()=>{
+      const rows=Array.from(document.querySelectorAll('#horse_grid1 tr[id]')).filter(row=>row.querySelector('[aria-describedby="horse_grid1_umaban"]')).map(row=>{
+        const cell=key=>row.querySelector(`[aria-describedby="horse_grid1_${key}"]`)
+        const name=cell('bamei9m'),fullName=name?.querySelector('[onclick]')?.getAttribute('onclick')?.match(/uma_grid\.bamei_click\(\s*"[^"]*"\s*,\s*"([^"]+)"/)?.[1]
+        return {umaban:cell('umaban')?.innerText.trim(),bamei9m:fullName?{text:name.innerText.trim(),fullName}:name?.innerText.trim(),comment:cell('comment')?.innerText.trim()}
+      })
+      return {rows,accessNotice:/パドック返し馬コメント情報はオプションコンテンツ/.test(document.querySelector('#infomation_block')?.innerText??'')}
+    })
+    return {...data,status:'read',checkedAt:new Date().toISOString()}
+  }catch{
+    const notice=await page.locator('#infomation_block').innerText({timeout:1000}).catch(()=> '')
+    return {status:'failed',checkedAt:new Date().toISOString(),accessNotice:/パドック返し馬コメント情報はオプションコンテンツ/.test(notice)}
+  }
 }

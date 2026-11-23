@@ -48,7 +48,7 @@ test('mobile horse links have usable touch targets, preserve scroll on return, a
   const y=await page.evaluate(()=>scrollY)
   await link.click()
   await expect(page.getByRole('heading',{name:'7 架空馬Gの詳細',exact:true})).toBeVisible()
-  await expect(page.getByText('コメント未取得',{exact:true})).toBeVisible()
+  await expect(page.getByText('旧取得方式のためコメント記録なし',{exact:true})).toBeVisible()
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({path:'.qa/group-horse-detail-mobile.jpg',fullPage:false})
   await page.getByLabel('表示する馬').selectOption('8')
