@@ -89,6 +89,14 @@ button:disabled { cursor: not-allowed; }
 .rca-horse-name { min-height:44px; color:#195d94; text-decoration:underline; text-underline-offset:3px; cursor:pointer; text-align:left; }
 .rca-group-horse-link:focus-visible,.rca-horse-name:focus-visible { outline:3px solid #236dba; outline-offset:2px; }
 .rca-group-prediction-cards { grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); align-items:start; }
+.rca-group-summary { display:flex; justify-content:space-between; align-items:center; gap:12px; min-height:64px; cursor:pointer; list-style:none; }
+.rca-group-summary::-webkit-details-marker { display:none; }
+.rca-group-summary:focus-visible { outline:3px solid #236dba; outline-offset:5px; border-radius:4px; }
+.rca-group-card .rca-group-toggle { display:flex; gap:5px; align-items:center; color:#195d94; white-space:nowrap; }
+.rca-group-card .rca-group-close { display:none; }
+.rca-group-card[open]>.rca-group-summary .rca-group-close { display:inline; }
+.rca-group-card[open]>.rca-group-summary .rca-group-open { display:none; }
+.rca-group-card[open]>.rca-group-summary svg { transform:rotate(180deg); }
 .rca-group-horse-card { border:1px solid #dce5ef; border-radius:10px; background:white; min-width:0; margin-top:6px; }
 .rca-group-horse-card .rca-group-horse-link { border:0; border-bottom:1px solid #e6edf5; border-radius:10px 10px 0 0; padding:12px; }
 .rca-group-horse-card .rca-group-horse-link span { font-size:14px; }
