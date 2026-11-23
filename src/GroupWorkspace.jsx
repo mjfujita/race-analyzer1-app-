@@ -9,6 +9,7 @@ import { parseQuotes, ticketKey } from './portfolio.js'
 import { PurchaseEditor, SettlementEditor } from './FinalForecastPage.jsx'
 import { downloadJson } from './fileIO.js'
 import HorseAssessments from './HorseAssessments.jsx'
+import PersonalGroupComposer from './PersonalGroupComposer.jsx'
 import {displayGroups,matchingGroupPreference} from './groupDisplay.js'
 
 const yen = n => `${n.toLocaleString('ja-JP')}円`
@@ -46,14 +47,14 @@ export default function GroupWorkspace(props) {
   return <Groups key={`${props.userId}:${props.race.raceDate}:${props.race.id}`} {...props} />
 }
 
-function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSyncLedger, onOpenAbility, review, syncedGroupReceipts, loading = false,groupDisplay,onGroupDisplayChange }) {
+function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSyncLedger, onOpenAbility, review, syncedGroupReceipts, loading = false,groupDisplay,onGroupDisplayChange,personalOnly=false,onOpenPersonal,onOpenGroups }) {
   const [data,setData] = useState(() => load(userId,race))
   const [initialGroup]=useState(()=>{
     const config=matchingGroupPreference(race,groupDisplay)
     const snapshot=(!config?.followLatest&&data.history.find(s=>s.id===config?.snapshotId))||data.history[0]
     const grouping=displayGroups({race,field:horses,snapshot,preference:config})
     return {snapshotId:config&&!config.followLatest&&snapshot?.id===config.snapshotId?config.snapshotId:'',threshold:grouping.threshold,
-      boundaries:grouping.manual?grouping.boundaries:null}
+      boundaries:grouping.manual?grouping.boundaries:null,excluded:Array.isArray(config?.excluded)?config.excluded.filter(no=>horses.some(h=>Number(h.no)===no)):[]}
   })
   const [ledger,setLedger] = useState(data.ledger)
   const [receipts,setReceipts] = useState(data.cloud?.groupReceipts ?? {})
@@ -73,11 +74,13 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   },[userId,race,cloudRevision,syncedGroupReceipts])
   const [snapshotId,setSnapshotId] = useState(initialGroup.snapshotId)
   const [threshold,setThreshold] = useState(String(initialGroup.threshold)), [boundaries,setBoundaries] = useState(initialGroup.boundaries)
-  const [slotChoice,setSlotChoice] = useState(null), [excluded,setExcluded] = useState([])
+  const [slotChoice,setSlotChoice] = useState(null), [excluded,setExcluded] = useState(initialGroup.excluded)
   const [variant,setVariant] = useState('ordered'), [budget,setBudget] = useState('10000'), [unit,setUnit] = useState('100')
   const [overrides,setOverrides] = useState({}), [quoteText,setQuoteText] = useState('')
   const [quoteObservedAt,setQuoteObservedAt] = useState(''), [quoteRetrievedAt,setQuoteRetrievedAt] = useState(null)
   const [note,setNote] = useState(''), [selectedId,setSelectedId] = useState('')
+  const [composerSource,setComposerSource] = useState(null)
+  const recordsHeading = useRef(null)
   const current = data.history.find(s => s.id === snapshotId) ?? data.history[0]
   const field = useMemo(() => horses.map(h => ({ no:Number(h.no), name:h.name ?? '', ...(h.frameNo ? { frameNo:h.frameNo } : {}),
     ...(h.cancelled ? { cancelled:true } : {}), evidence:evidence(h,statistics.find(s => Number(s.horse_no) === Number(h.no)),race) })),[horses,statistics,race])
@@ -102,8 +105,8 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   const grouping = analysis.grouping
   useEffect(()=>{
     if(current&&grouping)onGroupDisplayChange?.({raceId:String(race.id),raceDate:race.raceDate,snapshotId:current.id,
-      threshold:grouping.threshold,boundaries:grouping.manual?grouping.boundaries:null,followLatest:snapshotId===''})
-  },[current,grouping,race,onGroupDisplayChange,snapshotId])
+      threshold:grouping.threshold,boundaries:grouping.manual?grouping.boundaries:null,followLatest:snapshotId==='',excluded})
+  },[current,grouping,race,onGroupDisplayChange,snapshotId,excluded])
   const previous = data.history.filter(s => s.id !== current?.id && Date.parse(s.retrievedAt) < Date.parse(current?.retrievedAt) && Date.parse(s.observedAt) < Date.parse(current?.observedAt)
     && field.every(h => Number.isFinite(s.odds?.[h.no]) && s.odds[h.no] >= 1))
     .sort((a,b) => Date.parse(a.observedAt)-Date.parse(b.observedAt))[0]
@@ -143,6 +146,18 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       if (await persist(appendGroupPlan(ledger,plan),decision === 'skip' ? '見送り判断を固定しました。' : 'グループと比較案を固定しました。')) setSelectedId(plan.id)
     } catch (problem) { setError(problem.message) }
   }
+  function startPersonal() {
+    if (disabled || loading) return
+    setComposerSource(JSON.parse(JSON.stringify({race,field,snapshot:current,referenceSnapshot:previous ?? null,
+      threshold:Number(threshold),boundaries,excluded})))
+    setError(''); setMessage('')
+  }
+  async function savePersonal(plan) {
+    if (await persist(appendGroupPlan(ledger,plan),'私の予想を登録しました。')) {
+      setSelectedId(plan.id); setComposerSource(null)
+      requestAnimationFrame(() => {recordsHeading.current?.focus();recordsHeading.current?.scrollIntoView({block:'start'})})
+    }
+  }
   function changeObservation(id) {
     setSnapshotId(id===data.history[0]?.id?'':id); setBoundaries(null); setSlotChoice(null); setOverrides({}); setQuoteText(''); setQuoteObservedAt(''); setQuoteRetrievedAt(null)
   }
@@ -157,10 +172,18 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <HorseAssessments key={horseDetail.no} {...{race,horses,statistics,userId,cloudRevision}} initialHorseNo={horseDetail.no} detail asOf={horseDetail.asOf} />
     </div>}
     <div hidden={Boolean(horseDetail)} inert={Boolean(horseDetail)}><div className="rca-stack rca-groups">
-    <div className="rca-page-title"><div><h1>グループ・買い目比較</h1><p>人気のまとまりと能力を確認し、着順を変えた案を比較します。</p></div>{onOpenAbility && <button className="rca-secondary" onClick={onOpenAbility}>能力・適性を詳しく見る</button>}</div>
+    <div className="rca-page-title"><div><h1>{personalOnly?'私の予想':'グループ・買い目比較'}</h1><p>{personalOnly?'選んだグループ・券種・買い方・予定金額を残し、結果と振り返ります。':'人気のまとまりと能力を確認し、着順を変えた案を比較します。'}</p></div>{onOpenAbility && <button className="rca-secondary" onClick={onOpenAbility}>能力・適性を詳しく見る</button>}</div>
     {loading && <p role="status" className="rca-notice">保存済みデータを読み込み中です。</p>}
     {(error || data.error) && <p role="alert" className="rca-error">{error || data.error}</p>}{message && <p role="status" className="rca-notice">{message}</p>}
-    <section className="rca-panel"><h2>１ · 単勝オッズでグループを作る</h2><div className="rca-group-controls">
+    {!personalOnly && onOpenPersonal && <div className="rca-notice"><p>ご自身の買い方を残すには「私の予想」へ。馬単・3連単・3連複をグループで選んで登録できます。</p><button className="rca-primary mt-3" onClick={onOpenPersonal}>私の予想を登録</button></div>}
+    {personalOnly && <>{!composerSource ? <section className="rca-panel"><h2>自分で選んだ買い目を残す</h2><p className="rca-muted">まずグループを確認し、券種と買い方を選びます。選択は空欄から始まります。</p>
+      <div className="rca-group-cards my-4">{grouping?.groups.map(g=><div className="rca-group-card" key={g.label}><strong>{g.label}</strong><p>{g.horses.filter(h=>!excluded.includes(h.no)).map(h=>`${h.no} ${h.name}`).join(' ／ ') || '候補なし'}</p></div>)}</div>
+      {!current || !grouping?.complete ? <p className="rca-notice">全頭の単勝オッズの取得待ちです。データの同期後に登録できます。</p> : <p className="rca-muted">観測 {formatRaceTime(current.observedAt)} ／ 取得 {formatRaceTime(current.retrievedAt)}。この観測とグループを基準に入力します。</p>}
+      {analysis.error && <p role="alert" className="rca-error">{analysis.error}</p>}
+      {field.some(h=>h.cancelled) && <p className="rca-error">取消を含むレースは新しい予想の登録を保留します。保存済み記録は確認できます。</p>}
+      <div className="flex flex-wrap gap-3 mt-4"><button className="rca-primary" disabled={disabled || loading} onClick={startPersonal}>新しい予想を入力する</button>{onOpenGroups && <button className="rca-secondary" onClick={onOpenGroups}>グループを確認・調整する</button>}</div>
+    </section> : <><PersonalGroupComposer source={composerSource} disabled={Boolean(data.error) || field.some(h=>h.cancelled)} busy={busy} onSave={savePersonal} /><div><button className="rca-secondary" disabled={busy} onClick={()=>setComposerSource(null)}>入力をやめて戻る</button></div></>}</>}
+    {!personalOnly && <><section className="rca-panel"><h2>１ · 単勝オッズでグループを作る</h2><div className="rca-group-controls">
       <label>観測時点<select className={control} value={current?.id ?? ''} onChange={e => changeObservation(e.target.value)}>{data.history.map(s => <option key={s.id} value={s.id}>{formatRaceTime(s.observedAt)} · 取得 {formatRaceTime(s.retrievedAt)}</option>)}</select></label>
       <label>自動で区切る倍率<input className={control} type="number" min="1.1" max="5" step="0.1" value={threshold} onChange={e => { setThreshold(e.target.value); setBoundaries(null); setSlotChoice(null); setOverrides({}) }} /></label>
       <button className="rca-secondary" onClick={() => { setBoundaries(null); setSlotChoice(null); setOverrides({}) }}>自動案に戻す</button>
@@ -201,8 +224,9 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <div className="flex flex-wrap gap-3"><button className="rca-primary" disabled={disabled || analysis.totals?.overBudget || !analysis.totals?.allocations.length} onClick={() => freeze('plan')}>{busy ? '保存中…' : 'グループと比較案を固定保存'}</button><button className="rca-secondary" disabled={disabled} onClick={() => freeze('skip')}>見送りを固定保存</button></div>
       <p className="rca-muted mt-3">保存時刻が発走10分前を過ぎた場合や、価格の時刻証跡が不足する場合は過去検証です。保存は購入になりません。</p>
     </section>}
-    <section className="rca-panel" aria-label="保存したグループ判断"><h2>３ · 保存した判断と結果</h2>{!frozen ? <p className="rca-muted">保存したグループ判断はまだありません。</p> : <>
-      <label>保存記録<select className={control} value={frozen.id} onChange={e => setSelectedId(e.target.value)}>{[...(ledger.groupPlans ?? [])].reverse().map(p => <option key={p.id} value={p.id}>{formatRaceTime(p.createdAt)} · {p.decision === 'skip' ? '見送り' : p.variant} · {p.mode === 'live' ? '締切前記録' : '過去検証'}</option>)}</select></label>
+    </>}
+    <section className="rca-panel" aria-label="保存したグループ判断"><h2 tabIndex={-1} ref={recordsHeading}>私の予想・購入記録</h2>{!frozen ? <p className="rca-muted">保存したグループ判断はまだありません。</p> : <>
+      <label>保存記録<select className={control} value={frozen.id} onChange={e => setSelectedId(e.target.value)}>{[...(ledger.groupPlans ?? [])].reverse().map(p => <option key={p.id} value={p.id}>{formatRaceTime(p.createdAt)} · {p.decision === 'skip' ? '見送り' : ({ordered:'3連単',swapped:'3連単・入替',trio:'3連複',exacta:'馬単'})[p.variant]} · {p.mode === 'live' ? '締切前記録' : '過去検証'}</option>)}</select></label>
       <GroupPlanResult plan={frozen} outcome={outcome} receipt={receipts[frozen.id]} ownerId={userId} />
       <p className="rca-muted">保存時の根拠：{frozen.note || '記載なし'} ／ {frozen.grouping.manual ? '手動調整' : '自動分類'} ／ 境界倍率 {frozen.grouping.threshold}</p>
       {frozen.referenceSnapshot && <p className="rca-muted">比較元も固定：{formatRaceTime(frozen.referenceSnapshot.observedAt)} ／ {frozen.referenceGrouping.groups.map(g => `${g.label}：${g.horses.map(h => h.no).join('・')}`).join(' ／ ')}</p>}
@@ -222,7 +246,7 @@ export function GroupPlanResult({ plan, outcome, receipt, ownerId }) {
   const result = reviewGroupPlan(plan,outcome)
   const verified = groupReceiptVerified(plan,receipt,{ userId:ownerId,raceId:plan.race.id,raceDate:plan.race.raceDate })
   return <div className="rca-notice"><p>{plan.mode === 'replay' ? '過去検証' : verified ? '締切前の受領確認済み' : '締切前記録・受領未確認'} · {plan.decision === 'skip' ? '見送り・購入案０円' : `${plan.allocations.length}点・投入予定 ${yen(plan.invested)}`}</p>
-    <p>保存した着順：{plan.slots.map(s => s.join('・') || '未選択').join(' → ')} ／ 採用案：{({ ordered:'指定順の３連単',swapped:'２・３着入替の３連単',trio:'３連複',exacta:'馬単' })[plan.variant]}</p>
+    <p>保存した着順：{plan.slots.slice(0,plan.variant==='exacta'?2:3).map(s => s.join('・') || '未選択').join(plan.variant==='trio'?' − ':' → ')} ／ 採用案：{({ ordered:'指定順の３連単',swapped:'２・３着入替の３連単',trio:'３連複',exacta:'馬単' })[plan.variant]}</p>
     {result ? <p>結果 {result.numbers.join('→')}（{result.groups}） ／ 候補に{plan.variant === 'exacta' ? '上位２頭' : '上位３頭'}：{result.candidatesCovered ? '含む' : '不足'} ／ 着順・券種：{result.formationCovered ? '範囲内' : '不一致'} ／ {plan.decision === 'skip' ? '見送り・的中集計の対象外' : `配分した買い目：${result.hit ? '的中' : '不的中'}`}</p> : <p>結果待ち・未照合。同着や異常着順は正式払戻で確認します。</p>}
   </div>
 }

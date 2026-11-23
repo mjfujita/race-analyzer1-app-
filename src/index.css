@@ -120,3 +120,17 @@ button:disabled { cursor: not-allowed; }
 .rca-device-pair img { width:280px; max-width:100%; height:auto; }
 .rca-device-list article { display:flex; gap:16px; justify-content:space-between; align-items:center; padding:20px 0; border-bottom:1px solid #dce5ef; }
 @media(max-width:639px) { .rca-device-list article { display:block; }.rca-device-list article>div:last-child { margin-top:12px; }.rca-devices input { display:block; margin:10px 0; width:100%; } }
+
+/* Personal group predictions: large touch targets and wrapping horse names. */
+.rca-personal { min-width: 0; }
+.rca-personal-slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 16px; }
+.rca-personal-choices { min-width: 0; border: 1px solid #dce5ef; border-radius: 14px; padding: 12px; }
+.rca-personal-choices legend { font-weight: 700; padding: 0 6px; }
+.rca-personal-choices label { display: flex; align-items: flex-start; gap: 10px; padding: 12px 4px; border-bottom: 1px solid #edf1f6; cursor: pointer; }
+.rca-personal-choices label:last-child { border-bottom: 0; }
+.rca-personal-choices input { width: 18px; height: 18px; flex-shrink: 0; margin-top: 2px; }
+.rca-personal-choices span { overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }
+.rca-personal-choices b { min-width: 16px; }
+.rca-personal .rca-list-table { min-width: 0; table-layout: fixed; }
+.rca-personal .rca-list-table tbody th { min-width: 0; overflow-wrap: anywhere; }
+.rca-personal .rca-list-table td input { width: 100%; min-width: 0; }
