@@ -45,7 +45,7 @@ export default function HorseAssessments({race,horses=[],statistics=[],userId,as
     <section className="rca-panel" aria-label="ACEのレース全体の見立て"><h2>ACEのレース全体の見立て</h2><p className="text-sm leading-relaxed mt-3">{ace.summary}</p>
       <p className="rca-muted mt-2">評価の参照上限：{formatRaceTime(ace.boundary)}。取得データと既存モデルによる自動分析です。文章は下記のルールで生成し、別の生成AIが原文を読んで採点したものではありません。</p>
       {ace.error&&<p role="alert" className="rca-error mt-2">{ace.error}</p>}
-      <details className="mt-3"><summary className="text-sm font-semibold text-sky-800 cursor-pointer">ACE評価の方法と使用モデル</summary><p className="rca-muted mt-2">出走時IDMと日付を確認できる過去走を比較し、検証済みの補正だけを確率へ反映します。勝率モデル上位2頭を勝ち候補、3〜5位を上位の相手候補とする表示ルールです。同順位は同じ扱い。新馬戦・過去走なし・全頭の能力不足では軸判断を保留します。これは着順の統計的な判定基準ではありません。パドックのチェックを外しても、締切後の参考情報はACE予想へ入りません。</p>
+      <details className="mt-3"><summary className="text-sm font-semibold text-sky-800 cursor-pointer">ACE評価の方法と使用モデル</summary><p className="rca-muted mt-2">出走時IDMと日付を確認できる過去走を比較し、検証済みの補正だけを確率へ反映します。勝率モデル上位2頭を勝ち候補、3〜5位を上位の相手候補とする表示ルールです。同順位は同じ扱い。新馬戦・過去走なし・全頭の能力不足では軸判断を保留します。これは着順の統計的な判定基準ではありません。能力ページでは日付を確認できる過去走から条件実績を再集計するため、元の集計値や参照時点が異なる画面とは確率が変わる場合があります。パドックのチェックを外しても、締切後の参考情報はACE予想へ入りません。</p>
       <p className="rca-muted mt-2">モデル：{ace.model?.label??'未取得'} ／ {ace.model?.id??'—'}。当日補正：{ace.appliedFeatures?.length?ace.appliedFeatures.join('・'):'未適用'}。校正：{ace.calibrationId??'未適用'}。</p>
       <ul className="rca-muted mt-2 list-disc pl-5">{ace.issues?.map((issue,i)=><li key={i}>{issue}</li>)}</ul></details>
     </section>

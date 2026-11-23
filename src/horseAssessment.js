@@ -7,6 +7,14 @@ export function assessmentNumber(value){
   const n=typeof value==='string'&&/^[+-]?\d+(?:\.\d+)?$/.test(value.trim())?Number(value):NaN
   return Number.isFinite(n)?n:null
 }
+// JRDB SED stores front/last 3F as sec x 10. The legacy catalog forwards
+// these three-digit integers as camelCase; newer imports may already use seconds.
+export function assessmentTime(value,unit=null){
+  const n=assessmentNumber(value)
+  if(n===null||n<=0||unit&&!['seconds','tenths'].includes(unit))return null
+  const seconds=unit==='tenths'||unit===null&&Number.isInteger(n)&&n>=100&&n<=999?n/10:n
+  return seconds>0&&seconds<120?seconds:null
+}
 const digits=value=>String(value??'').replace(/[^0-9]/g,'')
 function surface(row){
   const value=row.surface??row.surfaceCode??row.surface_code
@@ -54,8 +62,8 @@ export function assessHorses(race,horses=[],statistics=[],now=Date.now()){
       const rank=assessmentNumber(run.rank),fieldSize=assessmentNumber(run.field_size??run.fieldSize)
       verified.push({date,rank:Number.isInteger(rank)&&rank>0&&(!fieldSize||rank<=fieldSize)?rank:null,
         fieldSize,surface:surface(run),distance:distance(run),placeCode:place(run),going:run.going??null,
-        last3f:assessmentNumber(run.last3f??run.last_3f)>0?assessmentNumber(run.last3f??run.last_3f):null,
-        front3f:assessmentNumber(run.front3f??run.front_3f)>0?assessmentNumber(run.front3f??run.front_3f):null})
+        last3f:assessmentTime(run.last3f??run.last_3f,run.last3fUnit??run.timeUnit??(run.last_3f!=null?'tenths':null)),
+        front3f:assessmentTime(run.front3f??run.front_3f,run.front3fUnit??run.timeUnit??(run.front_3f!=null?'tenths':null))})
     }
     const pastRuns=verified.sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5),valid=pastRuns.filter(r=>r.rank!==null)
     const idm=idmFor(horse),rank=!horse.cancelled&&idm!==null?1+indices.filter(v=>v>idm).length:null
