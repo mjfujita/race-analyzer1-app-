@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback,useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../src/index.css'
 import AbilityPage from '../src/AbilityPage.jsx'
@@ -22,9 +22,11 @@ if (!connected && state !== 'empty' && !localStorage.getItem(oddsStorageKey(user
 function Demo() {
   const [tab, setTab] = useState(state.startsWith('groups') ? 'groups' : state.startsWith('review') ? 'review' : state.startsWith('anchors') ? 'anchors' : 'final')
   const [cloudRevision, setCloudRevision] = useState(0)
+  const [groupDisplay,setGroupDisplay]=useState(null)
+  const onGroupDisplayChange=useCallback(value=>setGroupDisplay(previous=>JSON.stringify(previous)===JSON.stringify(value)?previous:value),[])
   const empty = state === 'empty'
   const { sync, refresh } = useCompanion({ userId: connected ? userId : null, race, horses })
-  const props = { race, horses:state==='assessment'?assessmentHorses:horses, statistics: empty ? [] : state==='assessment'?assessmentStatistics:statistics, earlierRaces, userId, cloudRevision: cloudRevision + sync.revision,
+  const props = { groupDisplay,onGroupDisplayChange,race, horses:state==='assessment'?assessmentHorses:horses, statistics: empty ? [] : state==='assessment'?assessmentStatistics:statistics, earlierRaces, userId, cloudRevision: cloudRevision + sync.revision,
     syncedGroupReceipts:sync.data?.groupReceipts, loading:sync.loading,
     syncedReceipts: sync.data?.receipts, onSyncLedger: connected || state === 'cloud-test' ? syncLedgerToCloud : undefined,
     onOpenAbility: () => setTab('ability'), onOpenPace: () => setTab('pace'), onSelectRace: () => {}, onSelectHorse: () => {} }

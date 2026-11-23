@@ -9,6 +9,7 @@ import { parseQuotes, ticketKey } from './portfolio.js'
 import { PurchaseEditor, SettlementEditor } from './FinalForecastPage.jsx'
 import { downloadJson } from './fileIO.js'
 import HorseAssessments from './HorseAssessments.jsx'
+import {displayGroups,matchingGroupPreference} from './groupDisplay.js'
 
 const yen = n => `${n.toLocaleString('ja-JP')}円`
 const betLabel = t => `${t.type} ${t.numbers.join(t.type === '3連複' ? '−' : '→')}`
@@ -45,8 +46,15 @@ export default function GroupWorkspace(props) {
   return <Groups key={`${props.userId}:${props.race.raceDate}:${props.race.id}`} {...props} />
 }
 
-function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSyncLedger, onOpenAbility, review, syncedGroupReceipts, loading = false }) {
+function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSyncLedger, onOpenAbility, review, syncedGroupReceipts, loading = false,groupDisplay,onGroupDisplayChange }) {
   const [data,setData] = useState(() => load(userId,race))
+  const [initialGroup]=useState(()=>{
+    const config=matchingGroupPreference(race,groupDisplay)
+    const snapshot=(!config?.followLatest&&data.history.find(s=>s.id===config?.snapshotId))||data.history[0]
+    const grouping=displayGroups({race,field:horses,snapshot,preference:config})
+    return {snapshotId:config&&!config.followLatest&&snapshot?.id===config.snapshotId?config.snapshotId:'',threshold:grouping.threshold,
+      boundaries:grouping.manual?grouping.boundaries:null}
+  })
   const [ledger,setLedger] = useState(data.ledger)
   const [receipts,setReceipts] = useState(data.cloud?.groupReceipts ?? {})
   const [error,setError] = useState(''), [message,setMessage] = useState(''), [busy,setBusy] = useState(false)
@@ -63,8 +71,8 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
     if (!next.error) setLedger(next.ledger)
     setReceipts(old => ({ ...old,...next.cloud?.groupReceipts,...syncedGroupReceipts }))
   },[userId,race,cloudRevision,syncedGroupReceipts])
-  const [snapshotId,setSnapshotId] = useState('')
-  const [threshold,setThreshold] = useState('1.5'), [boundaries,setBoundaries] = useState(null)
+  const [snapshotId,setSnapshotId] = useState(initialGroup.snapshotId)
+  const [threshold,setThreshold] = useState(String(initialGroup.threshold)), [boundaries,setBoundaries] = useState(initialGroup.boundaries)
   const [slotChoice,setSlotChoice] = useState(null), [excluded,setExcluded] = useState([])
   const [variant,setVariant] = useState('ordered'), [budget,setBudget] = useState('10000'), [unit,setUnit] = useState('100')
   const [overrides,setOverrides] = useState({}), [quoteText,setQuoteText] = useState('')
@@ -92,6 +100,10 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
     } catch (problem) { return { ...result,error:problem.message } }
   },[field,current,threshold,boundaries,slotChoice,excluded,quoteText,variant,budget,unit,overrides])
   const grouping = analysis.grouping
+  useEffect(()=>{
+    if(current&&grouping)onGroupDisplayChange?.({raceId:String(race.id),raceDate:race.raceDate,snapshotId:current.id,
+      threshold:grouping.threshold,boundaries:grouping.manual?grouping.boundaries:null,followLatest:snapshotId===''})
+  },[current,grouping,race,onGroupDisplayChange,snapshotId])
   const previous = data.history.filter(s => s.id !== current?.id && Date.parse(s.retrievedAt) < Date.parse(current?.retrievedAt) && Date.parse(s.observedAt) < Date.parse(current?.observedAt)
     && field.every(h => Number.isFinite(s.odds?.[h.no]) && s.odds[h.no] >= 1))
     .sort((a,b) => Date.parse(a.observedAt)-Date.parse(b.observedAt))[0]
