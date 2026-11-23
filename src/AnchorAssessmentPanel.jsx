@@ -165,7 +165,7 @@ export default function AnchorAssessmentPanel({ field, odds, placeQuotes, releas
     {summary.issues.map(issue => <p key={issue} className="text-sm text-amber-900">{issue}</p>)}
     <details className="text-sm">
       <summary className="cursor-pointer font-semibold text-sky-800">全頭の妙味と人気の推移</summary>
-      <p className="text-xs text-slate-600 mt-2">{grouping?.complete?`グループは表示中の単勝オッズで分類（${grouping.manual?'グループ画面の手動区切り':`自動・倍率${grouping.threshold}`}）。能力の順位ではありません。`:'全頭の単勝オッズが揃っていないため、グループは判定保留です。'}{grouping?.differentObservation?'別の観測時点の手動区切りは適用していません。':''}{grouping?.reset?'区切りを適用できないため自動分類を表示しています。':''}</p>
+      <p className="text-xs text-slate-600 mt-2">{grouping?.complete?`グループは表示中の単勝オッズで分類（${grouping.manual?'グループ画面の手動区切り':`自動・倍率${grouping.threshold}`}）。能力の順位ではありません。`:'全頭の単勝オッズが揃っていないため、グループは判定保留です。'}{grouping?.differentObservation?'別の観測時点の手動区切りは適用していません。':''}{grouping?.reset&&grouping.complete?'区切りを適用できないため自動分類を表示しています。':''}</p>
       <div className="mt-2 overflow-x-auto">
         <table className="w-full whitespace-nowrap text-left text-sm" aria-label="全頭の軸候補比較">
           <thead className="border-b border-slate-200 text-xs text-slate-600"><tr>
