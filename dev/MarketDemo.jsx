@@ -15,6 +15,7 @@ import { race, horses, statistics, assessmentHorses, aceHorses, assessmentStatis
 
 const state = new URLSearchParams(location.search).get('state') ?? 'normal'
 const userId = `synthetic-demo-${state}`
+const useAssessmentFixture = state.startsWith('ace') || state === 'groups-local-review'
 const connected = state === 'connected-test' || state.startsWith('groups-connected') || state.startsWith('personal-connected')
 if (!connected && state !== 'empty' && !localStorage.getItem(oddsStorageKey(userId, race))) {
   localStorage.setItem(oddsStorageKey(userId, race), state === 'error' ? '{broken' : JSON.stringify(demoSnapshots()))
@@ -26,7 +27,7 @@ function Demo() {
   const onGroupDisplayChange=useCallback(value=>setGroupDisplay(previous=>JSON.stringify(previous)===JSON.stringify(value)?previous:value),[])
   const empty = state === 'empty'
   const { sync, refresh } = useCompanion({ userId: connected ? userId : null, race, horses })
-  const props = { workspace:state.startsWith('pace-links'),groupDisplay,onGroupDisplayChange,race, horses:state.startsWith('ace')?aceHorses:state==='assessment'?assessmentHorses:horses, statistics: empty||state==='pace-links-missing' ? [] : state==='assessment'?assessmentStatistics:statistics, earlierRaces, userId, cloudRevision: cloudRevision + sync.revision,
+  const props = { workspace:state.startsWith('pace-links'),groupDisplay,onGroupDisplayChange,race, horses:useAssessmentFixture?aceHorses:state==='assessment'?assessmentHorses:horses, statistics: empty||state==='pace-links-missing' ? [] : state==='assessment'?assessmentStatistics:statistics, earlierRaces, userId, cloudRevision: cloudRevision + sync.revision,
     syncedGroupReceipts:sync.data?.groupReceipts, loading:sync.loading,
     syncedReceipts: sync.data?.receipts, onSyncLedger: connected || state === 'cloud-test' ? syncLedgerToCloud : undefined,
     onOpenAbility: () => setTab('ability'), onOpenPace: () => setTab('pace'), onSelectRace: () => {}, onSelectHorse: () => {} }
