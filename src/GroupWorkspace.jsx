@@ -169,7 +169,7 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   return <>
     {horseDetail&&<div className="rca-stack" aria-label="グループから開いた馬の詳細">
       <div><button type="button" className="rca-secondary" ref={detailBack} onClick={()=>setHorseDetail(null)}>← グループ・買い目へ戻る</button><p className="rca-muted mt-2">グループ・買い目の入力内容を保持しています。</p></div>
-      <HorseAssessments key={horseDetail.no} {...{race,horses,statistics,userId,cloudRevision}} initialHorseNo={horseDetail.no} detail asOf={horseDetail.asOf} />
+      <HorseAssessments key={horseDetail.no} {...{race,horses,statistics,userId,cloudRevision,review}} initialHorseNo={horseDetail.no} detail asOf={horseDetail.asOf} />
     </div>}
     <div hidden={Boolean(horseDetail)} inert={Boolean(horseDetail)}><div className="rca-stack rca-groups">
     <div className="rca-page-title"><div><h1>{personalOnly?'私の予想':'グループ・買い目比較'}</h1><p>{personalOnly?'選んだグループ・券種・買い方・予定金額を残し、結果と振り返ります。':'人気のまとまりと能力を確認し、着順を変えた案を比較します。'}</p></div>{onOpenAbility && <button className="rca-secondary" onClick={onOpenAbility}>能力・適性を詳しく見る</button>}</div>

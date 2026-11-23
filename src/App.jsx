@@ -1708,11 +1708,11 @@ function MainApp({ session, onLogout }) {
             onRefreshDb={refreshDb} onOpenArchive={() => openRaceList()} diagnostics={`DB ${diag?.latestDate ?? '未取得'} / ${diag?.evaluator ?? '評価版未取得'}`} />}
           {tab === 'devices' && <DeviceManager />}
           {tab === 'analysis' && <TabAnalysis />}
-          {tab === 'ability' && <AbilityPage workspace race={analysisRace} horses={analysisHorses} userId={session.user.id}
+          {tab === 'ability' && <AbilityPage workspace review={sync.error ? null : sync.data?.forecastReview} race={analysisRace} horses={analysisHorses} userId={session.user.id}
             cloudRevision={sync.revision} statistics={analysisStatistics}
             onSelectRace={() => setTab('races')}
             onSelectHorse={id => { setSelectedId(id); setTab('horseEvidence') }} />}
-          {tab === 'pace' && (raceInfo ? <PacePage workspace race={analysisRace} horses={analysisHorses}
+          {tab === 'pace' && (raceInfo ? <PacePage workspace review={sync.error ? null : sync.data?.forecastReview} race={analysisRace} horses={analysisHorses}
             key={`${session.user.id}:${raceInfo.id}:${raceInfo.raceDate}`} userId={session.user.id}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
             cloudRevision={sync.revision} statistics={analysisStatistics} /> : <EmptyRace />)}

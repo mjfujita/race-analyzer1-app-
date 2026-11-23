@@ -32,3 +32,8 @@ export function demoSnapshots() {
       odds: { ...odds, 1: odds[1] + (2 - i) * 0.5 } })),
   ]
 }
+
+export const aceHorses=horses.map(h=>({...h,jockey:'架空騎手',trainer:'架空厩舎',weightCarried:55,
+  pastRuns:[{date:'20261101',rank:h.no<=3?2:6,field_size:12,dist:'芝2200m',placeCode:'08',going:'良',last3f:34.5},
+    {date:'20261020',rank:3,field_size:12,dist:'芝2000m',placeCode:'05',going:'重'},
+    {date:'20261001',rank:4,field_size:12,dist:'芝2200m',placeCode:'08',going:'良'}]}))

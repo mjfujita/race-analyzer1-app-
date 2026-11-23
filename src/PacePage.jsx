@@ -43,7 +43,7 @@ function positionProfile(race, horse, style) {
   }
 }
 
-export default function PacePage({ race, horses, statistics = [], earlierRaces = [], userId, workspace = false }) {
+export default function PacePage({ race, horses, statistics = [], earlierRaces = [], userId, workspace = false,cloudRevision=0,review=null }) {
   const [recorded, setRecorded] = useState(() => readPaceResults(userId, race))
   const [error, setError] = useState('')
   const [asofOnly, setAsofOnly] = useState(true)
@@ -141,7 +141,7 @@ export default function PacePage({ race, horses, statistics = [], earlierRaces =
     className={compact?'inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-blue-200 bg-white px-3 py-2 text-sm text-sky-800 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700':'min-h-11 text-left text-sky-800 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700'} onClick={event=>openHorse(horse.no,event)}>{compact?horse.no:`${horse.no} ${horse.name}`}</button>
   return <>
     {horseDetail&&<div className="rca-stack"><div><button type="button" className="rca-secondary" ref={detailBack} onClick={()=>setHorseDetail(null)}>← 展開・馬場へ戻る</button><p className="rca-muted mt-2">展開・馬場の表示条件と入力内容を保持しています。</p></div>
-      <HorseAssessments key={horseDetail.no} race={race} horses={enriched} statistics={statistics} userId={userId} initialHorseNo={horseDetail.no} detail />
+      <HorseAssessments key={horseDetail.no} race={race} horses={enriched} statistics={statistics} userId={userId} cloudRevision={cloudRevision} review={review} initialHorseNo={horseDetail.no} detail />
     </div>}
     <div hidden={Boolean(horseDetail)} inert={Boolean(horseDetail)}><div className="space-y-4">
     {workspace && <div className="rca-page-title"><div><h1>展開と馬場を、事実から確認</h1><p>取得した脚質・馬場・先行レースの結果を確認します。</p></div></div>}
