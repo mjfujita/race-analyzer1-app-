@@ -173,6 +173,12 @@ test('owner capture requests are deduplicated, private and acknowledged only by 
   assert.ok(created.every(response => response.status === 200))
   assert.equal(new Set(created.map(response => response.body.command.id)).size, 1)
   const command = created[0].body.command
+  const query={capture:'1',raceId:scope.raceId,raceDate:scope.raceDate}
+  assert.deepEqual((await request(handler,{query})).body.command,command)
+  assert.equal((await request(handler,{query,token:null})).status,401)
+  assert.equal((await request(handler,{query,token:'other-token'})).status,403)
+  assert.equal((await request(handler,{query:{...query,ownerId:'other'}})).status,400)
+  assert.equal((await request(handler,{query:{...query,raceId:'../other'}})).status,400)
   assert.equal(Date.parse(command.expiresAt) - Date.parse(command.requestedAt), 300_000)
   const worker = body => request(handler, { method: 'POST', token: 'companion-only-secret-for-tests-123456', body })
   const pending = await worker({ action: 'pull-commands' })
@@ -189,6 +195,7 @@ test('owner capture requests are deduplicated, private and acknowledged only by 
   assert.equal((await worker({ action: 'ack-command', id: command.id, status: 'completed' })).status, 200)
   assert.equal((await worker({ action: 'ack-command', id: command.id, status: 'failed' })).status, 409)
   assert.equal((await service.get()).status.pendingCaptureCount, 0)
+  assert.equal((await request(handler,{query})).body.command.status,'completed')
   const next = await request(handler, { method: 'POST', body: requestBody })
   assert.equal(next.status, 200); assert.notEqual(next.body.command.id, command.id)
 })
@@ -207,6 +214,7 @@ test('capture commands expire after five minutes and recover an interrupted publ
   const first = await service.requestCapture(scope)
   assert.equal((await service.pullCommands()).commands.length, 1)
   clock += 300_000
+  assert.equal((await service.getCaptureRequest(scope)).command.status,'expired')
   assert.equal((await service.pullCommands()).commands.length, 0)
   const next = await service.requestCapture(scope)
   assert.notEqual(next.command.id, first.command.id)

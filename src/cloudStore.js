@@ -41,8 +41,12 @@ export function fetchRaceCatalog(signal) {
   return request('/api/companion?catalog=1', { signal })
 }
 
-export function requestRaceCapture(race) {
-  return request('/api/companion', { body: { action: 'request-capture', raceId: String(race.id), raceDate: raceDateISO(race)?.replaceAll('-', '') } })
+export function requestRaceCapture(race,signal) {
+  return request('/api/companion', { signal,body: { action: 'request-capture', raceId: String(race.id), raceDate: raceDateISO(race)?.replaceAll('-', '') } })
+}
+
+export function fetchCaptureRequest(race,signal) {
+  return request(`/api/companion?capture=1&raceId=${encodeURIComponent(race.id)}&raceDate=${raceDateISO(race)?.replaceAll('-','')}`,{signal})
 }
 
 export async function syncLedgerToCloud(ledger) {

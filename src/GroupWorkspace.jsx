@@ -4,7 +4,7 @@ import { ledgerScope, emptyLedger, readLedger, appendGroupPlan, writeLedgerExclu
   appendPurchase, appendSettlement, activePurchases, latestSettlement, summarizeLedger } from './forecastLedger.js'
 import { readOddsHistory, readOddsEvents, oddsStorageKey } from './oddsHistory.js'
 import { readCloudRace } from './cloudStore.js'
-import { formatRaceTime, snapshotTiming, raceDateISO } from './raceTime.js'
+import { formatRaceTime, snapshotTiming, raceDateISO, raceTimestamp } from './raceTime.js'
 import { parseQuotes, ticketKey } from './portfolio.js'
 import { PurchaseEditor, SettlementEditor } from './FinalForecastPage.jsx'
 import { downloadJson } from './fileIO.js'
@@ -96,6 +96,7 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   const settlement = purchase ? latestSettlement(ledger,purchase.id) : null
   const payouts = (data.cloud?.observations ?? []).filter(e => e.kind === 'HJC' && e.payload?.status === 'published').sort((a,b) => Date.parse(b.retrievedAt)-Date.parse(a.retrievedAt))[0]
   const timing = snapshotTiming(current,race)
+  const postAt=raceTimestamp(race,race.postTime??race.post_time)
 
   async function persist(next,success) {
     if (saving.current) return false
@@ -124,7 +125,7 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
     } catch (problem) { setError(problem.message) }
   }
   function changeObservation(id) {
-    setSnapshotId(id); setBoundaries(null); setSlotChoice(null); setOverrides({}); setQuoteText(''); setQuoteObservedAt(''); setQuoteRetrievedAt(null)
+    setSnapshotId(id===data.history[0]?.id?'':id); setBoundaries(null); setSlotChoice(null); setOverrides({}); setQuoteText(''); setQuoteObservedAt(''); setQuoteRetrievedAt(null)
   }
   const disabled = busy || Boolean(data.error) || Boolean(analysis.error) || !grouping?.complete || field.some(h => h.cancelled)
   return <div className="rca-stack rca-groups">
@@ -135,7 +136,11 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <label>観測時点<select className={control} value={current?.id ?? ''} onChange={e => changeObservation(e.target.value)}>{data.history.map(s => <option key={s.id} value={s.id}>{formatRaceTime(s.observedAt)} · 取得 {formatRaceTime(s.retrievedAt)}</option>)}</select></label>
       <label>自動で区切る倍率<input className={control} type="number" min="1.1" max="5" step="0.1" value={threshold} onChange={e => { setThreshold(e.target.value); setBoundaries(null); setSlotChoice(null); setOverrides({}) }} /></label>
       <button className="rca-secondary" onClick={() => { setBoundaries(null); setSlotChoice(null); setOverrides({}) }}>自動案に戻す</button>
-    </div><p className="rca-muted">次の馬のオッズが設定倍率以上に開く位置で区切ります。同じ倍率の馬は分割しません。A・Bは人気順のまとまりで、能力順位ではありません。</p>
+    </div>{current&&<p className="rca-muted mt-3">{snapshotId?'過去の観測時点を選択中です。':'最新の保存済み観測を表示中です。新しい観測の同期後に自動で切り替わります。'}</p>}
+    {current&&current.id!==data.history[0]?.id&&<div role="status" className="rca-notice mt-3">より新しい観測があります。作成中のグループ・買い目は自動で変更していません。<button className="rca-secondary ml-2" onClick={()=>changeObservation(data.history[0].id)}>最新の観測を表示</button></div>}
+    <p className="rca-muted mt-2">観測時点はJRDBのオッズ時刻、取得はMacが読み取った時刻です。再取得してもJRDB側の時刻が同じ場合、観測時点は変わりません。</p>
+    {postAt&&Date.parse(postAt)<=Date.now()&&<p className="rca-notice mt-2">発走時刻を過ぎたレースです。確定オッズ・結果は、レース前の観測として追加しません。後から取得した過去オッズも、取得時刻を遡らせず過去検証として扱います。</p>}
+    <p className="rca-muted">次の馬のオッズが設定倍率以上に開く位置で区切ります。同じ倍率の馬は分割しません。A・Bは人気順のまとまりで、能力順位ではありません。</p>
       {!current && <p className="rca-notice">実オッズの取得待ちです。能力・適性から記録・取込みできます。</p>}
       {current && <p className="rca-notice">{timing.eligible ? '締切前の時刻証跡あり。保存時にも判定します。' : `過去検証用：${timing.reason}`} 取得元：{current.source ?? '未記録'}。{grouping?.manual ? '手動調整中（自動案も保存）' : '自動グループ'}</p>}
       {analysis.error && <p role="alert" className="rca-error">{analysis.error}</p>}

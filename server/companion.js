@@ -304,6 +304,15 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     if (!saved.created && (saved.existing?.ownerId !== ownerId || saved.existing?.id !== id || saved.existing?.status !== status)) conflict('取得依頼の完了記録が競合しています。')
     return { ok: true, command: commandPublic(command, status) }
   }
+  async function getCaptureRequest({raceId,raceDate}) {
+    validateRaceKey(raceId,raceDate)
+    const rows=await list(`${prefix}/capture-races/${raceDate}/${raceId}/versions`,{limit:1,order:'desc'})
+    const command=rows.length?checkCommand(await store.get(rows[0].path)):null
+    if(command&&(command.raceId!==raceId||command.raceDate!==raceDate))conflict('取得依頼の範囲が一致しません。')
+    const meta=await latestMeta()
+    return {command:command?commandPublic(command,await commandStatus(command)):null,
+      workerLastContactAt:meta?.receivedAt??null}
+  }
   async function readLedger(scope) {
     const ledger = emptyLedger(scope), base = `${racePrefix(scope.raceId, scope.raceDate)}/ledger`
     for (const kind of LEDGER_COLLECTIONS) {
@@ -487,7 +496,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       .map(row => validateRaceKey(row.name.slice(0, -5), raceDate))))
     return { schemaVersion: 1, races: races.flat() }
   }
-  return { ingestBundle, get, getDashboard, getCatalog, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand }
+  return { ingestBundle, get, getDashboard, getCatalog, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand, getCaptureRequest }
 }
 
 export function safeTokenEqual(left, right) {
@@ -536,6 +545,7 @@ export function createCompanionHandler({ service, authenticateUser, ownerId, com
         const query = req.query ?? Object.fromEntries(new URL(req.url, 'https://local.invalid').searchParams)
         if (query.catalog === '1' && Object.keys(query).length === 1) return res.status(200).json(await service.getCatalog())
         if (query.dashboard === '1' && Object.keys(query).length === 1) return res.status(200).json(await service.getDashboard())
+        if(query.capture==='1'&&Object.keys(query).length===3&&typeof query.raceId==='string'&&typeof query.raceDate==='string') return res.status(200).json(await service.getCaptureRequest({raceId:query.raceId,raceDate:query.raceDate}))
         if (Object.keys(query).some(key => !['raceId', 'raceDate'].includes(key)) || Object.values(query).some(value => typeof value !== 'string')) invalid('取得条件が不正です。')
         return res.status(200).json(await service.get(query))
       }

@@ -9,11 +9,12 @@ import ReviewWorkspace from './ReviewWorkspace.jsx'
 import RaceDayDashboard from './RaceDayDashboard.jsx'
 import GroupWorkspace from './GroupWorkspace.jsx'
 import DeviceManager, { DeviceGate } from './DeviceManager.jsx'
+import CaptureControls from './CaptureControls.jsx'
 import { deviceRequest } from './deviceAuth.js'
 import { useDeviceSession } from './useDeviceSession.js'
 import { useCompanion } from './useCompanion.js'
 import { useRaceCatalog } from './useRaceCatalog.js'
-import { applyCloudData, fetchCloudRace, fetchRaceDashboard, enrichCloudHorses, syncLedgerToCloud, requestRaceCapture } from './cloudStore.js'
+import { applyCloudData, fetchCloudRace, fetchRaceDashboard, enrichCloudHorses, syncLedgerToCloud } from './cloudStore.js'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ChevronRight, Search, Target, TrendingUp, AlertTriangle,
@@ -680,15 +681,6 @@ function MainApp({ session, onLogout }) {
   const [currentRaceKey, setCurrentRaceKey] = useState(null)
   const { sync, refresh: refreshCompanion } = useCompanion({ userId: session.user.id, race: raceInfo, horses })
   const {catalog,refreshCatalog}=useRaceCatalog(session.user.id)
-  const [captureMessage, setCaptureMessage] = useState('')
-  const [capturePending, setCapturePending] = useState(false)
-  async function requestLatestCapture() {
-    if (!raceInfo || capturePending) return
-    setCapturePending(true); setCaptureMessage('')
-    try { await requestRaceCapture(raceInfo); setCaptureMessage('最新取得を依頼しました。PCの取得ワーカーが順次確認し、この画面へ自動同期します。'); await refreshCompanion() }
-    catch (error) { setCaptureMessage(error.message) }
-    finally { setCapturePending(false) }
-  }
   const cloudRace = String(sync.data?.race?.id ?? sync.data?.race?.raceId) === String(raceInfo?.id) && String(sync.data?.race?.raceDate).replaceAll('-', '') === String(raceInfo?.raceDate).replaceAll('-', '') ? sync.data?.race : null
   const analysisRace = useMemo(() => raceInfo ? { ...raceInfo, surface: raceInfo.surface === 'ダ' ? 'ダート' : raceInfo.surface } : null, [raceInfo])
   const analysisHorses = useMemo(() => enrichCloudHorses(horses, cloudRace), [horses, cloudRace])
@@ -1673,11 +1665,11 @@ function MainApp({ session, onLogout }) {
   // ================================================================
   const navigate = id => id === 'forecastReview' ? openForecastReview() : setTab(id)
   const showRaceHeader = raceInfo && (isRacePage(tab) || tab === 'records')
-  const RaceInfoHeader = () => <><div className="rca-page-title"><div><button type="button" className="text-xs text-slate-500 mb-3" onClick={() => setTab('today')}>本日のレース ›</button><h1>{raceInfo.place ?? raceInfo.course ?? PLACE_NAMES[raceInfo.placeCode]}{raceInfo.raceNo}R <span className="text-lg font-normal text-slate-500">{raceInfo.name}</span></h1><p>{fmtDate(raceInfo.raceDate)}　{/^\d+$/.test(String(raceInfo.distance)) ? `${analysisRace.surface ?? ''}${raceInfo.distance}m` : raceInfo.distance}　{raceInfo.fieldSize}頭　{fmtTime(String(raceInfo.postTime ?? '').replace(':','')) ? `${fmtTime(String(raceInfo.postTime).replace(':',''))} 発走` : '発走時刻未取得'}</p></div><button type="button" className="rca-secondary" onClick={() => openRaceList()}>別のレースを選ぶ</button></div><div className="mb-4 flex flex-wrap items-center gap-3 text-xs"><button type="button" disabled={capturePending} onClick={requestLatestCapture} className="rca-secondary">{capturePending ? '取得を依頼中…' : 'JRDBへ最新取得を依頼'}</button><button type="button" onClick={refreshCompanion} disabled={sync.loading} className="rca-secondary">{sync.loading ? '同期中…' : '保存済みデータと同期'}</button>{captureMessage && <span role="status">{captureMessage}</span>}{sync.error && <span role="alert" className="text-rose-700">{sync.error}</span>}</div></>
+  const RaceInfoHeader = () => <><div className="rca-page-title"><div><button type="button" className="text-xs text-slate-500 mb-3" onClick={() => setTab('today')}>本日のレース ›</button><h1>{raceInfo.place ?? raceInfo.course ?? PLACE_NAMES[raceInfo.placeCode]}{raceInfo.raceNo}R <span className="text-lg font-normal text-slate-500">{raceInfo.name}</span></h1><p>{fmtDate(raceInfo.raceDate)}　{/^\d+$/.test(String(raceInfo.distance)) ? `${analysisRace.surface ?? ''}${raceInfo.distance}m` : raceInfo.distance}　{raceInfo.fieldSize}頭　{fmtTime(String(raceInfo.postTime ?? '').replace(':','')) ? `${fmtTime(String(raceInfo.postTime).replace(':',''))} 発走` : '発走時刻未取得'}</p></div><button type="button" className="rca-secondary" onClick={() => openRaceList()}>別のレースを選ぶ</button></div><CaptureControls key={`${raceInfo.raceDate}:${raceInfo.id}`} race={raceInfo} onSync={refreshCompanion} syncing={sync.loading} syncError={sync.error} /></>
 
   return (
     <WorkspaceShell tab={tab} onNavigate={navigate} onLogout={onLogout} email={session.user.email}
-      raceHeader={showRaceHeader ? <RaceInfoHeader /> : null} footer={<span>UI {UI_VERSION} · {COMMIT_HASH}</span>}>
+      raceHeader={showRaceHeader ? RaceInfoHeader() : null} footer={<span>UI {UI_VERSION} · {COMMIT_HASH}</span>}>
           {tab === 'today' && <RaceDayDashboard userId={session.user.id} dashboard={dashboard} placeNames={PLACE_NAMES}
             onNavigate={setTab} onOpenRace={race => loadCollectedRace(race, { fromDashboard: true })}
             onOpenReview={openForecastReview}
