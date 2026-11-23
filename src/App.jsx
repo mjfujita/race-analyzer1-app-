@@ -10,6 +10,7 @@ import RaceDayDashboard from './RaceDayDashboard.jsx'
 import GroupWorkspace from './GroupWorkspace.jsx'
 import DeviceManager, { DeviceGate } from './DeviceManager.jsx'
 import { deviceRequest } from './deviceAuth.js'
+import { useDeviceSession } from './useDeviceSession.js'
 import { useCompanion } from './useCompanion.js'
 import { useRaceCatalog } from './useRaceCatalog.js'
 import { applyCloudData, fetchCloudRace, fetchRaceDashboard, enrichCloudHorses, syncLedgerToCloud, requestRaceCapture } from './cloudStore.js'
@@ -1758,35 +1759,25 @@ function MainApp({ session, onLogout }) {
 // 認証ラッパー
 // ================================================================
 export default function App() {
-  const [session, setSession] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const {session,setSession,loading,error,checking,refresh}=useDeviceSession()
   const [pairing,setPairing]=useState(() => new URLSearchParams(location.hash.slice(1)).get('device-pair'))
   useEffect(() => {
-    let active=true
-    const refresh=async () => {
-      try {
-        const data=await deviceRequest()
-        if(active)setSession(data.session)
-      } catch {
-        if(active)setSession(null)
-      } finally {if(active)setLoading(false)}
-    }
-    void refresh()
-    const changed=() => {setPairing(false);void refresh()}
+    const changed=() => setPairing(false)
     const hashChanged=() => {
       const code=new URLSearchParams(location.hash.slice(1)).get('device-pair')
       if(code)setPairing(code)
     }
     globalThis.addEventListener('race-device-session-changed',changed)
     globalThis.addEventListener('hashchange',hashChanged)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {setTimeout(() => {if(active)void refresh()},0)})
-    const interval=setInterval(() => {if(!document.hidden)void refresh()},60000)
-    return () => {active=false;subscription.unsubscribe();clearInterval(interval);globalThis.removeEventListener('race-device-session-changed',changed);globalThis.removeEventListener('hashchange',hashChanged)}
+    return () => {globalThis.removeEventListener('race-device-session-changed',changed);globalThis.removeEventListener('hashchange',hashChanged)}
   }, [])
   const logout = async () => {
     if(!window.confirm('この端末の承認を解除しますか？ 保存した予想・購入記録は残ります。'))return
     try {await deviceRequest('logout');await supabase.auth.signOut({scope:'local'});setSession(null)}catch{window.alert('端末の解除を完了できませんでした。端末認証の画面から再度お試しください。')}
   }
   if (loading) return <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center"><div className="w-10 h-10 border-4 border-[#4A90E2] border-t-transparent rounded-full animate-spin" /></div>
-  return session && !pairing ? <MainApp key={session.user.id} session={session} onLogout={logout} /> : <DeviceGate key={pairing || 'approval'} recovery={<LoginPage onLogin={() => globalThis.dispatchEvent(new Event('race-device-session-changed'))} />} />
+  return <>
+    {error&&<main className="rca-device-gate"><section className="rca-panel" role="alert"><h1>端末の承認を確認できません</h1><p className="mt-3">{error}</p><p className="rca-muted mt-3">登録済みの承認情報は変更していません。通信が戻ると自動で再確認します。</p><button className="rca-primary mt-5" disabled={checking} onClick={refresh}>{checking?'確認中…':'認証を再確認'}</button></section></main>}
+    <div hidden={Boolean(error)} inert={Boolean(error)}>{session && !pairing ? <MainApp key={session.user.id} session={session} onLogout={logout} /> : !error&&<DeviceGate key={pairing || 'approval'} recovery={<LoginPage onLogin={() => globalThis.dispatchEvent(new Event('race-device-session-changed'))} />} />}</div>
+  </>
 }

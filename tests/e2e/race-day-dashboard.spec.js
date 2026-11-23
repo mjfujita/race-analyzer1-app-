@@ -127,6 +127,7 @@ test('the home distinguishes no meeting, an unconfirmed schedule, and API errors
 })
 
 test('unapproved visitors see device approval before the dashboard', async ({ page }) => {
+  await page.route('**/api/device',route=>route.fulfill({json:{session:null}}))
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'この端末は未承認です', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'ログイン', exact: true })).toHaveCount(0)
