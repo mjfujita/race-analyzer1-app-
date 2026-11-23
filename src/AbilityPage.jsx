@@ -31,12 +31,12 @@ function recordRate(topThree, runs) {
   return runs > 0 && topThree != null ? topThree / runs : null
 }
 
-export default function AbilityPage({ race, horses, statistics = [], userId, cloudRevision = 0, onSelectRace, onSelectHorse, workspace = false }) {
+export default function AbilityPage({ race, horses, statistics = [], userId, cloudRevision = 0, onSelectRace, onSelectHorse, workspace = false,review = null }) {
   const storageKey = oddsStorageKey(userId, race)
-  return <AbilityTable key={storageKey} {...{ race, horses, statistics, storageKey, userId, cloudRevision, onSelectRace, onSelectHorse, workspace }} />
+  return <AbilityTable key={storageKey} {...{ race, horses, statistics, storageKey, userId, cloudRevision, onSelectRace, onSelectHorse, workspace,review }} />
 }
 
-function AbilityTable({ race, horses, statistics, storageKey, userId, cloudRevision, onSelectRace, onSelectHorse, workspace }) {
+function AbilityTable({ race, horses, statistics, storageKey, userId, cloudRevision, onSelectRace, onSelectHorse, workspace,review }) {
   const [sort, setSort] = useState({ key: 'rank', ascending: true })
   const [history, setHistory] = useState(() => readOddsHistory(storageKey))
   useEffect(() => { setHistory(readOddsHistory(storageKey)) }, [storageKey, cloudRevision])
@@ -120,7 +120,7 @@ function AbilityTable({ race, horses, statistics, storageKey, userId, cloudRevis
   })
   const displayedColumns = workspace ? columns.filter(c => c.key !== 'ability') : columns
   return (
-    <div className="rca-stack"><HorseAssessments {...{race,horses,statistics,userId,cloudRevision}} asOf={selectedTime?snapshot?.retrievedAt:null} />
+    <div className="rca-stack"><HorseAssessments {...{race,horses,statistics,userId,cloudRevision,review}} asOf={selectedTime?snapshot?.retrievedAt:null} />
     <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
       <div className="space-y-2 border-b border-slate-100 p-5">
         <h2 className="flex items-center gap-2 font-bold text-[#0B2545]"><Gauge className="h-5 w-5" />全頭の数値比較</h2>
