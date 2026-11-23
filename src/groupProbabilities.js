@@ -13,7 +13,7 @@ export function summarizeGroupProbabilities(grouping,assessment,excluded=[]) {
     && Math.abs(outcomes.reduce((sum,o)=>sum+o.probability,0)-1)<1e-7
   return grouping.groups.map(group=>{
     const horses=group.horses.filter(h=>!excluded.includes(h.no))
-    const base={label:group.label,count:horses.length,totalCount:group.horses.length,excludedCount:group.horses.length-horses.length}
+    const base={label:group.label,count:horses.length,totalCount:group.horses.length,excludedCount:group.horses.length-horses.length,fieldSize:active.length}
     if (!horses.length) return {...base,status:'held',reason:'候補馬がいません。除外した馬を確認してください。'}
     if (!ready || horses.some(h=>!byNo.get(h.no)?.probabilities)) return {...base,status:'held',reason:'全出走馬の比較材料または着順確率が揃わないため、群の確率は判定保留です。'}
     const selected=new Set(horses.map(h=>h.no)), positions=[0,0,0]
@@ -26,6 +26,6 @@ export function summarizeGroupProbabilities(grouping,assessment,excluded=[]) {
     const leaders=horses.map(h=>({no:h.no,name:h.name,win:byNo.get(h.no).probabilities.win}))
       .sort((a,b)=>b.win-a.win || a.no-b.no).map(h=>({...h,share:win>0?bounded(h.win/win):null}))
     return {...base,status:'ready',win,second:bounded(positions[1]),third:bounded(positions[2]),anyTop3:bounded(anyTop3),
-      averageWin:win/horses.length,leaders}
+      averageWin:win/horses.length,baselineWin:horses.length/active.length,relativeWin:win/(horses.length/active.length),leaders}
   })
 }

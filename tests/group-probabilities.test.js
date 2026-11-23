@@ -21,6 +21,7 @@ test('group chances enumerate mutually exclusive positions and count any top-thr
   const [a,b]=summarizeGroupProbabilities(grouping,assessment)
   for(const s of [a,b]) {
     near(s.win,.5);near(s.second,.5);near(s.third,.5);near(s.averageWin,.25)
+    near(s.baselineWin,.5);near(s.relativeWin,1)
     near(s.anyTop3,1) // sum of individual top-three rates would incorrectly be 1.5.
     near(s.leaders.reduce((sum,h)=>sum+h.share,0),1)
   }
@@ -30,6 +31,7 @@ test('group chances enumerate mutually exclusive positions and count any top-thr
 test('candidate exclusions do not redistribute probability to other horses and expose empty groups',()=>{
   const {assessment,grouping}=fixture()
   const [a,b]=summarizeGroupProbabilities(grouping,assessment,[1])
+  near(a.baselineWin,.25);near(a.relativeWin,1)
   near(a.win,.25);near(a.anyTop3,.75);near(a.averageWin,.25);near(b.win,.5)
   assert.equal(a.excludedCount,1);assert.equal(a.leaders[0].no,2);near(a.leaders[0].share,1)
   const empty=summarizeGroupProbabilities(grouping,assessment,[1,2])[0]
@@ -60,4 +62,14 @@ test('two-horse races keep third probability zero and any top-three probability 
   const {assessment,grouping}=fixture([.6,.4])
   const result=summarizeGroupProbabilities(grouping,assessment)[0]
   near(result.win,1);near(result.second,1);near(result.third,0);near(result.anyTop3,1)
+})
+
+
+test('size comparison favors concentrated strength over a larger group with average horses',()=>{
+  const {assessment,grouping:original}=fixture([.25,.1,.1,.1,.1,.1,.0625,.0625,.0625,.0625])
+  const field=original.groups.flatMap(g=>g.horses)
+  const grouping=groupOdds(field,Object.fromEntries(field.map(h=>[h.no,h.no===1?3:h.no<=6?10:40])))
+  const [a,b]=summarizeGroupProbabilities(grouping,assessment)
+  near(a.win,.25);near(a.averageWin,.25);near(a.baselineWin,.1);near(a.relativeWin,2.5)
+  near(b.win,.5);near(b.averageWin,.1);near(b.baselineWin,.5);near(b.relativeWin,1)
 })

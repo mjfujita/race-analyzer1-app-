@@ -175,3 +175,5 @@ button:disabled { cursor: not-allowed; }
 .rca-personal-group-probabilities { margin:12px 0; }
 
 .rca-group-probability .rca-group-contribution strong { display:inline; font-size:13px; margin:0; }
+
+.rca-group-strength-metrics>div { background:#e4f1fd; border:1px solid #b8d6f0; }
