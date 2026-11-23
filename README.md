@@ -99,3 +99,7 @@ cd ~/projects/race-analyzer-app && bash scripts/push_db.sh
 - **Phase 1（現在）**: ログイン + 最新日レース一覧
 - **Phase 2**: `evaluate_all.py` で評価結果をプレ計算して race.db に追加、UI で各種バッジ表示
 - **Phase 3**: レース詳細、馬一覧、フェーズ/本気度/昇級判定の UI 再現
+
+## パドック・返し馬情報
+
+コメントの取得状態、締切後の参考表示、取得ワーカーの配置・復旧については [パドック情報の仕様](docs/paddock-information.md) を参照。

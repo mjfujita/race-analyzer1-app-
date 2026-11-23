@@ -65,7 +65,7 @@ test('verified paddock sync distinguishes zero from missing and later references
   await expect(first.getByRole('heading',{name:'今回の評価',exact:true}).locator('..')).toHaveText(assessment)
   await page.getByLabel('発走10分前までに取得した直前情報のみ').check()
   await page.getByLabel('表示時刻',{exact:true}).selectOption('demo-0')
-  await expect(first.getByText('未発表・未取得',{exact:true})).toHaveCount(2)
+  await expect(first.getByText('参照時点より後に取得済み',{exact:true})).toHaveCount(3)
   await expect(page.getByText(/選択オッズの取得時点.*までの情報に限定しています/)).toBeVisible()
   await page.getByLabel('表示する馬').selectOption('all')
   await page.setViewportSize({width:1440,height:1000})

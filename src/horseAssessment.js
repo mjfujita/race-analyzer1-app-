@@ -108,3 +108,27 @@ export function horsePaddock(source,no){
   return {weight:weight>0?weight:null,delta:assessmentNumber(horse?.horseWeightDelta??paddock?.horseWeightDelta),
     index:assessmentNumber(horse?.paddockIndex??paddock?.paddockIndex),screenIdm:assessmentNumber(horse?.idm),comments}
 }
+
+
+export function paddockAvailability(race,cloud,no,{beforeCutoff=true,asOf=null,now=Date.now()}={}){
+  const context=assessmentContext(race,cloud,{beforeCutoff,asOf,now})
+  const latest=assessmentContext(race,cloud,{beforeCutoff:false,asOf,now})
+  const paddock=horsePaddock(context.source,no),latestPaddock=horsePaddock(latest.source,no)
+  const later=Boolean(beforeCutoff&&latest.source&&latest.source.retrievedAt!==context.source?.retrievedAt&&latest.referenceOnly)
+  const reason=validTimestamp(asOf)&&validTimestamp(context.cutoffAt)&&Date.parse(asOf)<Date.parse(context.cutoffAt)?'参照時点より後':latest.afterCutoff?'締切後':'参照時点より後'
+  const lateFields=later?[
+    ...(paddock.index===null&&latestPaddock.index!==null?['パドック点']:[]),
+    ...(paddock.weight===null&&latestPaddock.weight!==null?['馬体重']:[]),
+    ...(!paddock.comments.length&&latestPaddock.comments.length?['コメント']:[]),
+  ]:[]
+  const labels={available:'この馬のコメント欄に記載なし',empty:'コメント欄に記載なし',
+    'not-provided':'このJRDB画面ではコメント提供なし（オプション情報）',failed:'コメント取得に失敗しました',
+    'tab-missing':'コメントタブを確認できません','not-collected':'旧取得方式のためコメント記録なし'}
+  const state=source=>source?.paddockCapture?.status??'not-collected'
+  const indexRecorded=(context.source?.horses??[]).some(h=>assessmentNumber(h.paddockIndex)!==null)
+  return {context,paddock,latestSource:latest.source,lateFields,reason,
+    indexMissing:lateFields.includes('パドック点')?`${reason}に取得済み`:indexRecorded?'画面に点数の記載なし':'未発表・未取得',
+    weightMissing:lateFields.includes('馬体重')?`${reason}に取得済み`:'未発表・未取得',
+    commentMissing:lateFields.includes('コメント')?`${reason}に取得済み`:labels[state(context.source)]??'コメントの取得状態を確認できません',
+    latestCommentStatus:later&&!paddock.comments.length&&!latestPaddock.comments.length?labels[state(latest.source)]??'取得状態不明':null}
+}
