@@ -5,6 +5,7 @@ import { validateModel } from '../src/modelStore.js'
 import { validateLedger, emptyLedger, importLedger, parseRaceObservations, LEDGER_COLLECTIONS } from '../src/forecastLedger.js'
 import { importOddsSnapshots } from '../src/oddsHistory.js'
 import { decisionCutoff, japanRaceDay, raceDateISO, snapshotTiming, validTimestamp } from '../src/raceTime.js'
+import {summarizeRaceResult} from '../src/raceProgress.js'
 
 export const MAX_BODY_BYTES = 3_000_000
 const MAX_RACE_FILES = 2000
@@ -232,6 +233,18 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
   async function getCatalog() {
     const date=japanRaceDay(now())
     return {schemaVersion:1,date,availableRaces:await availableRaces(date)}
+  }
+  async function getRaceProgress({raceDate}){
+    validateRaceKey('progress',raceDate)
+    const timestamp=now(),races=await availableRaces(raceDate),rows=new Map()
+    await forEachBounded(races,6,async item=>{
+      const [row]=await list(`${racePrefix(item.id,item.raceDate)}/observations`,{limit:1,column:'created_at',order:'desc'})
+      const stored=row?await store.get(row.path):null
+      if(row&&(!stored||stored.ownerId!==ownerId||stored.race?.raceId!==item.id||stored.race?.raceDate!==item.raceDate))conflict('結果の開催情報が一致しません。')
+      const race=stored?raceMeta(stored.race):item
+      rows.set(item.id,{...race,result:summarizeRaceResult(stored?.race.context,race,timestamp)})
+    })
+    return {schemaVersion:1,raceDate,checkedAt:new Date(timestamp).toISOString(),races:races.map(r=>rows.get(r.id))}
   }
   function checkCommand(command) {
     if (!plain(command) || command.ownerId !== ownerId || !/^\d{1,12}-[a-f0-9]{64}$/.test(command.id ?? '')
@@ -496,7 +509,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       .map(row => validateRaceKey(row.name.slice(0, -5), raceDate))))
     return { schemaVersion: 1, races: races.flat() }
   }
-  return { ingestBundle, get, getDashboard, getCatalog, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand, getCaptureRequest }
+  return { ingestBundle, get, getDashboard, getCatalog, getRaceProgress, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand, getCaptureRequest }
 }
 
 export function safeTokenEqual(left, right) {
@@ -544,6 +557,7 @@ export function createCompanionHandler({ service, authenticateUser, ownerId, com
       if (req.method === 'GET') {
         const query = req.query ?? Object.fromEntries(new URL(req.url, 'https://local.invalid').searchParams)
         if (query.catalog === '1' && Object.keys(query).length === 1) return res.status(200).json(await service.getCatalog())
+        if(query.progress==='1'&&Object.keys(query).length===2&&typeof query.raceDate==='string')return res.status(200).json(await service.getRaceProgress({raceDate:query.raceDate}))
         if (query.dashboard === '1' && Object.keys(query).length === 1) return res.status(200).json(await service.getDashboard())
         if(query.capture==='1'&&Object.keys(query).length===3&&typeof query.raceId==='string'&&typeof query.raceDate==='string') return res.status(200).json(await service.getCaptureRequest({raceId:query.raceId,raceDate:query.raceDate}))
         if (Object.keys(query).some(key => !['raceId', 'raceDate'].includes(key)) || Object.values(query).some(value => typeof value !== 'string')) invalid('取得条件が不正です。')
