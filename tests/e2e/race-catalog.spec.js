@@ -6,7 +6,7 @@ import {createDeviceAuth,createDeviceHandler,checkDeviceOrigin} from '../../serv
 import {createCompanionService,createCompanionHandler} from '../../server/companion.js'
 import {memoryStore,request} from '../fixtures/companion.js'
 
-async function connect(page,{stamp='2026-11-23T00:00:00Z',result=false}={}){
+async function connect(page,{stamp='2026-11-23T00:00:00Z',result=false,meetingDate='20261123'}={}){
   const ownerId='synthetic-catalog-owner',store=memoryStore()
   const auth=createDeviceAuth({store,ownerId,authenticateAccount:async()=>({id:ownerId})})
   const device=createDeviceHandler({auth,createDbUrl:async()=>'/fixture-old-paci.gz'})
@@ -16,7 +16,7 @@ async function connect(page,{stamp='2026-11-23T00:00:00Z',result=false}={}){
   const registered=await request(device,{method:'POST',body:{action:'register'},headers:{host:'127.0.0.1:4183',origin:'http://127.0.0.1:4183','x-race-device':'1'}})
   const races=['03','05'].flatMap(placeCode=>Array.from({length:12},(_,i)=>{
     const id=`${placeCode}2656${String(i+1).padStart(2,'0')}`
-    return {raceId:id,raceDate:'20261123',race:{...race,id,raceDate:'20261123',placeCode,raceNo:i+1,
+    return {raceId:id,raceDate:meetingDate,race:{...race,id,raceDate:meetingDate,placeCode,raceNo:i+1,
       name:`${placeCode==='05'?'東京':'福島'}の当日レース${i+1}`,distance:1600,postTime:`${String(9+Math.floor(i/2)).padStart(2,'0')}${i%2?'30':'00'}`,horses},snapshots:[],observations:[],...(result&&placeCode==='05'&&i===0?{context:{raceId:id,raceDate:'20261123',retrievedAt:'2026-11-23T00:05:00Z',horses:horses.map(h=>({horseNo:h.no})),results:[{horseNo:2,rank:1},{horseNo:1,rank:2},{horseNo:3,rank:3}]}}:{})}
   }))
   await service.ingestBundle({schemaVersion:1,kind:'race-companion-bundle',generatedAt:stamp,status:{state:'ready'},races})
@@ -57,7 +57,7 @@ async function connect(page,{stamp='2026-11-23T00:00:00Z',result=false}={}){
 
 test('mobile archive loads today from its own API with an old cached PACI and failed dashboard',async({page})=>{
   const control=await connect(page)
-  await expect(page.getByText('本日の開催一覧を確認しています…')).toBeVisible()
+  await expect(page.getByText('最新の開催一覧を確認しています…')).toBeVisible()
   await expect(page.getByLabel('開催日')).toBeDisabled()
   control.release()
   await expect(page.getByLabel('開催日')).toHaveValue('20261123')
@@ -79,7 +79,7 @@ test('mobile archive loads today from its own API with an old cached PACI and fa
 
 test('catalog failures are visible and retry replaces the old-only archive with today',async({page})=>{
   const control=await connect(page);control.fail=true;control.release()
-  await expect(page.getByRole('alert')).toContainText('本日の開催一覧を取得できませんでした。')
+  await expect(page.getByRole('alert')).toContainText('開催一覧を取得できませんでした。')
   await expect(page.getByLabel('開催日')).toHaveValue('20261115')
   control.fail=false
   await page.getByRole('button',{name:'開催一覧を再取得'}).click()
@@ -88,7 +88,7 @@ test('catalog failures are visible and retry replaces the old-only archive with 
   await page.getByLabel('開催日').selectOption('20261123')
   control.empty=true
   await page.getByRole('button',{name:'開催一覧を再取得'}).click()
-  await expect(page.getByText('本日の同期済みレースはまだありません。保存済みPACIから過去の開催を選べます。')).toBeVisible()
+  await expect(page.getByText('同期済みの開催情報がありません。保存済みPACIから開催日を選べます。')).toBeVisible()
   await expect(page.getByLabel('開催日')).toHaveValue('20261115')
 })
 
@@ -143,4 +143,21 @@ test('a failed detail request keeps the catalog usable and retry opens the chose
   control.detailFail=false
   await card.click()
   await expect(page.getByRole('heading',{name:'東京1R 東京の当日レース1'})).toBeVisible()
+})
+
+
+test('tomorrow is selectable with an old cached PACI database and a failed dashboard before the meeting day',async({page})=>{
+  const control=await connect(page,{stamp:'2026-11-27T09:00:00Z',meetingDate:'20261128'})
+  control.release()
+  await expect(page.getByLabel('開催日')).toHaveValue('20261128')
+  await expect(page.getByLabel('開催日').getByRole('option')).toHaveText(['2026/11/28 (土) (24R)','2026/11/15 (日) (1R)'])
+  await expect(page.getByRole('button',{name:/のレース情報$/})).toHaveCount(24)
+  await page.getByRole('button',{name:'東京1R 東京の当日レース1のレース情報',exact:true}).click()
+  await expect(page.getByRole('heading',{name:'東京1R 東京の当日レース1',exact:true})).toBeVisible()
+  await page.getByRole('button',{name:'別のレースを選ぶ',exact:true}).click()
+  await page.getByLabel('開催日').selectOption('20261115')
+  await page.getByRole('button',{name:'開催一覧を再取得',exact:true}).click()
+  await expect(page.getByRole('button',{name:'開催一覧を再取得',exact:true})).toBeEnabled()
+  await expect(page.getByLabel('開催日')).toHaveValue('20261115')
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
 })
