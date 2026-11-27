@@ -104,7 +104,7 @@ test('empty dashboard distinguishes the published calendar and the absence of pr
   }
 })
 
-test('today catalog is owner-only and independent of forecast, ledger, and dashboard reads',async()=>{
+test('meeting catalog is owner-only and independent of forecast, ledger, and dashboard reads',async()=>{
   const {service,handler,store}=setup()
   await service.ingestBundle(bundle())
   const query={catalog:'1'}
@@ -113,7 +113,7 @@ test('today catalog is owner-only and independent of forecast, ledger, and dashb
   assert.equal((await request(handler,{query:{...query,raceDate:scope.raceDate}})).status,400)
   const list=store.list
   store.list=async(path,options)=>{
-    assert.match(path,/\/race-index\//)
+    assert.match(path,/\/race-index(?:\/|$)/)
     return list(path,options)
   }
   const response=await request(handler,{query})
@@ -494,4 +494,23 @@ test('selected user axes receive immutable owner-readable receipts only while th
   const later = appendForecast(selected.ledger,{ ...base,kind:'user',parentId:original.record.id,
     parameters:{ ...base.parameters,anchorSelection:{ ...base.parameters.anchorSelection,selected:null,decision:'skip' } } },at)
   assert.equal((await service.saveLedger(later.ledger)).receipts[later.record.id],undefined)
+})
+
+
+test('catalog includes a complete upcoming meeting before race day while dashboard stays on the current day',async()=>{
+  const now=Date.parse('2026-11-27T09:00:00Z'),store=memoryStore()
+  const service=createCompanionService({store,ownerId,now:()=>now})
+  const meetings=['20261127','20261128'].flatMap(date=>['05','08'].flatMap(placeCode=>Array.from({length:12},(_,i)=>{
+    const id=`${placeCode}${date}${String(i+1).padStart(2,'0')}`
+    return {raceId:id,raceDate:date,race:{id,raceDate:date,placeCode,raceNo:i+1,fieldSize:2,postTime:'1000',horses:[{no:1},{no:2}]},snapshots:[],observations:[]}
+  })))
+  for(let i=0;i<meetings.length;i+=4)await service.ingestBundle({schemaVersion:1,kind:'race-companion-bundle',generatedAt:new Date(now).toISOString(),status:{state:'ready'},races:meetings.slice(i,i+4)})
+  const before=structuredClone([...store.files])
+  const catalog=await service.getCatalog()
+  assert.equal(catalog.date,'20261127');assert.equal(catalog.availableRaces.length,48)
+  assert.equal(catalog.availableRaces.filter(r=>r.raceDate==='20261128').length,24)
+  assert.equal(catalog.availableRaces.filter(r=>r.raceDate==='20261127').length,24)
+  const dashboard=await service.getDashboard();assert.equal(dashboard.races.length,24)
+  assert.ok(dashboard.races.every(r=>r.raceDate==='20261127'))
+  assert.deepEqual([...store.files],before)
 })

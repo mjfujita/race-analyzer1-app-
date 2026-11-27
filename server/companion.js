@@ -232,7 +232,14 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
   }
   async function getCatalog() {
     const date=japanRaceDay(now())
-    return {schemaVersion:1,date,availableRaces:await availableRaces(date)}
+    // A PACI pack can arrive the day before the meeting. Do not hide it behind today's date.
+    // Keep complete meetings: the general 36-row list may contain only part of the older day.
+    const [current,recent]=await Promise.all([availableRaces(date),availableRaces()])
+    const latestDate=recent[0]?.raceDate
+    const rows=new Map([...current,...recent.filter(race=>race.raceDate===latestDate)]
+      .map(race=>[`${race.raceDate}:${race.id}`,race]))
+    return {schemaVersion:1,date,availableRaces:[...rows.values()].sort((a,b)=>b.raceDate.localeCompare(a.raceDate)
+      ||String(a.postTime??'').localeCompare(String(b.postTime??''))||a.id.localeCompare(b.id))}
   }
   async function getRaceProgress({raceDate}){
     validateRaceKey('progress',raceDate)

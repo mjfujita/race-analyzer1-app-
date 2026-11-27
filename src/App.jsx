@@ -953,9 +953,9 @@ function MainApp({ session, onLogout }) {
     }
     return (
       <div className="space-y-6 pb-12">
-        <div className="flex flex-wrap items-center gap-3"><button type="button" className="rca-secondary" disabled={catalog.loading} onClick={refreshCatalog}>開催一覧を再取得</button>{catalog.loading&&<p role="status" className="text-sm text-slate-600">本日の開催一覧を確認しています…</p>}</div>
-        {catalog.error&&<p role="alert" className="rca-error">本日の開催一覧を取得できませんでした。{catalog.error} 表示中のPACI一覧は保存済みの分です。</p>}
-        {catalog.data&&!catalog.loading&&!catalog.data.availableRaces.length&&<p role="status" className="rca-notice">本日の同期済みレースはまだありません。保存済みPACIから過去の開催を選べます。</p>}
+        <div className="flex flex-wrap items-center gap-3"><button type="button" className="rca-secondary" disabled={catalog.loading} onClick={refreshCatalog}>開催一覧を再取得</button>{catalog.loading&&<p role="status" className="text-sm text-slate-600">最新の開催一覧を確認しています…</p>}</div>
+        {catalog.error&&<p role="alert" className="rca-error">開催一覧を取得できませんでした。{catalog.error} 表示中のPACI一覧は保存済みの分です。</p>}
+        {catalog.data&&!catalog.loading&&!catalog.data.availableRaces.length&&<p role="status" className="rca-notice">同期済みの開催情報がありません。保存済みPACIから開催日を選べます。</p>}
         {(stats || listDates.length > 0) && (
           <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
             <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
