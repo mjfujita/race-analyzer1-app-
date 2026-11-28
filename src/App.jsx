@@ -10,6 +10,7 @@ import RaceDayDashboard from './RaceDayDashboard.jsx'
 import RaceCatalogList from './RaceCatalogList.jsx'
 import RaceOverview from './RaceOverview.jsx'
 import GroupWorkspace from './GroupWorkspace.jsx'
+import RaceResultsWorkspace from './RaceResultsWorkspace.jsx'
 import DeviceManager, { DeviceGate } from './DeviceManager.jsx'
 import CaptureControls from './CaptureControls.jsx'
 import { deviceRequest } from './deviceAuth.js'
@@ -782,7 +783,7 @@ function MainApp({ session, onLogout }) {
   const resetWidth = () => { setListWidthPct(46); localStorage.setItem(LIST_WIDTH_KEY, '46') }
 
   // レース選択 → 評価ロード → 出走馬分析へ
-  const loadAsTarget = (raceKey, goTab = 'anchors', currentMetadata = null) => {
+  const loadAsTarget = (raceKey, goTab = 'groups', currentMetadata = null) => {
     if (!db) return
     try {
       const data = dataApi.getEvaluation(db, raceKey)
@@ -802,16 +803,16 @@ function MainApp({ session, onLogout }) {
     const raceKey = item.id ?? item.raceId
     try {
       setInitialForecastId(fromDashboard ? item.receipt?.forecastId ?? '' : '')
-      if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, goTab ?? (item.hasGroupPlan ? 'groups' : 'anchors'), item); return }
+      if (db && dataApi.getEvaluation(db, raceKey)) { loadAsTarget(raceKey, goTab ?? 'results', item); return }
       const metadata = { ...item, id: raceKey }
       const payload = await fetchCloudRace(metadata)
-      const received = payload.race ?? (goTab === 'raceInfo' ? { ...metadata, horses: [] } : null)
-      if (!received?.horses?.length && goTab !== 'raceInfo') throw new Error('このレースは出走馬を取得中です。')
+      const received = payload.race ?? (['raceInfo','results'].includes(goTab) ? { ...metadata, horses: [] } : null)
+      if (!received?.horses?.length && !['raceInfo','results'].includes(goTab)) throw new Error('このレースは出走馬を取得中です。')
       await applyCloudData(session.user.id, metadata, received.horses ?? [], payload)
       setRaceInfo({ ...received, id: raceKey, liveOnly: true, place: received.place ?? PLACE_NAMES[received.placeCode],
         surface: received.surface ?? SURFACE_NAMES[received.surfaceCode] })
       setHorses((received.horses ?? []).map(horse => ({ ...horse, id: horse.id ?? `${raceKey}-${horse.no}`, pastRuns: horse.pastRuns ?? [] })))
-      setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab(goTab ?? (item.hasGroupPlan ? 'groups' : 'anchors'))
+      setSummary({}); setCurrentRaceKey(raceKey); setSelectedId(null); setTab(goTab ?? 'results')
     } catch (error) {
       if (fromDashboard) throw error
       alert(error.message)
@@ -1647,7 +1648,7 @@ function MainApp({ session, onLogout }) {
   // ================================================================
   // ヘッダ・レース概要・タブナビ
   // ================================================================
-  const navigate = id => id === 'forecastReview' ? openForecastReview() : setTab(id)
+  const navigate = id => id === 'forecastReview' ? openForecastReview() : setTab(id==='anchors'?'results':id)
   const showRaceHeader = raceInfo && (isRacePage(tab) || tab === 'records')
   const RaceInfoHeader = () => <><div className="rca-page-title"><div><button type="button" className="text-xs text-slate-500 mb-3" onClick={() => setTab('today')}>本日のレース ›</button><h1>{raceInfo.place ?? raceInfo.course ?? PLACE_NAMES[raceInfo.placeCode]}{raceInfo.raceNo}R <span className="text-lg font-normal text-slate-500">{raceInfo.name}</span></h1><p>{fmtDate(raceInfo.raceDate)}　{/^\d+$/.test(String(raceInfo.distance)) ? `${analysisRace.surface ?? ''}${raceInfo.distance}m` : raceInfo.distance}　{raceInfo.fieldSize}頭　{fmtTime(String(raceInfo.postTime ?? '').replace(':','')) ? `${fmtTime(String(raceInfo.postTime).replace(':',''))} 発走` : '発走時刻未取得'}</p></div><button type="button" className="rca-secondary" onClick={() => openRaceList(raceInfo.raceDate)}>別のレースを選ぶ</button></div><CaptureControls key={`${raceInfo.raceDate}:${raceInfo.id}`} race={raceInfo} onSync={refreshCompanion} syncing={sync.loading} syncError={sync.error} /></>
 
@@ -1655,7 +1656,7 @@ function MainApp({ session, onLogout }) {
     <WorkspaceShell tab={tab} raceKey={`${raceInfo?.raceDate??''}:${raceInfo?.id??''}`} onNavigate={navigate} onLogout={onLogout} email={session.user.email}
       raceHeader={showRaceHeader ? RaceInfoHeader() : null} footer={<span>UI {UI_VERSION} · {COMMIT_HASH}</span>}>
           {tab === 'today' && <RaceDayDashboard userId={session.user.id} dashboard={dashboard} placeNames={PLACE_NAMES}
-            onNavigate={setTab} onOpenRace={race => loadCollectedRace(race, { fromDashboard: true })}
+            onNavigate={setTab} onOpenRace={(race,goTab) => loadCollectedRace(race, { fromDashboard: true, goTab:goTab??'results' })}
             onOpenReview={openForecastReview}
             onOpenList={openRaceList}>
             <section aria-labelledby="race-day-guide" className="rounded-2xl border border-sky-200 bg-white px-4 py-4 sm:px-5">
@@ -1671,13 +1672,13 @@ function MainApp({ session, onLogout }) {
                   <button type="button" onClick={() => setTab('automation')} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">データ管理を開く</button>
                 </li>
                 <li>
-                  <strong>軸候補を確認し、判断を保存</strong>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">レースを選び、「軸候補」で勝率・3着内率と単勝・複勝の期待回収率を比較します。最大2頭の候補から軸を1頭選び、候補がなければ見送ります。発走10分前までに判断を固定保存します。</p>
+                  <strong>グループを調整し、予想を保存</strong>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">レースを選び、グループと各馬の確率を見て1〜3着の組み立てを保存します。「予想・結果」で実際の着順と並べて確認できます。</p>
                   <button type="button" onClick={() => dashboard.data?.races?.length ? document.getElementById('race-progress-title')?.scrollIntoView({ behavior: 'smooth' }) : openRaceList()} className="mt-1 text-xs font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">開催レースを確認</button>
                 </li>
               </ol>
               <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-600">
-                結果の取込後は <button type="button" onClick={() => openForecastReview()} className="font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">予想の振り返り</button> で保存した予想と着順を確認できます。
+                結果の取込後は <button type="button" onClick={() => setTab('results')} className="font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">予想と結果の一覧</button> で保存した予想と着順を確認できます。
               </p>
             </section>
           </RaceDayDashboard>}
@@ -1721,11 +1722,10 @@ function MainApp({ session, onLogout }) {
             syncedGroupReceipts={sync.data?.groupReceipts}
             loading={sync.loading}
             review={sync.error ? null : sync.data?.forecastReview} onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
-          {tab === 'anchors' && (raceInfo ? <FinalForecastPage groupDisplay={groupDisplay} anchorMode embedded
-            key={`anchors:${session.user.id}:${raceInfo.raceDate}:${raceInfo.id}`} race={analysisRace} horses={analysisHorses}
-            userId={session.user.id} statistics={analysisStatistics} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
-            syncedReceipts={receipts} review={sync.error ? null : sync.data?.forecastReview} initialForecastId={initialForecastId}
-            onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
+          {tab === 'results' && <RaceResultsWorkspace userId={session.user.id} race={raceInfo?analysisRace:null} horses={analysisHorses} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
+            availableRaces={raceInfo?sync.data?.availableRaces??[]:dashboard.data?.races??[]}
+            onOpenPersonal={()=>setTab('personal')} onOpenRace={race=>loadCollectedRace(race,{fromDashboard:true,goTab:'results'})}/>}
+
           {tab === 'oddsReview' && <OddsReview key={`${raceInfo?.raceDate}:${raceInfo?.id}`} raceInfo={raceInfo} horses={horses} userId={session.user.id} />}
           {tab === 'philosophy' && <TabPhilosophy />}
           {tab === 'records' && (raceInfo ? <><button type="button" className="mb-4 text-sm font-semibold text-blue-700" onClick={() => openForecastReview()}>← 振り返りへ戻る</button><FinalForecastPage anchorMode recordsOnly
