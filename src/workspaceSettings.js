@@ -1,3 +1,4 @@
+import {setBrowserValue} from './browserStorage.js'
 export const DEFAULT_SETTINGS = Object.freeze({ minTop3: 50, stress: 10 })
 const key = userId => `race-workspace-settings:v1:${encodeURIComponent(userId)}`
 export function validateSettings(value) {
@@ -12,6 +13,6 @@ export function readSettings(userId, storage = globalThis.localStorage) {
 export function saveSettings(userId, value, storage = globalThis.localStorage) {
   if (!userId) throw new Error('ログイン状態を確認してください。')
   const checked = validateSettings(value)
-  storage.setItem(key(userId), JSON.stringify(checked))
+  setBrowserValue(storage,key(userId),JSON.stringify(checked),userId)
   return checked
 }

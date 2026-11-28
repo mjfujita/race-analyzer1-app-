@@ -1,3 +1,4 @@
+import {setBrowserValue} from './browserStorage.js'
 import {groupOdds} from './groupAnalysis.js'
 import {journalDate} from './predictionJournal.js'
 import {raceTimestamp,validTimestamp} from './raceTime.js'
@@ -66,7 +67,7 @@ export async function writeGroupRegistrations(storage,user,date,incoming,locks=g
   return locks.request(registrationKey(user,date),()=>{
     const rows=mergeGroupRegistrations(readGroupRegistrations(storage,user,date),incoming)
     if(rows.some(r=>r.race.raceDate!==date))fail('グループ登録の開催日が一致しません。')
-    storage.setItem(registrationKey(user,date),JSON.stringify(rows));return rows
+    setBrowserValue(storage,registrationKey(user,date),JSON.stringify(rows),user);return rows
   })
 }
 export function reviewRegisteredGroups(registration,result){
