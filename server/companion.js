@@ -1,3 +1,4 @@
+import {automaticResultGroups} from '../src/automaticResultGroups.js'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { SINGLE_ANCHOR_METHOD } from '../src/anchorAssessment.js'
 import { validateForecastReview } from '../src/forecastReview.js'
@@ -557,7 +558,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
   }
   async function getPredictionJournal({raceDate}) {
     validateRaceKey('day',raceDate)
-    const journal={predictions:[],results:[],receipts:{},legacy:[],official:[],races:[]}
+    const journal={predictions:[],results:[],receipts:{},legacy:[],official:[],races:[],automaticGroups:[]}
     for(const kind of ['predictions','results']){
       const rows=await list(`${prefix}/prediction-journal/${raceDate}/${kind}`,{limit:1000,complete:true})
       await forEachBounded(rows,4,async row=>{
@@ -576,6 +577,8 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       if(payload&&(payload.ownerId!==ownerId||payload.race?.raceId!==race.id||payload.race?.raceDate!==raceDate))conflict('観測の保存範囲が一致しません。')
       const meta={...race,...payload?.race?.race}
       journal.races.push(Object.fromEntries(['id','raceDate','place','placeCode','raceNo','name','postTime','fieldSize'].filter(key=>meta[key]!=null).map(key=>[key,meta[key]])))
+      const automatic=automaticResultGroups(meta,payload?.race?.snapshots??[],payload?.race?.observations??[],now())
+      if(automatic)journal.automaticGroups.push(automatic)
       const official=officialJournalResult(payload?.race?.race??race,payload?.race?.observations,now())
       if(official)journal.official.push(official)
       const rows=await list(`${racePrefix(race.id,raceDate)}/ledger/groupPlans`,{limit:500,complete:true})

@@ -84,7 +84,7 @@ test('the signed-in home shows race progress, opens the correct forecast, and li
   await page.getByRole('button', { name: '京都9Rの振り返る' }).click()
   await expect(page.getByRole('heading',{name:'レース結果と予想',exact:true})).toBeVisible()
   await expect(page.getByRole('heading',{name:'京都9R 照合済みのレース',exact:true})).toBeVisible()
-  await expect(page.getByRole('table',{name:'予想と結果の組み合わせ'}).locator('tbody tr')).toHaveCount(3)
+  await expect(page.getByRole('table',{name:'全レースのグループ結果'}).locator('tbody tr')).toHaveCount(3)
   await dashboardButton.click()
   await page.getByRole('button', { name: '過去開催・PACIレース一覧', exact: true }).last().click()
   await expect(page.getByRole('button', { name: /データ不足のレース/ })).toBeVisible()
@@ -171,7 +171,7 @@ test('the four-menu workspace preserves settings, evidence pages and purchase re
   await sub.getByRole('button',{name:'予想・結果',exact:true}).click()
   await expect(page.getByRole('heading',{name:'レース結果と予想',exact:true})).toBeVisible()
   await expect(sub.getByRole('button',{name:'軸候補',exact:true})).toHaveCount(0)
-  await expect(page.getByRole('table',{name:'予想と結果の組み合わせ'})).toContainText('京都11R')
+  await expect(page.getByRole('table',{name:'全レースのグループ結果'})).toContainText('京都11R')
   for (const [name,file] of [['能力・適性','03-ability'],['オッズ推移','04-odds'],['展開・馬場','05-pace']]) {
     await sub.getByRole('button',{ name,exact:true }).click()
     if (name === 'オッズ推移') {
@@ -211,8 +211,8 @@ test('the four-menu workspace preserves settings, evidence pages and purchase re
   await page.setViewportSize({ width:390,height:844 })
   const mobile = page.getByRole('navigation',{ name:'モバイル開催メニュー' })
   await mobile.getByRole('button',{ name:'予想・結果',exact:true }).click()
-  const comparison = page.getByRole('table',{ name:'予想と結果の組み合わせ',exact:true })
-  await expect(comparison.locator('[data-label="レース結果"]').first()).toBeVisible()
+  const comparison = page.getByRole('table',{ name:'全レースのグループ結果',exact:true })
+  await expect(comparison.locator('[data-label="1着"]').first()).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path:'.qa/workspace-09-mobile.png',fullPage:true })
   await page.reload()
