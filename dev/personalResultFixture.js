@@ -1,3 +1,4 @@
+import {createGroupRegistration,registrationKey} from '../src/groupRegistration.js'
 import {race,horses,demoSnapshots} from './fixtures.js'
 import {oddsStorageKey} from '../src/oddsHistory.js'
 import {createPrediction,createJournalResult,journalKey} from '../src/predictionJournal.js'
@@ -10,6 +11,8 @@ export function seedPersonalResultFixture(storage,userId) {
     .map(s=>({...s,odds:{1:3,2:3.5,3:8,4:9,5:20,6:25,7:80,8:100}}))
   storage.setItem(oddsStorageKey(userId,race),JSON.stringify(history))
   const prediction=createPrediction({race,field:horses.map(h=>({no:h.no,name:h.name})),snapshot:history.at(-1),threshold:1.5,boundaries:null,slots:[['A'],['C'],['C']],type:'3連単',note:'A群を1着、C群を2・3着に選択'},'2026-11-15T06:25:00Z','demo-journal-plan')
+  const registration=createGroupRegistration({race,field:prediction.field,snapshot:history.at(-1)},'2026-11-15T06:24:00Z','demo-independent-registration')
+  storage.setItem(registrationKey(userId,race.raceDate),JSON.stringify([registration]))
   const result=createJournalResult({raceId:race.id,raceDate:race.raceDate,numbers:[1,3,5],payouts:[{type:'3連単',per100:12340}],source:'user-image',evidence:'架空の結果画像'},'2026-11-15T07:00:00Z','demo-journal-result')
   storage.setItem(journalKey(userId,race.raceDate),JSON.stringify({predictions:[prediction],results:[result]}))
   storage.setItem(`race-companion-cache:v1:${userId}:${raceDateISO(race)}:${race.id}`,JSON.stringify({race:{...race,horses},observations:[{

@@ -1,3 +1,4 @@
+import {createGroupRegistration} from '../src/groupRegistration.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {race,horses,demoSnapshots} from '../dev/fixtures.js'
@@ -14,7 +15,7 @@ test('all races remain visible without predictions and with missing results',()=
 })
 test('latest prediction per race is compared with its own frozen grouping and counted once',()=>{
  const first=create(),second=create('second-plan',{slots:[['A'],['B'],['C']]})
- const rows=racePredictionRows({raceDate:date,plans:[first,second],results:[result()]})
+ const rows=racePredictionRows({raceDate:date,plans:[first,second],results:[result()],registrations:[createGroupRegistration(first,at,'independent')]})
  assert.equal(rows.length,1);assert.equal(rows[0].plans.length,2);assert.equal(rows[0].view.hit,true);assert.equal(raceGroupTally(rows).count,1)
 })
 test('other dates cannot leak into comparisons or add a phantom race',()=>{

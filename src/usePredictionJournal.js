@@ -1,25 +1,30 @@
 import {useCallback,useEffect,useRef,useState} from 'react'
 import {readJournal,writeJournal,journalDate,mergeJournal} from './predictionJournal.js'
 import {fetchPredictionJournal,saveJournalRecord} from './cloudStore.js'
+import {readGroupRegistrations,writeGroupRegistrations,mergeGroupRegistrations} from './groupRegistration.js'
+import {saveGroupRegistration} from './cloudStore.js'
 const empty={predictions:[],results:[]}
 export function usePredictionJournal({userId,race,connected,revision}){
   const date=journalDate(race)
+  const [registrations,setRegistrations]=useState([])
   const [data,setData]=useState(empty),[remote,setRemote]=useState({receipts:{},legacy:[],official:[]}),[error,setError]=useState(''),[message,setMessage]=useState(''),[loading,setLoading]=useState(false),[busy,setBusy]=useState(false)
   const scope=useRef(''),active=`${userId}:${date}`,saving=useRef(false)
   const refresh=useCallback(async()=>{
     scope.current=active;setError('');setLoading(true)
     try{
       const local=readJournal(localStorage,userId,date)
-      if(scope.current===active)setData(local)
+      const localGroups=readGroupRegistrations(localStorage,userId,date)
+      if(scope.current===active){setData(local);setRegistrations(localGroups)}
       if(connected){
         const response=await fetchPredictionJournal(date)
         const merged=await writeJournal(localStorage,userId,date,mergeJournal(local,response))
-        if(scope.current===active){setData(merged);setRemote(response)}
+        const groups=await writeGroupRegistrations(localStorage,userId,date,response.registrations??[])
+        if(scope.current===active){setData(merged);setRegistrations(groups);setRemote(response)}
       }
     }catch(problem){if(scope.current===active)setError(problem.message)}
     finally{if(scope.current===active)setLoading(false)}
   },[userId,date,connected,active])
-  useEffect(()=>{setData(empty);setRemote({receipts:{},legacy:[],official:[]});refresh();return()=>{scope.current=''}},[refresh,revision])
+  useEffect(()=>{setData(empty);setRegistrations([]);setRemote({receipts:{},legacy:[],official:[]});refresh();return()=>{scope.current=''}},[refresh,revision])
   const save=async record=>{
     if(saving.current)throw new Error('保存処理中です。')
     saving.current=true;setBusy(true);setError('');setMessage('')
@@ -44,11 +49,24 @@ export function usePredictionJournal({userId,race,connected,revision}){
     }
     finally{saving.current=false;setBusy(false)}
   }
+  const registerGroups=async record=>{
+    if(saving.current)throw new Error('保存処理中です。')
+    saving.current=true;setBusy(true);setError('');setMessage('')
+    try{
+      mergeGroupRegistrations(readGroupRegistrations(localStorage,userId,date),[record])
+      const receipt=connected?await saveGroupRegistration(record):null
+      const groups=await writeGroupRegistrations(localStorage,userId,date,[record])
+      setRegistrations(groups)
+      if(receipt)setRemote(old=>({...old,receipts:{...old.receipts,[record.id]:receipt.receivedAt}}))
+      setMessage(connected?'グループをクラウドに登録し、結果・集計に反映しました。':'グループをこのブラウザに登録し、結果・集計に反映しました。')
+    }catch(problem){setError(`${problem.message} グループの登録は未完了です。設定は保持しています。`);throw problem}
+    finally{saving.current=false;setBusy(false)}
+  }
   const resend=async()=>{
     if(saving.current||!connected)return
     saving.current=true;setBusy(true);setError('')
-    try{for(const record of [...data.predictions,...data.results])await saveJournalRecord(record);await refresh();setMessage('保存済み記録をクラウドへ同期しました。')}
+    try{for(const record of registrations)await saveGroupRegistration(record);for(const record of [...data.predictions,...data.results])await saveJournalRecord(record);await refresh();setMessage('保存済み記録をクラウドへ同期しました。')}
     catch(problem){setError(problem.message)}finally{saving.current=false;setBusy(false)}
   }
-  return {data,remote,error,message,loading,busy,save,refresh,resend,connected}
+  return {data,registrations,registerGroups,remote,error,message,loading,busy,save,refresh,resend,connected}
 }

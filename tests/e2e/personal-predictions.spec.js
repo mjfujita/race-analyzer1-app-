@@ -31,7 +31,7 @@ test('selection-only exacta freezes groups and sync changes, then matches image 
  await page.getByRole('button',{name:'同期データを再読込（開発確認）'}).click();await save(page)
  const saved=page.getByRole('region',{name:'保存したグループ判断'});await expect(saved).toContainText('馬単 · 4点 · 対象 4頭')
  const first=(await journal(page)).predictions[0];expect(first.snapshot.odds[3]).toBe(8);expect(first.slots).toEqual([['B'],['A'],[]]);expect(first.budget).toBeUndefined()
- await enterResult(page,[3,1,5]);await expect(saved).toContainText('結果 B → A → C');await expect(saved).toContainText('買い目にあり')
+ await enterResult(page,[3,1,5]);await expect(saved).toContainText('グループ未登録');await expect(saved).toContainText('買い目にあり')
  const day=page.getByRole('table',{name:'予想と結果の組み合わせ'});await expect(day).toContainText('4,560円');await expect(day).toContainText('ユーザー画像')
  await page.reload();await expect(saved).toContainText('B勝ち・A2着を試す');await expect(saved).toContainText('買い目にあり')
  expect((await journal(page)).predictions[0]).toEqual(first)
@@ -55,8 +55,8 @@ test('result corrections retain original and update day tendency only once per r
  await page.getByText('結果を確認・訂正する',{exact:true}).click();await page.getByLabel('1着の馬番',{exact:true}).selectOption('1');await page.getByLabel('2着の馬番',{exact:true}).selectOption('3')
  await page.getByRole('button',{name:'訂正した結果を保存',exact:true}).click()
  const saved=page.getByRole('region',{name:'保存したグループ判断'});await expect(saved).toContainText('買い目になし');expect((await journal(page)).results).toHaveLength(2)
- await expect(page.getByRole('region',{name:'当日の予想・結果一覧'})).toContainText('照合できた1レース')
- await page.reload();await expect(saved).toContainText('結果 A → B → C')
+ await expect(page.getByRole('region',{name:'当日の予想・結果一覧'})).toContainText('照合できた0レース')
+ await page.reload();await expect(saved).toContainText('グループ未登録')
 })
 test('authenticated cloud journal restores on a second browser cache and rejects unauthorized writes',async({page})=>{
  const state='personal-connected-journal',ownerId=`synthetic-demo-${state}`,store=memoryStore(),service=createCompanionService({store,ownerId,now:()=>Date.parse('2026-11-15T06:25:00Z')})
@@ -78,7 +78,7 @@ test('corrupt journal remains intact, and missing odds blocks new predictions',a
 test('local preview shows image comparison and day totals without contacting cloud on desktop and mobile',async({page})=>{
  const calls=[];page.on('request',r=>{if(r.url().includes('/api/companion'))calls.push(r.url())})
  await page.goto('/market-preview.html?state=personal-results-local-review')
- const saved=page.getByRole('region',{name:'保存したグループ判断'});await expect(saved).toContainText('予想 A → C → C');await expect(saved).toContainText('結果 A → B → C')
+ const saved=page.getByRole('region',{name:'保存したグループ判断'});await expect(saved).toContainText('予想 A → C → C');await expect(saved).toContainText('A → B → C')
  await expect(page.getByRole('table',{name:'予想と結果の組み合わせ'})).toContainText('12,340円')
  await page.setViewportSize({width:1280,height:1000});await page.screenshot({path:'.qa/journal-desktop.png',fullPage:true})
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);await page.screenshot({path:'.qa/journal-mobile.png',fullPage:true});expect(calls).toEqual([])

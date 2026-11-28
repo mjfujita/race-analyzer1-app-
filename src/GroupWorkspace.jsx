@@ -1,3 +1,6 @@
+import {createGroupRegistration,latestGroupRegistration,readGroupRegistrations,registrationMatches} from './groupRegistration.js'
+import {journalDate} from './predictionJournal.js'
+import RegisteredGroupSummary from './RegisteredGroupSummary.jsx'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { groupOdds, formationTickets, compareGroupPlans, groupBudget, createGroupPlan, reviewGroupPlan, groupOutcome, groupReceiptVerified } from './groupAnalysis.js'
 import { ledgerScope, emptyLedger, readLedger, appendGroupPlan, writeLedgerExclusive, importLedger, exportLedger,
@@ -55,14 +58,17 @@ export default function GroupWorkspace(props) {
   return <Groups key={`${props.userId}:${props.race.raceDate}:${props.race.id}`} {...props} />
 }
 
-function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSyncLedger, onOpenAbility, review, syncedGroupReceipts, loading = false,groupDisplay,onGroupDisplayChange,personalOnly=false,onOpenPersonal,onOpenGroups }) {
+function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSyncLedger, onOpenAbility, review, syncedGroupReceipts, loading = false,groupDisplay,onGroupDisplayChange,personalOnly=false,onOpenPersonal,onOpenGroups,onOpenResults }) {
   const journal=usePredictionJournal({userId,race,connected:Boolean(onSyncLedger),revision:cloudRevision})
   const [data,setData] = useState(() => load(userId,race))
   const [initialGroup]=useState(()=>{
     const config=matchingGroupPreference(race,groupDisplay)
+    let registration=null
+    try{registration=latestGroupRegistration(readGroupRegistrations(localStorage,userId,journalDate(race)),race.id)}catch{/* The journal hook reports corrupt registration storage. */}
+    if(!config&&registration)return {snapshotId:registration.snapshot.id,threshold:registration.grouping.threshold,boundaries:registration.grouping.manual?registration.grouping.boundaries:null,excluded:[],registration,hasPreference:false}
     const snapshot=(!config?.followLatest&&data.history.find(s=>s.id===config?.snapshotId))||data.history[0]
     const grouping=displayGroups({race,field:horses,snapshot,preference:config})
-    return {snapshotId:config&&!config.followLatest&&snapshot?.id===config.snapshotId?config.snapshotId:'',threshold:grouping.threshold,
+    return {hasPreference:Boolean(config),registration,snapshotId:config&&!config.followLatest&&snapshot?.id===config.snapshotId?config.snapshotId:'',threshold:grouping.threshold,
       boundaries:grouping.manual?grouping.boundaries:null,excluded:Array.isArray(config?.excluded)?config.excluded.filter(no=>horses.some(h=>Number(h.no)===no)):[]}
   })
   const [ledger,setLedger] = useState(data.ledger)
@@ -93,7 +99,18 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   const composerHeading=useRef(null)
   useEffect(()=>{if(composerSource){composerHeading.current?.focus({preventScroll:true});window.scrollTo({top:0,behavior:'instant'})}},[composerSource])
   const recordsHeading = useRef(null)
-  const current = data.history.find(s => s.id === snapshotId) ?? data.history[0]
+  const registered=latestGroupRegistration(journal.registrations,race.id)
+  const [restoredRegistration,setRestoredRegistration]=useState(initialGroup.registration??null)
+  const classificationTouched=useRef(false),registrationAttempt=useRef(null)
+  // Restore cloud registrations only before the user starts editing this race.
+  useEffect(()=>{
+    if(registered&&!initialGroup.hasPreference&&!classificationTouched.current){
+      setSnapshotId(registered.snapshot.id);setThreshold(String(registered.grouping.threshold));setBoundaries(registered.grouping.manual?registered.grouping.boundaries:null);setRestoredRegistration(registered)
+    }
+  },[registered,initialGroup.hasPreference])
+  const savedObservation=registered?.snapshot.id===snapshotId?registered.snapshot:restoredRegistration?.snapshot.id===snapshotId?restoredRegistration.snapshot:null
+  const observations=savedObservation&&!data.history.some(s=>s.id===savedObservation.id)?[savedObservation,...data.history]:data.history
+  const current = observations.find(s => s.id === snapshotId) ?? data.history[0]
   const field = useMemo(() => horses.map(h => ({ no:Number(h.no), name:h.name ?? '', ...(h.frameNo ? { frameNo:h.frameNo } : {}),
     ...(h.cancelled ? { cancelled:true } : {}), evidence:evidence(h,statistics.find(s => Number(s.horse_no) === Number(h.no)),race) })),[horses,statistics,race])
   const analysis = useMemo(() => {
@@ -174,7 +191,19 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
     if(!personalOnly&&onOpenPersonal)onOpenPersonal()
     requestAnimationFrame(()=>window.scrollTo({top:0,behavior:'instant'}))
   }
+  async function registerClassification(){
+    setError('')
+    try{
+      const input={race,field,snapshot:current,threshold:Number(threshold),boundaries,replacesId:registered?.id??null,
+        probabilities:{groups:summarizeGroupProbabilities(grouping,ace),asOf:ace.boundary??null,horses:ace.rows.map(h=>({no:h.no,name:h.name,...Object.fromEntries(['win','second','third','top3'].map(k=>[k,h.probabilities?.[k]??null]))}))}}
+      const signature=JSON.stringify(input),attempt=registrationAttempt.current
+      const record=attempt?.signature===signature?attempt.record:createGroupRegistration(input)
+      registrationAttempt.current={signature,record}
+      await journal.registerGroups(record);setRestoredRegistration(record);classificationTouched.current=true;registrationAttempt.current=null
+    }catch(problem){setError(problem.message)}
+  }
   function changeObservation(id) {
+    classificationTouched.current=true
     setSnapshotId(id===data.history[0]?.id?'':id); setBoundaries(null); setSlotChoice(null); setOverrides({}); setQuoteText(''); setQuoteObservedAt(''); setQuoteRetrievedAt(null)
   }
   function openHorse(no,event){
@@ -207,8 +236,9 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
     <div className="rca-page-title"><div><h1>{personalOnly||composerSource?'私の予想':'グループ・買い目比較'}</h1><p>{personalOnly||composerSource?'選んだグループと買い目を残し、着順・確定払戻と照合します。':'人気のまとまりと能力を確認し、着順を変えた案を比較します。'}</p></div>{onOpenAbility && <button className="rca-secondary" onClick={onOpenAbility}>能力・適性を詳しく見る</button>}</div>
     {loading && <p role="status" className="rca-notice">保存済みデータを読み込み中です。</p>}
     {(error || data.error) && <p role="alert" className="rca-error">{error || data.error}</p>}{message && <p role="status" className="rca-notice">{message}</p>}
+    {!personalOnly&&journal.error&&<p role="alert" className="rca-error">{journal.error}</p>}{!personalOnly&&journal.message&&<p role="status" className="rca-notice">{journal.message}</p>}
     {!personalOnly&&!composerSource&&onOpenPersonal&&<div><button className="rca-secondary" onClick={onOpenPersonal}>私の予想を開く</button></div>}
-    {personalOnly&&!composerSource&&<PredictionJournalPanel journal={journal} race={race} field={field} legacy={ledger.groupPlans??[]} cloud={data.cloud} hasComposer={Boolean(composerSource)} />}
+    {personalOnly&&!composerSource&&<PredictionJournalPanel journal={journal} race={race} field={field} legacy={ledger.groupPlans??[]} cloud={data.cloud} hasComposer={Boolean(composerSource)} onOpenGroups={onOpenGroups} />}
     {personalOnly && !composerSource && <section className="rca-panel"><h2>{personalSaved?'新しい予想を追加':'自分で選んだ買い目を残す'}</h2><p className="rca-muted">まずグループを確認し、券種と買い方を選びます。選択は空欄から始まります。</p>
       {!personalSaved&&<div className="rca-group-cards my-4">{grouping?.groups.map(g=><div className="rca-group-card" key={g.label}><strong>{g.label}</strong><p>{g.horses.filter(h=>!excluded.includes(h.no)).map(h=>`${h.no} ${h.name}`).join(' ／ ') || '候補なし'}</p><GroupProbabilitySummary summary={groupProbabilities.find(s=>s.label===g.label)} /></div>)}</div>}
       {!current || !grouping?.complete ? <p className="rca-notice">全頭の単勝オッズの取得待ちです。データの同期後に登録できます。</p> : <p className="rca-muted">観測 {formatRaceTime(current.observedAt)} ／ 取得 {formatRaceTime(current.retrievedAt)}。この観測とグループを基準に入力します。</p>}
@@ -218,9 +248,9 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
     </section>}
     {composerSource&&<><div ref={composerHeading} tabIndex={-1}><PersonalGroupComposer source={composerSource} disabled={Boolean(data.error) || field.some(h=>h.cancelled)} busy={journal.busy} onSave={savePersonal} /></div><div><button className="rca-secondary" disabled={busy} onClick={()=>setComposerSource(null)}>入力をやめて戻る</button></div></>}
     {!personalOnly && !composerSource && <><section className="rca-panel"><h2>１ · 単勝オッズでグループを作る</h2><div className="rca-group-controls">
-      <label>観測時点<select className={control} value={current?.id ?? ''} onChange={e => changeObservation(e.target.value)}>{data.history.map(s => <option key={s.id} value={s.id}>{formatRaceTime(s.observedAt)} · 取得 {formatRaceTime(s.retrievedAt)}</option>)}</select></label>
-      <label>自動で区切る倍率<input className={control} type="number" min="1.1" max="5" step="0.1" value={threshold} onChange={e => { setThreshold(e.target.value); setBoundaries(null); setSlotChoice(null); setOverrides({}) }} /></label>
-      <button className="rca-secondary" onClick={() => { setBoundaries(null); setSlotChoice(null); setOverrides({}) }}>自動案に戻す</button>
+      <label>観測時点<select className={control} value={current?.id ?? ''} onChange={e => changeObservation(e.target.value)}>{observations.map(s => <option key={s.id} value={s.id}>{formatRaceTime(s.observedAt)} · 取得 {formatRaceTime(s.retrievedAt)}</option>)}</select></label>
+      <label>自動で区切る倍率<input className={control} type="number" min="1.1" max="5" step="0.1" value={threshold} onChange={e => { classificationTouched.current=true;setThreshold(e.target.value); setBoundaries(null); setSlotChoice(null); setOverrides({}) }} /></label>
+      <button className="rca-secondary" onClick={() => { classificationTouched.current=true;setBoundaries(null); setSlotChoice(null); setOverrides({}) }}>自動案に戻す</button>
     </div>
     {current&&current.id!==data.history[0]?.id&&<div role="status" className="rca-notice">新しい観測があります。<button className="rca-secondary ml-2" onClick={()=>changeObservation(data.history[0].id)}>最新の観測を表示</button></div>}
     {current&&!timing.eligible&&<span className="rca-pill">過去検証</span>}
@@ -231,8 +261,13 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <div className="rca-group-cards rca-group-prediction-cards">{grouping.groups.map(g=><GroupPredictionCard key={g.label} group={g} summary={groupProbabilities.find(s=>s.label===g.label)} assessments={ace.rows} returnUsable={ace.current?.id===current?.id} onOpen={openHorse} type={quickType} slots={quickSlots} ticketCount={quickTickets.length} onReview={()=>startPersonal({type:quickType,slots:quickSlots})} disabled={disabled||loading} onToggle={(position,label)=>setQuickChoice({basis:quickBasis,slots:quickSlots.map((slot,i)=>i===position?toggle(slot,label):slot)})} />)}</div>
       <section className="rca-card-prediction" aria-label="カードから選択した予想"><h3>予想に追加したグループ</h3><GroupSelectionNumbers grouping={grouping} slots={quickSlots} type={quickType} excluded={excluded} /><p aria-live="polite">{quickTickets.length}点</p><div className="flex flex-wrap gap-3"><button type="button" className="rca-primary" disabled={disabled||loading||!quickTickets.length} onClick={()=>startPersonal({type:quickType,slots:quickSlots})}>選択した内容で予想を入力</button><button type="button" className="rca-secondary" onClick={()=>setQuickChoice(null)}>選択を解除</button></div></section>
       {!grouping.complete && <p role="alert" className="rca-error">オッズ未取得：{grouping.missing.join('・')}番。全頭が揃うまで保存を保留します。</p>}
+      <section className="rca-registration-panel" aria-label="グループの独立登録"><h3>結果に使うグループを登録</h3><p>全出走馬の所属を保存します。1〜3着の予想・買い目の登録とは別です。</p>
+        <p aria-live="polite">{journal.loading?'登録グループを読み込み中…':registrationMatches(registered,current,grouping)?'表示中のグループは登録済みです。':registered?'変更は未登録です。結果には前回の登録を使っています。':'グループはまだ登録されていません。'}</p>
+        <div className="flex flex-wrap gap-3"><button type="button" className="rca-primary" disabled={journal.loading||journal.busy||loading||Boolean(data.error)||Boolean(journal.error)||!grouping.complete||field.some(h=>h.cancelled)||registrationMatches(registered,current,grouping)} onClick={registerClassification}>{journal.busy?'登録中…':registered?'グループ登録を更新':'グループを登録'}</button>{onOpenResults&&<button type="button" className="rca-secondary" onClick={onOpenResults}>登録グループの結果を見る</button>}{journal.error&&<button type="button" className="rca-secondary" disabled={journal.loading||journal.busy} onClick={()=>{setError('');journal.refresh()}}>登録状態を再読込</button>}</div>
+        {registered&&<RegisteredGroupSummary registration={registered} history={journal.registrations.filter(r=>r.race.id===String(race.id))}/>}
+      </section>
       <h3 className="mt-6">グループをカスタマイズ</h3><div className="overflow-x-auto"><table className="rca-list-table rca-group-customize" aria-label="グループのカスタマイズ"><colgroup><col className="rca-cut-column"/><col/><col className="rca-odds-column"/><col className="rca-include-column"/></colgroup><thead><tr>{['区切り','群・馬番・馬名','単勝','候補'].map(t => <th key={t}>{t}</th>)}</tr></thead><tbody>{grouping.groups.flatMap(g => g.horses).map((h,i,rows) => <tr key={h.no}>
-        <td><input type="checkbox" aria-label={`${h.no}番の前で区切る`} disabled={i === 0 || h.odds === rows[i-1]?.odds} checked={grouping.boundaries.includes(h.no)} onChange={() => { setBoundaries(toggle(grouping.boundaries,h.no)); setSlotChoice(null); setOverrides({}) }} /></td>
+        <td><input type="checkbox" aria-label={`${h.no}番の前で区切る`} disabled={i === 0 || h.odds === rows[i-1]?.odds} checked={grouping.boundaries.includes(h.no)} onChange={() => { classificationTouched.current=true;setBoundaries(toggle(grouping.boundaries,h.no)); setSlotChoice(null); setOverrides({}) }} /></td>
         <th scope="row"><span className="rca-pill">{grouping.membership[h.no]}</span> <button type="button" className="rca-horse-name" aria-label={`${h.no}番 ${h.name}の詳細`} onClick={event=>openHorse(h.no,event)}>{h.no} {h.name}</button></th>
         <td>{h.odds.toFixed(1)}倍</td>
         <td><input type="checkbox" aria-label={`${h.no}番を候補に含める`} checked={!excluded.includes(h.no)} onChange={() => { setExcluded(toggle(excluded,h.no)); setOverrides({}) }} /></td>

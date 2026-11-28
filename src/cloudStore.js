@@ -126,3 +126,7 @@ export function fetchPredictionJournal(raceDate,signal){
 export function saveJournalRecord(record){
   return request('/api/companion',{signal:AbortSignal.timeout(20000),body:{action:'save-journal',record}})
 }
+
+export function saveGroupRegistration(record){
+  return request('/api/companion',{signal:AbortSignal.timeout(20000),body:{action:'save-groups',record}})
+}

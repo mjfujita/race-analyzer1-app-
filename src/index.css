@@ -237,3 +237,8 @@ button:disabled { cursor: not-allowed; }
 .rca-result-comparison>section{min-width:0;background:#f4f8fd;border:1px solid #dce5ef;border-radius:12px;padding:14px;overflow-wrap:anywhere}
 .rca-result-comparison h3{color:#627d99;font-size:12px;margin-bottom:8px}
 @media(max-width:400px){.rca-result-comparison{gap:8px}.rca-result-comparison>section{padding:10px}.rca-result-comparison strong{font-size:13px}}
+
+.rca-registration-panel { margin: 1.25rem 0; padding: 1rem; background: #edf5fd; border: 1px solid #c4d9eb; border-radius: 14px; }
+.rca-registered-summary { margin: .75rem 0; font-weight: normal; overflow-wrap: anywhere; }
+.rca-registered-summary p { margin: .35rem 0; }
+.rca-registered-summary details { margin: .65rem 0; }

@@ -8,6 +8,8 @@ import { decisionCutoff, japanRaceDay, raceDateISO, raceTimestamp, snapshotTimin
 import {summarizeRaceResult} from '../src/raceProgress.js'
 import {validatePrediction,validateJournalResult,mergeJournal,latestResult,legacyPrediction,officialJournalResult} from '../src/predictionJournal.js'
 
+import {validateGroupRegistration,mergeGroupRegistrations,latestGroupRegistration} from '../src/groupRegistration.js'
+
 export const MAX_BODY_BYTES = 3_000_000
 const MAX_RACE_FILES = 2000
 const COMMAND_TTL = 5 * 60_000
@@ -517,6 +519,42 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       .map(row => validateRaceKey(row.name.slice(0, -5), raceDate))))
     return { schemaVersion: 1, races: races.flat() }
   }
+  async function getGroupRegistrations(raceDate){
+    const rows=await list(`${prefix}/group-registrations/${raceDate}/records`,{limit:1000,complete:true}),records=[],receipts={}
+    await forEachBounded(rows,4,async row=>{
+      const stored=await store.get(row.path)
+      if(stored?.ownerId!==ownerId||!validTimestamp(stored.receivedAt))conflict('グループ登録の保存内容を確認できません。')
+      try{validateGroupRegistration(stored.record)}catch{conflict('グループ登録の保存内容を確認できません。')}
+      if(stored.record.race.raceDate!==raceDate)conflict('グループ登録の開催日が一致しません。')
+      records.push(stored.record);receipts[stored.record.id]=stored.receivedAt
+    })
+    return {registrations:mergeGroupRegistrations([],records),receipts}
+  }
+  async function saveGroupRegistration(record){
+    boundedJson(record)
+    try{validateGroupRegistration(record)}catch(error){invalid(error.message)}
+    const {id:raceId,raceDate}=record.race
+    validateRaceKey(raceId,raceDate);checkTime(record.createdAt,now(),'登録日時')
+    const base=`${prefix}/group-registrations/${raceDate}`,path=`${base}/records/${keyHash(record.id)}.json`
+    const before=await store.get(path)
+    if(before){if(before.ownerId!==ownerId||contentHash(before.record)!==contentHash(record))conflict('同じIDのグループ登録は変更できません。');return {ok:true,receivedAt:before.receivedAt}}
+    const [metaRow]=await list(`${racePrefix(raceId,raceDate)}/observations`,{limit:1,order:'desc',column:'created_at'})
+    const meta=metaRow?await store.get(metaRow.path):null
+    if(!meta?.race?.race?.horses?.length)invalid('先にこのレースのデータを同期してください。')
+    if(meta.ownerId!==ownerId||meta.race.raceId!==raceId||meta.race.raceDate!==raceDate)conflict('観測の保存範囲が一致しません。')
+    const field=meta.race.race.horses
+    if(record.field.length!==field.length||field.some(h=>h.cancelled)||record.field.some(h=>!field.some(f=>Number(f.no)===h.no&&f.name===h.name)))invalid('同期済みの出走馬と一致しません。')
+    const stored=await store.get(`${racePrefix(raceId,raceDate)}/snapshot-ids/${keyHash(record.snapshot.id)}.json`)
+    if(!stored||['id','kind','raceId','raceDate','observedAt','retrievedAt','odds'].some(key=>contentHash(stored[key])!==contentHash(record.snapshot[key]))
+      ||record.race.postTime!==meta.race.race.postTime)invalid('同期済みの観測・発走時刻と一致しません。')
+    const {registrations}=await getGroupRegistrations(raceDate),current=latestGroupRegistration(registrations,raceId)
+    if((current?.id??null)!==record.replacesId)conflict('グループが更新されています。再読込してから登録してください。')
+    try{mergeGroupRegistrations(registrations,[record])}catch(error){invalid(error.message)}
+    await immutable(`${base}/links/${keyHash(`${raceId}:${record.replacesId??'first'}`)}.json`,{id:record.id,hash:contentHash(record)})
+    const receivedAt=new Date(now()).toISOString(),created=await store.putImmutable(path,{ownerId,record,receivedAt})
+    if(!created.created){if(contentHash(created.existing.record)!==contentHash(record))conflict('同じIDに異なる登録があります。');return {ok:true,receivedAt:created.existing.receivedAt}}
+    return {ok:true,receivedAt}
+  }
   async function getPredictionJournal({raceDate}) {
     validateRaceKey('day',raceDate)
     const journal={predictions:[],results:[],receipts:{},legacy:[],official:[],races:[]}
@@ -547,7 +585,8 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
         if(stored.record.decision==='plan')journal.legacy.push(legacyPrediction(stored.record))
       }
     })
-    return {...journal,...merged}
+    const groups=await getGroupRegistrations(raceDate)
+    return {...journal,...merged,registrations:groups.registrations,receipts:{...journal.receipts,...groups.receipts}}
   }
   async function saveJournalRecord(record){
     boundedJson(record)
@@ -587,7 +626,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     if(!created.created){if(contentHash(created.existing.record)!==contentHash(record))conflict('同じIDに異なる内容があります。');return {ok:true,receivedAt:created.existing.receivedAt}}
     return {ok:true,receivedAt}
   }
-  return { getPredictionJournal, saveJournalRecord, ingestBundle, get, getDashboard, getCatalog, getRaceProgress, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand, getCaptureRequest }
+  return { getPredictionJournal, saveJournalRecord, saveGroupRegistration, ingestBundle, get, getDashboard, getCatalog, getRaceProgress, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand, getCaptureRequest }
 }
 
 export function safeTokenEqual(left, right) {
@@ -662,6 +701,10 @@ export function createCompanionHandler({ service, authenticateUser, ownerId, com
           return res.status(200).json(await service.acknowledgeCommand(body))
         }
         return res.status(200).json(await service.ingestBundle(body))
+      }
+      if(body?.action==='save-groups'){
+        if(Object.keys(body).some(key=>!['action','record'].includes(key)))invalid('グループの保存条件が不正です。')
+        return res.status(200).json(await service.saveGroupRegistration(body.record))
       }
       if(body?.action==='save-journal'){
         if(Object.keys(body).some(key=>!['action','record'].includes(key)))invalid('保存条件が不正です。')
