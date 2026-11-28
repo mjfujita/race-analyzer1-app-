@@ -31,6 +31,25 @@ test('missing IDM, duplicate horse and incomplete official fields cannot create 
   }
 })
 
+test('a complete original field with an explicit withdrawal uses the remaining runners without changing the model',()=>{
+  for(const flag of ['cancelled','scratched']){
+    const withdrawn={no:3,name:'取消馬',idm:null,[flag]:true}
+    const result=buildAbilityField({horses:[...horses,withdrawn],statistics,race:{...race,fieldSize:3}})
+    const active=buildAbilityField({horses,statistics,race})
+    assert.equal(result.complete,true);assert.deepEqual(result.field,active.field);assert.deepEqual(result.model,active.model)
+  }
+})
+
+test('withdrawals never hide a missing runner, duplicate original field or conflicting explicit active count',()=>{
+  const withdrawn={no:3,name:'取消馬',cancelled:true}
+  for(const options of [
+    {horses:[...horses,withdrawn],statistics,race:{...race,fieldSize:4}},
+    {horses:[...horses,{...withdrawn,no:2}],statistics,race:{...race,fieldSize:3}},
+    {horses:[...horses,withdrawn],statistics,race:{...race,fieldSize:3,activeFieldSize:3}},
+    {horses:[horses[0],withdrawn],statistics,race:{...race,fieldSize:3}},
+  ])assert.equal(buildAbilityField(options).complete,false)
+})
+
 test('learned temperature is date gated and never promoted from research by imported labels', () => {
   const model = { schemaVersion: 1, modelType: 'idm-temperature', id: 'fixture', temperature: 4,
     trainedThrough: '2026-11-14', status: 'guaranteed' }

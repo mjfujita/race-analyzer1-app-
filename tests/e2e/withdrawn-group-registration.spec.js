@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test'
-import {race,horses,demoSnapshots} from '../../dev/fixtures.js'
+import {race,aceHorses as horses,demoSnapshots} from '../../dev/fixtures.js'
 import {createCompanionService,createCompanionHandler} from '../../server/companion.js'
 import {memoryStore,request} from '../fixtures/companion.js'
 
@@ -18,12 +18,18 @@ test('groups of active runners can be registered with a withdrawn horse and rest
  const panel=page.getByRole('region',{name:'グループの独立登録'})
  await expect(panel).toContainText('取消馬を除く7頭のグループを登録します。')
  await expect(page.getByRole('checkbox',{name:'7番を候補に含める',exact:true})).toHaveCount(0)
+ const probability=page.getByRole('region',{name:'A群の推定確率',exact:true})
+ await expect(probability).toContainText('推定1着確率')
+ await expect(probability.getByRole('definition').first()).toHaveText(/^\d+\.\d%$/)
+ await expect(probability).not.toContainText('判定保留')
  await expect(panel.getByRole('button',{name:'グループを登録',exact:true})).toBeEnabled()
  await panel.getByRole('button',{name:'グループを登録',exact:true}).click()
  await expect(panel.getByRole('button',{name:'グループ登録済み',exact:true})).toBeVisible()
  const saved=(await service.getPredictionJournal({raceDate:race.raceDate})).registrations[0]
  expect(saved.field).toHaveLength(7);expect(saved.field.some(h=>h.no===7)).toBe(false)
  expect(saved.probabilities.horses.some(h=>h.no===7)).toBe(false);expect(saved.grouping.membership[7]).toBeUndefined()
+ expect(saved.probabilities.groups.every(g=>g.status==='ready')).toBe(true)
+ for(const key of ['win','second','third'])expect(saved.probabilities.groups.reduce((sum,g)=>sum+g[key],0)).toBeCloseTo(1,10)
  await page.reload();await expect(panel).toContainText('表示中のグループは登録済みです。')
  await page.getByRole('checkbox',{name:'3番の前で区切る',exact:true}).uncheck()
  await panel.getByRole('button',{name:'グループ登録を更新',exact:true}).click()

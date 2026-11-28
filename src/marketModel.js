@@ -54,7 +54,14 @@ export function isSupportedAbilityModel(model) {
 export function buildAbilityField({ horses = [], statistics = [], race = {}, model = null } = {}) {
   const issues = []
   const active = horses.filter(horse => !horse.cancelled && !horse.scratched)
-  const expected = Number(race.activeFieldSize ?? race.fieldSize)
+  const declared = Number(race.fieldSize)
+  const listed = horses.map(horse => Number(horse.no))
+  // PACI can retain the pre-withdrawal count. Infer the remaining count only
+  // when the complete, unique original field and explicit withdrawals exist.
+  // Missing runners alone must never make an incomplete field look complete.
+  const fullOriginalField = Number.isInteger(declared) && declared >= 2 && declared <= 18 && declared === horses.length
+    && new Set(listed).size === declared && listed.every(no => Number.isInteger(no) && no >= 1 && no <= 18)
+  const expected = Number(race.activeFieldSize ?? (fullOriginalField && active.length < horses.length ? active.length : race.fieldSize))
   const numbers = active.map(horse => Number(horse.no))
   if (!Number.isInteger(expected) || expected < 2 || expected !== active.length) issues.push('正式な出走頭数と取得済み全頭が一致していません。')
   if (active.length < 2 || active.length > 18 || new Set(numbers).size !== numbers.length

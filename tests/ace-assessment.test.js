@@ -67,6 +67,17 @@ test('missing field, no history, new horses and cancellations hold axis judgment
   assert.equal(cancelled.rows[0].probabilities,null)
 })
 
+test('a verified withdrawal preserves complete active horse probabilities and normalized ordered outcomes',()=>{
+  const withdrawnField=field.map(h=>h.no===8?{...h,cancelled:true}:h)
+  const report=build({horses:withdrawnField})
+  assert.equal(report.rows.find(h=>h.no===8).probabilities,null)
+  const active=report.rows.filter(h=>h.role!=='出走対象外')
+  assert.equal(active.length,7);assert.ok(active.every(h=>h.probabilities))
+  for(const position of ['win','second','third'])assert.ok(Math.abs(active.reduce((sum,h)=>sum+h.probabilities[position],0)-1)<1e-10)
+  assert.ok(report.outcomes.every(o=>!o.order.includes(8)))
+  assert.deepEqual(report.outcomes,build({horses:withdrawnField,race:{...race,activeFieldSize:7}}).outcomes)
+})
+
 test('time-proven TYB is examined per horse without mixing a late record or another horse comment',()=>{
   const tyb={raceId:race.id,raceDate:race.raceDate,horseNo:1,paddockIndex:3,horseWeight:490,horseWeightDelta:10,
     retrievedAt:'2026-11-15T06:24:00Z',observedAt:'2026-11-15T06:24:00Z',sourcePublishedAt:'2026-11-15T06:24:00Z'}
