@@ -197,3 +197,22 @@ button:disabled { cursor: not-allowed; }
 .rca-groups .rca-group-customize th,.rca-groups .rca-group-customize td { padding:8px 4px; font-size:12px; overflow-wrap:anywhere; }
 .rca-group-customize .rca-horse-name { max-width:100%; font-size:13px; }
 .rca-group-customize .rca-pill { display:inline-flex; padding:2px 6px; font-size:11px; }
+
+.rca-personal-review { min-width:0; margin-top:16px; }
+.rca-personal-patterns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.rca-personal-patterns>div { min-width:0; padding:16px; border:1px solid #cfe0ef; border-radius:12px; background:#f1f7fd; }
+.rca-personal-patterns h3 { margin:0 0 8px; font-size:14px; color:#526d88; }
+.rca-personal-patterns p { font-size:24px; font-weight:800; color:#0b2545; overflow-wrap:anywhere; }
+.rca-personal-position-list { display:grid; gap:12px; margin:16px 0; }
+.rca-personal-position-list article { display:grid; grid-template-columns:48px repeat(2,minmax(0,1fr)); gap:12px; padding:14px; border:1px solid #dce5ef; border-radius:12px; }
+.rca-personal-position-list article>div { min-width:0; overflow-wrap:anywhere; }
+.rca-personal-position-list strong { display:block; margin:4px 0; }
+.rca-personal-position-list h3 { font-size:15px; margin:0; }
+.rca-personal-match { color:#166534; background:#ecfdf5; }
+.rca-personal-miss { color:#9a3412; background:#fff7ed; }
+.rca-personal-frozen-groups>div { margin:10px 0; padding:12px; background:#f8fafc; border-radius:8px; overflow-wrap:anywhere; }
+@media(max-width:520px) {
+  .rca-personal-patterns { grid-template-columns:1fr; }
+  .rca-personal-position-list article { grid-template-columns:1fr 1fr; gap:8px; }
+  .rca-personal-position-list article>h3 { grid-column:1/-1; }
+}

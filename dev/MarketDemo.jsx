@@ -11,6 +11,7 @@ import CaptureControls from '../src/CaptureControls.jsx'
 import { oddsStorageKey } from '../src/oddsHistory.js'
 import { syncLedgerToCloud } from '../src/cloudStore.js'
 import { useCompanion } from '../src/useCompanion.js'
+import { seedPersonalResultFixture } from './personalResultFixture.js'
 import { race, horses, statistics, assessmentHorses, aceHorses, assessmentStatistics, earlierRaces, demoSnapshots } from './fixtures.js'
 
 const state = import.meta.env.MODE === 'phone-review' ? 'groups-local-review' : new URLSearchParams(location.search).get('state') ?? 'normal'
@@ -25,6 +26,7 @@ if (import.meta.env.MODE === 'phone-review' && !globalThis.crypto.randomUUID) {
   }
 }
 const userId = `synthetic-demo-${state}`
+if(state==='personal-results-local-review')seedPersonalResultFixture(localStorage,userId)
 const useAssessmentFixture = state.startsWith('ace') || state === 'groups-local-review'
 const connected = state === 'connected-test' || state.startsWith('groups-connected') || state.startsWith('personal-connected')
 if (!connected && state !== 'empty' && !localStorage.getItem(oddsStorageKey(userId, race))) {
