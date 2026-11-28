@@ -55,8 +55,8 @@ function Demo() {
         loading={connected ? sync.loading : state === 'review-loading'}
         error={connected ? sync.error : state === 'review-error' ? '同期を完了できませんでした。' : null}
         onRefresh={connected ? refresh : undefined} />}
-      {tab === 'results'&&<RaceResultsWorkspace {...props} race={selectedResultRace} availableRaces={state==='results-local-review'?resultDemoRaces:sync.data?.availableRaces??[race]} onOpenRace={next=>setSelectedResultRace(next)} onOpenPersonal={()=>setTab('personal')}/>}
-      {tab === 'groups' && <GroupWorkspace {...props} onOpenPersonal={()=>setTab('personal')} />}{tab === 'personal' && <GroupWorkspace {...props} personalOnly onOpenGroups={()=>setTab('groups')} />}{tab === 'anchors' && <FinalForecastPage {...props} anchorMode />}{tab === 'ability' && <AbilityPage {...props} />}{tab === 'pace' && <PacePage {...props} />}{tab === 'odds' && <WinOddsPage {...props} />}{tab === 'final' && <FinalForecastPage {...props} />}
+      {tab === 'results'&&<RaceResultsWorkspace onOpenGroups={()=>setTab('groups')} {...props} race={selectedResultRace} availableRaces={state==='results-local-review'?resultDemoRaces:sync.data?.availableRaces??[race]} onOpenRace={next=>setSelectedResultRace(next)} onOpenPersonal={()=>setTab('personal')}/>}
+      {tab === 'groups' && <GroupWorkspace {...props} onOpenResults={()=>setTab('results')} onOpenPersonal={()=>setTab('personal')} />}{tab === 'personal' && <GroupWorkspace {...props} personalOnly onOpenGroups={()=>setTab('groups')} />}{tab === 'anchors' && <FinalForecastPage {...props} anchorMode />}{tab === 'ability' && <AbilityPage {...props} />}{tab === 'pace' && <PacePage {...props} />}{tab === 'odds' && <WinOddsPage {...props} />}{tab === 'final' && <FinalForecastPage {...props} />}
     </main>
   </div>
 }

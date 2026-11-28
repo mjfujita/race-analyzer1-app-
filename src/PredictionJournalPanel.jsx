@@ -1,3 +1,5 @@
+import {latestGroupRegistration,reviewRegisteredGroups} from './groupRegistration.js'
+import RegisteredGroupSummary,{RegisteredResult} from './RegisteredGroupSummary.jsx'
 import {useState} from 'react'
 import {createJournalResult,journalDate,latestResult,reviewPrediction,resolvedResult,officialJournalResult} from './predictionJournal.js'
 import {formatRaceTime,raceTimestamp} from './raceTime.js'
@@ -8,23 +10,24 @@ import GroupProbabilitySummary from './GroupProbabilitySummary.jsx'
 const yen=p=>p===null?'未登録':`${p.toLocaleString('ja-JP')}円`
 const control='rounded-lg border border-slate-300 bg-white px-3 py-2 max-w-full'
 
-export default function PredictionJournalPanel({journal,race,field,legacy=[],cloud,hasComposer=false,availableRaces=[],onOpenRace}){
+export default function PredictionJournalPanel({journal,race,field,legacy=[],cloud,hasComposer=false,availableRaces=[],onOpenRace,onOpenGroups}){
   const [selected,setSelected]=useState('')
   const plans=journalPlans(journal,legacy)
   const current=plans.filter(p=>p.race.id===String(race.id)),plan=current.find(p=>p.id===selected)??current.at(-1)
   const officialFor=id=>id===String(race.id)?officialJournalResult(race,cloud?.observations)??journal.remote.official?.find(r=>r.raceId===id):journal.remote.official?.find(r=>r.raceId===id)
   const resultFor=id=>resolvedResult(latestResult(journal.data.results,id),officialFor(id))
   const result=resultFor(String(race.id)),view=plan?reviewPrediction(plan,result):null
+  const registration=latestGroupRegistration(journal.registrations,String(race.id)),groupResult=reviewRegisteredGroups(registration,result)
   const confirmed=plan&&journal.remote.receipts[plan.id]
   const preRace=confirmed&&Date.parse(confirmed)>=Date.parse(plan.createdAt)&&Date.parse(confirmed)<Date.parse(raceTimestamp(plan.race,plan.race.postTime))
   return <div className="rca-stack">
     {journal.loading&&<p role="status" className="rca-notice">当日の予想・結果を読み込み中です。</p>}
     {journal.error&&<p role="alert" className="rca-error">{journal.error}</p>}{journal.message&&<p role="status" className="rca-notice">{journal.message}</p>}
-    {!hasComposer&&<section className="rca-panel" aria-label="保存したグループ判断"><h2>私の予想・結果</h2>
-      {!plan?<div className="rca-result-comparison" role="group" aria-label="このレースの予想と結果"><section aria-label="保存した予想"><h3>予想</h3><p>このレースの予想はまだ登録されていません。</p></section><section aria-label="このレースの結果"><h3>結果</h3><strong>{result?.numbers.join(' → ')??'結果待ち'}</strong>{result?.status==='held'&&<p>照合保留</p>}</section></div>:<>
+    {!hasComposer&&<section className="rca-panel" aria-label="保存したグループ判断"><h2>私の予想・結果</h2><RegisteredGroupSummary registration={registration} history={(journal.registrations??[]).filter(r=>r.race.id===String(race.id))} onOpenGroups={onOpenGroups}/>
+      {!plan?<div className="rca-result-comparison" role="group" aria-label="このレースの予想と結果"><section aria-label="保存した予想"><h3>予想（保存時）</h3><p>このレースの予想はまだ登録されていません。</p></section><section aria-label="このレースの結果"><h3>結果（登録グループ）</h3><strong>{result?.numbers.join(' → ')??'結果待ち'}</strong><div><RegisteredResult review={groupResult}/></div>{result?.status==='held'&&<p>照合保留</p>}</section></div>:<>
         <label>保存記録<select className={control} value={plan.id} onChange={e=>setSelected(e.target.value)}>{current.map(p=><option key={p.id} value={p.id}>{formatRaceTime(p.createdAt)} · {p.type}</option>)}</select></label>
         <p>{plan.type} · {view.pointCount}点 · 対象 {view.uniqueHorses}頭</p>
-        <div className="rca-result-comparison" role="group" aria-label="このレースの予想と結果"><section aria-label="保存した予想"><h3>予想</h3><strong>予想 {view.pattern}</strong><p>{view.positions.map(p=>p.horses.map(h=>h.no).join('・')).join(plan.type==='3連複'?' − ':' → ')}</p></section><section aria-label="このレースの結果"><h3>結果</h3><strong>結果 {view.resultGroups?.join(' → ')??(view.state==='held'?'照合保留':'結果待ち')}</strong><p>{result?.numbers.join(' → ')??'着順未取得'}</p>{view.state==='ready'&&<p>{view.hit?'買い目にあり':'買い目になし'}</p>}</section></div>
+        <div className="rca-result-comparison" role="group" aria-label="このレースの予想と結果"><section aria-label="保存した予想"><h3>予想（保存時）</h3><strong>予想 {view.pattern}</strong><p>{view.positions.map(p=>p.horses.map(h=>h.no).join('・')).join(plan.type==='3連複'?' − ':' → ')}</p></section><section aria-label="このレースの結果"><h3>結果（登録グループ）</h3><RegisteredResult review={groupResult}/><p>{result?.numbers.join(' → ')??'着順未取得'}</p>{view.state==='ready'&&<p>{view.hit?'買い目にあり':'買い目になし'}</p>}</section></div>
 
         <p className="rca-muted">{preRace?'発走前のクラウド受付あり':confirmed?'事後記録・過去検証':'発走前の受付未確認'} · 記録 {formatRaceTime(plan.createdAt)}</p>
         <div className="rca-journal-slots">{view.positions.map(p=><div key={p.position}><strong>{plan.type==='3連複'?`${p.position}頭目`:`${p.position}着`} {p.labels.join('・')}群 · {p.horses.length}頭</strong><p>{p.horses.map(h=>`${h.no} ${h.name}`).join(' ／ ')}</p></div>)}</div>
@@ -42,7 +45,7 @@ export default function PredictionJournalPanel({journal,race,field,legacy=[],clo
     <ResultEditor key={`${race.id}:${latestResult(journal.data.results,String(race.id))?.id??officialFor(String(race.id))?.id??'new'}`} race={race} field={field} previous={latestResult(journal.data.results,String(race.id))} official={officialFor(String(race.id))} busy={journal.busy||journal.loading} onSave={journal.save}/>
     {result?.conflict&&<p role="alert" className="rca-error">入力結果とJRDBの着順が一致しません。照合を保留しています。画像・開催日・レースを確認して訂正してください。</p>}
     <div className="flex flex-wrap gap-3"><button className="rca-secondary" disabled={journal.loading||journal.busy} onClick={journal.refresh}>結果一覧を再読込</button>{journal.connected&&<button className="rca-secondary" disabled={journal.loading||journal.busy} onClick={journal.resend}>未同期の記録を再送</button>}</div>
-    <RacePredictionResultsList raceDate={journalDate(race)} races={[race,...availableRaces,...(journal.remote.races??[])]} plans={plans} results={journal.data.results} official={[...(journal.remote.official??[]).filter(r=>r.raceId!==String(race.id)),...(officialFor(String(race.id))?[officialFor(String(race.id))]:[])]} onOpenRace={onOpenRace} loading={journal.loading}/>
+    <RacePredictionResultsList raceDate={journalDate(race)} races={[race,...availableRaces,...(journal.remote.races??[])]} plans={plans} registrations={journal.registrations} results={journal.data.results} official={[...(journal.remote.official??[]).filter(r=>r.raceId!==String(race.id)),...(officialFor(String(race.id))?[officialFor(String(race.id))]:[])]} onOpenRace={onOpenRace} loading={journal.loading}/>
 
   </div>
 }

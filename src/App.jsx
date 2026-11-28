@@ -1712,7 +1712,7 @@ function MainApp({ session, onLogout }) {
             initialForecastId={initialForecastId}
             earlierRaces={db ? dataApi.getEarlierPace(db, raceInfo.id) : []}
             onOpenAbility={() => setTab('ability')} onOpenPace={() => setTab('pace')} /> : <EmptyRace />)}
-          {tab === 'groups' && (raceInfo ? <GroupWorkspace onOpenPersonal={() => setTab('personal')} groupDisplay={groupDisplay} onGroupDisplayChange={updateGroupDisplay} race={analysisRace} horses={analysisHorses} statistics={analysisStatistics}
+          {tab === 'groups' && (raceInfo ? <GroupWorkspace onOpenResults={() => setTab('results')} onOpenPersonal={() => setTab('personal')} groupDisplay={groupDisplay} onGroupDisplayChange={updateGroupDisplay} race={analysisRace} horses={analysisHorses} statistics={analysisStatistics}
             userId={session.user.id} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
             syncedGroupReceipts={sync.data?.groupReceipts}
             loading={sync.loading}
@@ -1722,7 +1722,7 @@ function MainApp({ session, onLogout }) {
             syncedGroupReceipts={sync.data?.groupReceipts}
             loading={sync.loading}
             review={sync.error ? null : sync.data?.forecastReview} onOpenAbility={() => setTab('ability')} /> : <EmptyRace />)}
-          {tab === 'results' && <RaceResultsWorkspace userId={session.user.id} race={raceInfo?analysisRace:null} horses={analysisHorses} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
+          {tab === 'results' && <RaceResultsWorkspace onOpenGroups={() => setTab('groups')} userId={session.user.id} race={raceInfo?analysisRace:null} horses={analysisHorses} cloudRevision={sync.revision} onSyncLedger={syncLedgerToCloud}
             availableRaces={raceInfo?sync.data?.availableRaces??[]:dashboard.data?.races??[]}
             onOpenPersonal={()=>setTab('personal')} onOpenRace={race=>loadCollectedRace(race,{fromDashboard:true,goTab:'results'})}/>}
 
