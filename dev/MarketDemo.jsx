@@ -11,7 +11,7 @@ import RaceResultsWorkspace from '../src/RaceResultsWorkspace.jsx'
 import {resultDemoRaces,seedRaceResultsFixture} from './raceResultsFixture.js'
 import CaptureControls from '../src/CaptureControls.jsx'
 import { oddsStorageKey } from '../src/oddsHistory.js'
-import { syncLedgerToCloud } from '../src/cloudStore.js'
+import { syncLedgerToCloud,enrichCloudHorses } from '../src/cloudStore.js'
 import { useCompanion } from '../src/useCompanion.js'
 import { seedPersonalResultFixture } from './personalResultFixture.js'
 import { race, horses, statistics, assessmentHorses, aceHorses, assessmentStatistics, earlierRaces, demoSnapshots } from './fixtures.js'
@@ -43,7 +43,7 @@ function Demo() {
   const onGroupDisplayChange=useCallback(value=>setGroupDisplay(previous=>JSON.stringify(previous)===JSON.stringify(value)?previous:value),[])
   const empty = state === 'empty'||state==='anchors-empty'
   const { sync, refresh } = useCompanion({ userId: connected ? userId : null, race, horses })
-  const props = { workspace:state.startsWith('pace-links'),groupDisplay,onGroupDisplayChange,race, horses:useAssessmentFixture?aceHorses:state==='assessment'?assessmentHorses:horses, statistics: empty||state==='pace-links-missing' ? [] : state==='assessment'?assessmentStatistics:statistics, earlierRaces, userId, cloudRevision: cloudRevision + sync.revision,
+  const props = { workspace:state.startsWith('pace-links'),groupDisplay,onGroupDisplayChange,race, horses:state==='groups-connected-withdrawal'?enrichCloudHorses(horses,sync.data?.race):useAssessmentFixture?aceHorses:state==='assessment'?assessmentHorses:horses, statistics: empty||state==='pace-links-missing' ? [] : state==='assessment'?assessmentStatistics:statistics, earlierRaces, userId, cloudRevision: cloudRevision + sync.revision,
     syncedGroupReceipts:sync.data?.groupReceipts, loading:sync.loading,
     syncedReceipts: sync.data?.receipts, onSyncLedger: connected || state === 'cloud-test' ? syncLedgerToCloud : undefined,
     onOpenAbility: () => setTab('ability'), onOpenPace: () => setTab('pace'), onSelectRace: () => {}, onSelectHorse: () => {} }
