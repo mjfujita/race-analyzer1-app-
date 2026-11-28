@@ -7,12 +7,55 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 from collector.persist import persist, bundle
-from collector.prepare import extract_paci
+from collector.prepare import extract_paci, audit_history, prepare
 from pipeline.ingest import validate_snapshot, open_store, append_observations
 from pipeline.ledger import validate_ledger
 from pipeline.test_pipeline import snapshot_fixture, ledger_fixture
 
 class CaptureTests(unittest.TestCase):
+    def history_row(self):
+        row=bytearray(b' '*374)
+        for a,b,value in [(0,8,b'05265303'),(10,18,b'24100001'),(18,26,b'20261114'),(62,66,b'1600'),(130,132,b'14'),(140,142,b'02')]:row[a:b]=value
+        return bytes(row)
+
+    def test_zed_and_unparsed_text_are_retained_and_inventoried(self):
+        with tempfile.TemporaryDirectory() as temp:
+            archive=Path(temp)/'PACI261128.zip';out=Path(temp)/'out'
+            with zipfile.ZipFile(archive,'w') as z:
+                for name,content in [('BAC',b'core'),('KYI',b'core'),('ZED',self.history_row()),('JOA',b'unparsed')]:z.writestr(f'{name}261128.txt',content)
+            count,dates=extract_paci([archive],out)
+            self.assertEqual(count,4);self.assertEqual(dates,{'20261128'})
+            files={f['name']:f for f in json.loads((out/'manifest.json').read_text())['files']}
+            self.assertEqual((out/'ZED261128.txt').read_bytes(),self.history_row())
+            self.assertEqual(files['ZED261128.txt']['handling'],'database')
+            self.assertEqual(files['JOA261128.txt']['handling'],'retained-only')
+            self.assertEqual(files['ZED261128.txt']['rows'],1)
+
+    def test_history_audit_rejects_missing_wrong_and_truncated_rows(self):
+        with tempfile.TemporaryDirectory() as temp,sqlite3.connect(':memory:') as db:
+            db.execute('CREATE TABLE jrdb_results(race_key,ketto_id,race_date,distance,field_size,rank)')
+            with self.assertRaisesRegex(ValueError,'no ZED/SED'):audit_history(db,temp)
+            path=Path(temp)/'ZED261128.txt';path.write_bytes(self.history_row())
+            with self.assertRaisesRegex(ValueError,'incomplete'):audit_history(db,temp)
+            db.execute('INSERT INTO jrdb_results VALUES(?,?,?,?,?,?)',('05265303','24100001','20261114',1600,14,3))
+            with self.assertRaisesRegex(ValueError,'inconsistent'):audit_history(db,temp)
+            db.execute('UPDATE jrdb_results SET rank=2')
+            self.assertEqual(audit_history(db,temp),{'expectedRows':1,'verifiedRows':1,'complete':True})
+            path.write_bytes(b'short')
+            with self.assertRaisesRegex(ValueError,'Truncated'):audit_history(db,temp)
+
+    def test_failed_history_import_keeps_previously_prepared_database(self):
+        from subprocess import CompletedProcess
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=root/'source.db';out=root/'out';out.mkdir();inbox=root/'inbox';inbox.mkdir()
+            with sqlite3.connect(source) as db:db.execute('CREATE TABLE jrdb_results(race_key,ketto_id,race_date,distance,field_size,rank)')
+            previous=b'previous validated database';(out/'race.db').write_bytes(previous)
+            with zipfile.ZipFile(inbox/'PACI261128.zip','w') as z:
+                for name,content in [('BAC',b'core'),('KYI',b'core'),('ZED',self.history_row())]:z.writestr(f'{name}261128.txt',content)
+            with patch('collector.prepare.subprocess.run',return_value=CompletedProcess([],0,stdout='simulated skipped history')):
+                with self.assertRaisesRegex(ValueError,'incomplete'):prepare(source,root,out,inbox,python='unused')
+            self.assertEqual((out/'race.db').read_bytes(),previous)
+
     def test_pulled_ledgers_stay_in_research_and_are_not_echoed_as_observations(self):
         with tempfile.TemporaryDirectory() as temp:
             race={'raceId':'05261101','raceDate':'20261115','postTime':'1540','fieldSize':2,'placeCode':'05','raceNo':1,'horses':[],'statistics':[]}

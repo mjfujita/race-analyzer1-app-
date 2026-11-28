@@ -194,14 +194,16 @@ async function cycle(page,config,state,force=false){
       state.lastLedgerPullAt=new Date().toISOString()
     }catch(error){failures.push(redactedFailure(error))}
   }
-  if(downloads&&!config['no-prepare']){
+  if((downloads||!config.sourceIntegrity?.complete)&&!config['no-prepare']&&!observationWindow){
     try{const {readdir}=await import('node:fs/promises');const files=await readdir(config.downloads)
       if(files.some(name=>/^PACI\d{6}/i.test(name))){
         const prepared=JSON.parse(await python(['-m','collector.prepare','--source-db',config.originalSourceDb,'--output',join(config.stateDir,'derived'),'--inbox',config.downloads]))
         config.sourceDb=prepared.preparedDb
+        config.sourceIntegrity=prepared.historyAudit
       }
     }catch(error){failures.push({...redactedFailure(error),code:'prepare_failed'})}
   }
+  if(!config.sourceIntegrity?.complete)failures.push({code:'source_unverified',message:'過去成績の取込完全性が未確認です。正常完了として扱いません。'})
   const hasModel=(await Promise.all(['model.runtime.json','forecast-review.json'].map(name=>stat(join(config.output,name)).then(()=>true,()=>false)))).every(Boolean)
   const resultUpdate=captures.some(c=>c.observation.payload.results.length)
   let modelUpdated=false
@@ -213,7 +215,8 @@ async function cycle(page,config,state,force=false){
   const status={state:failures.some(f=>f.code==='auth_required')?'auth_required':failures.length?'partial':jobs.length?'ready':'waiting',
     lastRunAt:new Date().toISOString(),source:'local-jrdb-companion',date,scheduledRaces:races.length,capturedRaces:captures.length,addedRecords:added,
     downloadedFiles:downloads,ledgerRecords,failures,scheduledOffsetsMinutes:CAPTURE_OFFSETS,decisionMinutesBefore:10,
-    nextDueAt:Number.isFinite(nextDue)?new Date(nextDue).toISOString():null,lastFullSyncAt:state.lastFullSyncAt??null}
+    nextDueAt:Number.isFinite(nextDue)?new Date(nextDue).toISOString():null,lastFullSyncAt:state.lastFullSyncAt??null,
+    sourceIntegrity:config.sourceIntegrity??{complete:false}}
   await saveJson(join(config.stateDir,'status.json'),status)
   await python(['-m','collector.persist','bundle','--source-db',config.sourceDb,'--output',config.output,'--date',date,'--status',join(config.stateDir,'status.json')])
   if(!config['no-sync']){
@@ -249,6 +252,7 @@ export async function main(){
   config.originalSourceDb=config.sourceDb
   const prepared=await json(join(config.stateDir,'derived/prepared-source.json'),null)
   if(prepared&&!options['source-db']&&privateConfig.usePreparedSource!==false)config.sourceDb=prepared.preparedDb
+  config.sourceIntegrity=prepared?.preparedDb===config.sourceDb?prepared.historyAudit??null:null
   const state=await json(join(config.stateDir,'state.json'),{completed:{},attempts:{},downloads:{}})
   const localModified=await stat(join(config.output,'market.sqlite')).then(s=>s.mtimeMs,()=>0)
   if(localModified>Date.parse(state.lastFullSyncAt??'1970-01-01'))state.pendingFullSync=true
