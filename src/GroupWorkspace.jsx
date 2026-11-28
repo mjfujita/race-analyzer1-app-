@@ -194,8 +194,9 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   async function registerClassification(){
     setError('')
     try{
-      const input={race,field,snapshot:current,threshold:Number(threshold),boundaries,replacesId:registered?.id??null,
-        probabilities:{groups:summarizeGroupProbabilities(grouping,ace),asOf:ace.boundary??null,horses:ace.rows.map(h=>({no:h.no,name:h.name,...Object.fromEntries(['win','second','third','top3'].map(k=>[k,h.probabilities?.[k]??null]))}))}}
+      const activeField=field.filter(h=>!h.cancelled)
+      const input={race,field:activeField,snapshot:current,threshold:Number(threshold),boundaries,replacesId:registered?.id??null,
+        probabilities:{groups:summarizeGroupProbabilities(grouping,ace),asOf:ace.boundary??null,horses:ace.rows.filter(h=>activeField.some(f=>f.no===h.no)).map(h=>({no:h.no,name:h.name,...Object.fromEntries(['win','second','third','top3'].map(k=>[k,h.probabilities?.[k]??null]))}))}}
       const signature=JSON.stringify(input),attempt=registrationAttempt.current
       const record=attempt?.signature===signature?attempt.record:createGroupRegistration(input)
       registrationAttempt.current={signature,record}
@@ -215,7 +216,6 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
     !journal.registrationReady?(journal.loading?'登録状態を確認しています。':journal.error?'登録状態を確認できませんでした。「登録状態を再読込」で再試行してください。':'登録状態を確認しています。'):
     data.error?`保存データを確認できません。${data.error}`:
     !grouping?.complete?'全頭のオッズが揃うまで登録できません。':
-    field.some(h=>h.cancelled)?'出走取消を含むため登録を保留しています。':
     classificationSaved?'表示中のグループは登録済みです。区切りや観測を変更すると更新できます。':''
   const disabled = busy || Boolean(data.error) || Boolean(analysis.error) || !grouping?.complete || field.some(h => h.cancelled)
   const records = (
@@ -269,6 +269,7 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <section className="rca-card-prediction" aria-label="カードから選択した予想"><h3>予想に追加したグループ</h3><GroupSelectionNumbers grouping={grouping} slots={quickSlots} type={quickType} excluded={excluded} /><p aria-live="polite">{quickTickets.length}点</p><div className="flex flex-wrap gap-3"><button type="button" className="rca-primary" disabled={disabled||loading||!quickTickets.length} onClick={()=>startPersonal({type:quickType,slots:quickSlots})}>選択した内容で予想を入力</button><button type="button" className="rca-secondary" onClick={()=>setQuickChoice(null)}>選択を解除</button></div></section>
       {!grouping.complete && <p role="alert" className="rca-error">オッズ未取得：{grouping.missing.join('・')}番。全頭が揃うまで保存を保留します。</p>}
       <section className="rca-registration-panel" aria-label="グループの独立登録"><h3>結果に使うグループを登録</h3><p>全出走馬の所属を保存します。1〜3着の予想・買い目の登録とは別です。</p>
+        {field.some(h=>h.cancelled)&&<p>取消：{field.filter(h=>h.cancelled).map(h=>`${h.no}番 ${h.name}`).join('・')}。取消馬を除く{field.filter(h=>!h.cancelled).length}頭のグループを登録します。</p>}
         <p aria-live="polite">{!journal.registrationReady?(journal.loading?'登録グループを読み込み中…':'登録状態は未確認です。'):classificationSaved?'表示中のグループは登録済みです。':registered?'変更は未登録です。結果には前回の登録を使っています。':'グループはまだ登録されていません。'}</p>
         <div className="flex flex-wrap gap-3"><button type="button" className="rca-primary" aria-describedby="group-registration-state" disabled={Boolean(registrationBlockReason)} onClick={registerClassification}>{journal.busy?'登録中…':classificationSaved?'グループ登録済み':registered?'グループ登録を更新':'グループを登録'}</button>{onOpenResults&&<button type="button" className="rca-secondary" onClick={onOpenResults}>登録グループの結果を見る</button>}{journal.error&&<button type="button" className="rca-secondary" disabled={journal.loading||journal.busy} onClick={()=>{setError('');journal.refresh()}}>登録状態を再読込</button>}</div>
         <p id="group-registration-state" aria-live="polite">{registrationBlockReason||(journal.loading?'登録状態を同期中です。現在の設定で登録できます。':journal.error?'前回確認済みの登録を保持しています。このまま再試行できます。':'現在の設定で登録できます。')}</p>

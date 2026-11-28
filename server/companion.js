@@ -543,8 +543,10 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
     const meta=metaRow?await store.get(metaRow.path):null
     if(!meta?.race?.race?.horses?.length)invalid('先にこのレースのデータを同期してください。')
     if(meta.ownerId!==ownerId||meta.race.raceId!==raceId||meta.race.raceDate!==raceDate)conflict('観測の保存範囲が一致しません。')
-    const field=meta.race.race.horses
-    if(record.field.length!==field.length||field.some(h=>h.cancelled)||record.field.some(h=>!field.some(f=>Number(f.no)===h.no&&f.name===h.name)))invalid('同期済みの出走馬と一致しません。')
+    // Registration describes every active runner. The cancellation must come
+    // from synchronized metadata; a client cannot omit another active horse.
+    const field=meta.race.race.horses.filter(h=>!h.cancelled&&!h.scratched)
+    if(record.field.length!==field.length||record.field.some(h=>!field.some(f=>Number(f.no)===h.no&&f.name===h.name)))invalid('同期済みの出走馬と一致しません。')
     const stored=await store.get(`${racePrefix(raceId,raceDate)}/snapshot-ids/${keyHash(record.snapshot.id)}.json`)
     if(!stored||['id','kind','raceId','raceDate','observedAt','retrievedAt','odds'].some(key=>contentHash(stored[key])!==contentHash(record.snapshot[key]))
       ||record.race.postTime!==meta.race.race.postTime)invalid('同期済みの観測・発走時刻と一致しません。')
