@@ -1,3 +1,4 @@
+import {setBrowserValue} from './browserStorage.js'
 import {groupOdds,formationTickets,compareGroupPlans} from './groupAnalysis.js'
 import {ticketKey} from './portfolio.js'
 import {raceDateISO,raceTimestamp,validTimestamp} from './raceTime.js'
@@ -84,7 +85,7 @@ export async function writeJournal(storage,user,date,incoming,locks=globalThis.n
     const value=mergeJournal(readJournal(storage,user,date),incoming)
     // Validate before replacing the local cache; corruption is never silently reset.
     value.predictions.forEach(validatePrediction);value.results.forEach(validateJournalResult)
-    storage.setItem(journalKey(user,date),JSON.stringify(value));return value
+    setBrowserValue(storage,journalKey(user,date),JSON.stringify(value),user);return value
   })
 }
 export const latestResult=(results,raceId)=>results.filter(r=>r.raceId===raceId&&!results.some(next=>next.replacesId===r.id)).at(-1)??null

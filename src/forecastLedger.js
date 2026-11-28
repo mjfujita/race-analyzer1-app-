@@ -1,3 +1,4 @@
+import {setBrowserValue} from './browserStorage.js'
 import { validCalibrationEvidence } from './forecastReview.js'
 import { ANCHOR_METHOD, SINGLE_ANCHOR_METHOD, assessAnchors, assessAnchorCandidates } from './anchorAssessment.js'
 import { oddsMomentum } from './oddsMomentum.js'
@@ -257,7 +258,7 @@ export function writeLedger(storage, ledger) {
   const merged = importLedger(persisted, JSON.stringify(ledger))
   const raw = JSON.stringify(merged)
   if (raw.length > MAX_BYTES) fail('保存容量の上限です。記録を書き出してください。')
-  storage.setItem(key, raw)
+  setBrowserValue(storage,key,raw,ledger.scope.userId)
   return merged
 }
 

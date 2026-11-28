@@ -1,3 +1,4 @@
+import {setBrowserValue,oddsStorageOwner} from './browserStorage.js'
 import { raceTimestamp, validTimestamp } from './raceTime.js'
 
 export function oddsStorageKey(userId, race) {
@@ -83,7 +84,7 @@ export function appendOddsSnapshot(key, snapshot, storage = globalThis.localStor
   }
   const previous = rows.findLast(row => row.kind === snapshot.kind && row.time === snapshot.time && Date.parse(row.observedAt) === Date.parse(snapshot.observedAt))
   const next = [...rows, { ...snapshot, revisionOf: previous?.id ?? null }]
-  storage.setItem(key, JSON.stringify(next))
+  setBrowserValue(storage,key,JSON.stringify(next),oddsStorageOwner(key))
   return next
 }
 
@@ -115,6 +116,6 @@ export function importOddsSnapshots(key, input, race, numbers, storage = globalT
     } else { next.push(clean); ids.set(row.id, clean) }
   }
   if (next.length > 2000) throw new Error('取込み後の記録数が上限を超えます。')
-  storage.setItem(key, JSON.stringify(next))
+  setBrowserValue(storage,key,JSON.stringify(next),oddsStorageOwner(key))
   return next.length - rows.length
 }

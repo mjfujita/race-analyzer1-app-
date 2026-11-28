@@ -1,3 +1,4 @@
+import {setBrowserValue} from './browserStorage.js'
 import { ownerHeaders } from './deviceAuth.js'
 import { oddsStorageKey, importOddsSnapshots } from './oddsHistory.js'
 import { loadModel, saveModel, validateModel } from './modelStore.js'
@@ -67,7 +68,7 @@ export async function applyCloudData(userId, race, horses, payload, storage = gl
   if (runtime) {
     validateRuntimeModels(runtime)
     const previous = loadRuntimeModel(userId, storage)
-    if (previous?.id !== runtime.id) storage.setItem(runtimeModelKey(userId), JSON.stringify({ ...runtime, adoptedAt: new Date().toISOString() }))
+    if (previous?.id !== runtime.id) setBrowserValue(storage,runtimeModelKey(userId),JSON.stringify({ ...runtime, adoptedAt: new Date().toISOString() }),userId)
   }
   if (!race?.id) return payload
   const scope = ledgerScope(userId, race)
@@ -90,7 +91,7 @@ export async function applyCloudData(userId, race, horses, payload, storage = gl
     const save = () => {
       const raw = storage.getItem(key)
       const before = raw ? parseRaceObservations(raw, scope) : null
-      storage.setItem(key, JSON.stringify(mergeRaceObservations(before, parsed, scope)))
+      setBrowserValue(storage,key,JSON.stringify(mergeRaceObservations(before, parsed, scope)),userId)
     }
     if (locks?.request) await locks.request(`race-observations:${key}`, save)
     else save()
@@ -103,7 +104,7 @@ export async function applyCloudData(userId, race, horses, payload, storage = gl
   }
   const saved = { race: incomingRace ?? race, observations: observationEvents, context: payload.context ?? null,
     results: payload.results ?? null, groupReceipts: payload.groupReceipts ?? {}, status: payload.status ?? null, fetchedAt: new Date().toISOString() }
-  storage.setItem(cacheKey(userId, race), JSON.stringify(saved))
+  setBrowserValue(storage,cacheKey(userId,race),JSON.stringify(saved),userId,{cache:true})
   return { ...payload, cached: saved }
 }
 

@@ -1,3 +1,4 @@
+import {setBrowserValue} from './browserStorage.js'
 import { raceDateISO, validTimestamp } from './raceTime.js'
 import { isSupportedAbilityModel } from './marketModel.js'
 
@@ -22,6 +23,6 @@ export function loadModel(userId, storage = globalThis.localStorage) {
 export function saveModel(userId, model, storage = globalThis.localStorage) {
   validateModel(model)
   const adopted = { ...model, adoptedAt: new Date().toISOString() }
-  storage.setItem(`race-market-model:v1:${userId}`, JSON.stringify(adopted))
+  setBrowserValue(storage,`race-market-model:v1:${userId}`,JSON.stringify(adopted),userId)
   return adopted
 }
