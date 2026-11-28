@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test'
 import { race, horses, demoSnapshots } from '../../dev/fixtures.js'
 import { createCompanionHandler, createCompanionService } from '../../server/companion.js'
+import {emptyLedger,appendForecast} from '../../src/forecastLedger.js'
+import {SINGLE_ANCHOR_METHOD,assessAnchorCandidates} from '../../src/anchorAssessment.js'
 import { memoryStore, request } from '../fixtures/companion.js'
 
 const now = '2026-11-15T06:25:00.000Z'
@@ -70,33 +72,19 @@ test('the signed-in home shows race progress, opens the correct forecast, and li
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path: '.qa/race-day-dashboard-mobile.png', fullPage: true })
 
-  await page.getByRole('button', { name: '軸候補を確認', exact: true }).scrollIntoViewIfNeeded()
+  await page.getByRole('button', { name: 'グループを確認', exact: true }).scrollIntoViewIfNeeded()
   expect(await page.evaluate(()=>window.scrollY)).toBeGreaterThan(0)
-  await page.getByRole('button', { name: '軸候補を確認', exact: true }).click()
+  await page.getByRole('button', { name: 'グループを確認', exact: true }).click()
   await expect.poll(()=>page.evaluate(()=>window.scrollY)).toBe(0)
-  await expect(page.getByRole('button', { name: '軸候補', exact: true })).toHaveAttribute('aria-current', 'page')
-  await expect(page.getByLabel('予算上限（円）')).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: '妙味のある候補から軸を1頭選ぶ' })).toBeVisible()
-  await page.getByRole('radio', { name: /番 架空馬.* を軸にする/ }).first().check()
-  await expect(page.getByRole('button', { name: /妙味軸候補/ })).toHaveCount(0)
-  await page.setViewportSize({ width: 1280, height: 960 })
-  await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: '.qa/single-anchor-desktop.png', fullPage: true })
-  await expect(page.getByLabel('オッズの観測時刻').locator('option')).toContainText(['最新を自動表示', '15:20'])
-  await page.getByRole('button', { name: '軸馬1頭と判断を固定保存' }).click()
-  await expect(page.getByText(/クラウドにも保存しました。.*締切前の受領を確認しました。/)).toBeVisible()
+  await expect(page.getByRole('navigation',{name:'選択中のレースの分析'}).getByRole('button',{name:'グループ・買い目',exact:true})).toHaveAttribute('aria-current','page')
+  await expect(page.getByRole('button',{name:'軸候補',exact:true})).toHaveCount(0)
+  await page.setViewportSize({width:1280,height:960})
   const dashboardButton = page.getByRole('navigation', { name: '開催メニュー', exact: true }).getByRole('button', { name: '本日のレース', exact: true })
   await dashboardButton.click()
-  const saved = page.getByRole('button', { name: '京都11Rの保存した予想を見る' })
-  await expect(saved).toBeVisible()
-  await expect(page.getByText('予想を締切前に受領済み')).toBeVisible()
-  await saved.click()
-  await page.getByText('保存済み予想・バックアップ',{ exact:true }).click()
-  await expect(page.getByText('締切前受領 11/15 15:25', { exact: true })).toBeVisible()
-
-  await dashboardButton.click()
   await page.getByRole('button', { name: '京都9Rの振り返る' }).click()
-  await expect(page.getByLabel('対象レース')).toHaveValue(`review-${completed.id}`)
+  await expect(page.getByRole('heading',{name:'レース結果と予想',exact:true})).toBeVisible()
+  await expect(page.getByRole('heading',{name:'京都9R 照合済みのレース',exact:true})).toBeVisible()
+  await expect(page.getByRole('table',{name:'予想と結果の組み合わせ'}).locator('tbody tr')).toHaveCount(3)
   await dashboardButton.click()
   await page.getByRole('button', { name: '過去開催・PACIレース一覧', exact: true }).last().click()
   await expect(page.getByRole('button', { name: /データ不足のレース/ })).toBeVisible()
@@ -143,12 +131,21 @@ test('the four-menu workspace preserves settings, evidence pages and purchase re
     status:{ state:'ready',lastRunAt:now,lastFullSyncAt:now },
     races:[{ raceId:race.id,raceDate:race.raceDate,race:{ ...race,horses:horses.map((h,i) => ({ ...h,running_style:String(i%4+1) })) },
       snapshots:demoSnapshots().filter(row => row.time <= '15:20'),observations:[] }] })
+  const field=horses.map((h,i)=>({no:h.no,name:h.name,probability:i===0?.65:.35/7,pStar:i===0?.65:.35/7}))
+  const source=demoSnapshots().find(s=>s.time==='15:20'),suggested=assessAnchorCandidates({field,odds:source.odds,minTop3:.5}).suggested
+  const base={kind:'ace',parentId:null,mode:'live',cutoffAt:'2026-11-15T06:30:00.000Z',modelVersion:'test-model',
+    inputs:{sourceId:source.id,observedAt:source.observedAt,retrievedAt:source.retrievedAt,sourcePublishedAt:source.sourcePublishedAt,winOdds:source.odds,probabilityStack:'["test-model",null,[],null]',probabilityCalibration:null},
+    parameters:{budget:0,profile:'balanced',minHit:0,oddsFactor:.9,anchor:null,anchorSelection:{method:SINGLE_ANCHOR_METHOD,minTop3:.5,suggested,selected:null,decision:'pending'}},field,allocations:[],
+    metrics:{invested:0,unspent:0,expectedPayout:0,expectedProfit:0,expectedReturn:null,maxLoss:0,hitProbability:null,profitProbability:null,lossProbability:null,allMissProbability:null}}
+  const original=appendForecast(emptyLedger({userId:ownerId,raceId:race.id,raceDate:race.raceDate}),base,now)
+  const saved=appendForecast(original.ledger,{...base,kind:'user',parentId:original.record.id,parameters:{...base.parameters,anchorSelection:{...base.parameters.anchorSelection,selected:1,decision:'selected'}}},now)
+  await service.saveLedger(saved.ledger)
   await connect(page,handler)
   const errors = []; page.on('pageerror',e => errors.push(e.message))
   await page.setViewportSize({ width:1440,height:1000 })
   await page.goto('/')
   const main = page.getByRole('navigation',{ name:'開催メニュー',exact:true })
-  await expect(main.getByRole('button')).toHaveText(['本日のレース','予想・軸選択','振り返り','データ管理'])
+  await expect(main.getByRole('button')).toHaveText(['本日のレース','予想・結果','振り返り','データ管理'])
   await expect(page.getByRole('table',{ name:'本日の開催レース' })).toBeVisible()
   await page.screenshot({ path:'.qa/workspace-01-home.png',fullPage:true })
   await main.getByRole('button',{ name:'データ管理' }).click()
@@ -165,22 +162,16 @@ test('the four-menu workspace preserves settings, evidence pages and purchase re
   await expect(page.getByRole('status')).toContainText('このブラウザの表示条件を保存しました')
   await page.screenshot({ path:'.qa/workspace-11-settings.png',fullPage:true })
   await main.getByRole('button',{ name:'本日のレース',exact:true }).click()
-  await page.getByRole('button',{ name:'軸候補を確認',exact:true }).click()
+  await page.getByRole('button',{name:'京都11Rの保存した予想を見る',exact:true}).click()
   const sub = page.getByRole('navigation',{ name:'選択中のレースの分析' })
-  await expect(sub.getByRole('button')).toHaveText(['レース情報','グループ・買い目','私の予想','軸候補','能力・適性','オッズ推移','展開・馬場'])
+  await expect(sub.getByRole('button')).toHaveText(['レース情報','グループ・買い目','私の予想','予想・結果','能力・適性','オッズ推移','展開・馬場'])
   await sub.getByRole('button',{name:'私の予想',exact:true}).click()
   await expect(page.getByRole('heading',{name:'私の予想',exact:true})).toBeVisible()
   await expect(page.getByRole('button',{name:'新しい予想を入力する',exact:true})).toBeEnabled()
-  await sub.getByRole('button',{name:'軸候補',exact:true}).click()
-  await expect(page.getByLabel('予算上限（円）')).toHaveCount(0)
-  await page.getByText('判断条件を確認・変更',{ exact:true }).click()
-  await expect(page.getByLabel('3着内率の下限（%）',{ exact:true })).toHaveValue('60')
-  await expect(page.getByLabel('オッズ下落の想定（%）')).toHaveValue('15')
-  await page.getByRole('radio',{ name:/番 架空馬.* を軸にする/ }).first().check()
-  await page.getByText('判断条件を確認・変更',{ exact:true }).click()
-  await page.screenshot({ path:'.qa/workspace-02-axis.png',fullPage:true })
-  await page.getByRole('button',{ name:'軸馬1頭と判断を固定保存',exact:true }).click()
-  await expect(page.getByRole('status').first()).toContainText('クラウドにも保存しました')
+  await sub.getByRole('button',{name:'予想・結果',exact:true}).click()
+  await expect(page.getByRole('heading',{name:'レース結果と予想',exact:true})).toBeVisible()
+  await expect(sub.getByRole('button',{name:'軸候補',exact:true})).toHaveCount(0)
+  await expect(page.getByRole('table',{name:'予想と結果の組み合わせ'})).toContainText('京都11R')
   for (const [name,file] of [['能力・適性','03-ability'],['オッズ推移','04-odds'],['展開・馬場','05-pace']]) {
     await sub.getByRole('button',{ name,exact:true }).click()
     if (name === 'オッズ推移') {
@@ -219,9 +210,9 @@ test('the four-menu workspace preserves settings, evidence pages and purchase re
   await expect(page.getByRole('status')).toContainText('実購入の記録を保存しました')
   await page.setViewportSize({ width:390,height:844 })
   const mobile = page.getByRole('navigation',{ name:'モバイル開催メニュー' })
-  await mobile.getByRole('button',{ name:'予想・軸選択',exact:true }).click()
-  const comparison = page.getByRole('table',{ name:'軸候補の比較',exact:true })
-  await expect(comparison.locator('[data-label="単勝期待回収率"]').first()).toBeVisible()
+  await mobile.getByRole('button',{ name:'予想・結果',exact:true }).click()
+  const comparison = page.getByRole('table',{ name:'予想と結果の組み合わせ',exact:true })
+  await expect(comparison.locator('[data-label="レース結果"]').first()).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path:'.qa/workspace-09-mobile.png',fullPage:true })
   await page.reload()

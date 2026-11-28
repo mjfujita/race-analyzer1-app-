@@ -225,10 +225,15 @@ button:disabled { cursor: not-allowed; }
 .rca-groups .rca-journal-tally{min-width:0;width:100%;table-layout:fixed}.rca-groups .rca-journal-tally th,.rca-groups .rca-journal-tally td{min-width:0;padding:12px 8px}
 
 @media(max-width:640px){
- .rca-groups .rca-journal-table{min-width:0;width:100%;table-layout:fixed}
+ .rca-journal-table,.rca-groups .rca-journal-table{min-width:0;width:100%;table-layout:fixed}
  .rca-journal-table thead{display:none}
  .rca-journal-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:12px 0;border-bottom:1px solid #dce5ef;gap:10px}
- .rca-groups .rca-journal-table tbody th{grid-column:1/-1;min-width:0;padding:6px 0;border:0}
- .rca-groups .rca-journal-table tbody td{min-width:0;padding:6px 0;border:0;overflow-wrap:anywhere}
+ .rca-journal-table tbody th,.rca-groups .rca-journal-table tbody th{grid-column:1/-1;min-width:0;padding:6px 0;border:0}
+ .rca-journal-table tbody td,.rca-groups .rca-journal-table tbody td{min-width:0;padding:6px 0;border:0;overflow-wrap:anywhere}
  .rca-journal-table td::before{display:block;content:attr(data-label);font-size:11px;color:#668098;margin-bottom:5px;font-weight:650}
 }
+
+.rca-result-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}
+.rca-result-comparison>section{min-width:0;background:#f4f8fd;border:1px solid #dce5ef;border-radius:12px;padding:14px;overflow-wrap:anywhere}
+.rca-result-comparison h3{color:#627d99;font-size:12px;margin-bottom:8px}
+@media(max-width:400px){.rca-result-comparison{gap:8px}.rca-result-comparison>section{padding:10px}.rca-result-comparison strong{font-size:13px}}

@@ -78,6 +78,7 @@ test('a user can explicitly skip a race that has a qualifying candidate', async 
   await page.goto('/market-preview.html?state=anchors-manual-skip')
   await page.getByRole('radio', { name: '今回は見送る' }).check()
   await page.getByRole('button', { name: '見送りを固定保存', exact: true }).click()
+  await expect(page.getByLabel('保存時の軸馬と判断')).toContainText('このレースは見送り')
   const ledger = await savedLedger(page)
   expect(ledger.forecasts[0].parameters.anchorSelection.decision).toBe('pending')
   expect(ledger.forecasts[1].parameters.anchorSelection.decision).toBe('skip')
@@ -86,8 +87,8 @@ test('a user can explicitly skip a race that has a qualifying candidate', async 
 })
 
 test('missing observations hold the value assessment and prevent saving', async ({ page }) => {
-  await page.goto('/market-preview.html?state=empty')
-  await page.getByRole('button', { name: '軸候補・妙味判断', exact: true }).click()
+  // Legacy record compatibility fixture; the public navigation no longer exposes anchor selection.
+  await page.goto('/market-preview.html?state=anchors-empty')
   await expect(page.getByText('判断保留', { exact: false })).toBeVisible()
   await expect(page.getByRole('button', { name: /軸馬1頭.*保存/ })).toBeDisabled()
 })
