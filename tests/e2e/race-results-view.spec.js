@@ -17,7 +17,7 @@ test('opens with whole-day group tendencies including unpredicted races and keep
  // Summary appears before the whole-day table, without an intervening prediction form.
  const tally=page.getByRole('table',{name:'全レースのグループ別着順回数'})
  expect((await tally.boundingBox()).y).toBeLessThan((await table.boundingBox()).y)
- await expect(tally.getByRole('row').filter({has:page.getByRole('rowheader',{name:'A',exact:true})})).toContainText('1回')
+ await expect(tally.getByRole('row').filter({has:page.getByRole('rowheader',{name:'A群',exact:true})})).toContainText('1回')
  await page.setViewportSize({width:1280,height:1000});await page.screenshot({path:'.qa/all-results-desktop.png',fullPage:true})
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  for(const cell of await table.locator('tbody tr').first().locator('td').all()){const b=await cell.boundingBox();expect(b.x).toBeGreaterThanOrEqual(0);expect(b.x+b.width).toBeLessThanOrEqual(390)}

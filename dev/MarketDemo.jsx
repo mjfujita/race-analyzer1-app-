@@ -31,7 +31,7 @@ const userId = `synthetic-demo-${state}`
 if(state==='results-local-review')seedRaceResultsFixture(localStorage,userId)
 if(state==='personal-results-local-review')seedPersonalResultFixture(localStorage,userId)
 const useAssessmentFixture = state.startsWith('ace') || state === 'groups-local-review'
-const connected = state === 'connected-test' || state.startsWith('groups-connected') || state.startsWith('personal-connected')
+const connected = state === 'connected-test' || state.startsWith('groups-connected') || state.startsWith('personal-connected') || state.startsWith('results-connected')
 if (!connected && state !== 'empty' && state !== 'anchors-empty' && !localStorage.getItem(oddsStorageKey(userId, race))) {
   localStorage.setItem(oddsStorageKey(userId, race), state === 'error' ? '{broken' : JSON.stringify(demoSnapshots()))
 }

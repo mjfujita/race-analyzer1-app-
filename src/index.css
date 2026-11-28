@@ -254,3 +254,28 @@ button:disabled { cursor: not-allowed; }
   .rca-all-result-table td::before { content: attr(data-label); display: block; color: #60768b; font-size: .75rem; margin-bottom: .3rem; }
   .rca-all-result-table small { font-size: .7rem; line-height: 1.65; }
 }
+
+.rca-tendency-filters { display:flex; flex-wrap:wrap; gap:.75rem; margin-top:.75rem; }
+.rca-tendency-section { margin:1.5rem 0; padding:1rem; border:1px solid #dbe5ef; border-radius:14px; }
+.rca-tendency-summary,.rca-ace-tendency-table { width:100%; table-layout:fixed; }
+.rca-tendency-summary th,.rca-tendency-summary td,.rca-ace-tendency-table th,.rca-ace-tendency-table td { overflow-wrap:anywhere; vertical-align:top; }
+.rca-combination-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin:1rem 0; }
+.rca-combination-panel { min-width:0; padding:1rem; border:1px solid #dbe5ef; border-radius:14px; }
+.rca-combination-panel h4 { font-weight:700; }
+.rca-combination-panel li { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.35rem 1rem; border-bottom:1px solid #edf2f7; padding:.65rem 0; }
+@media(max-width:640px){
+ .rca-combination-grid { grid-template-columns:minmax(0,1fr); }
+ .rca-tendency-summary thead,.rca-ace-tendency-table thead { display:none; }
+ .rca-tendency-summary tbody tr,.rca-ace-tendency-table tbody tr { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); border-bottom:1px solid #dbe5ef; }
+ .rca-tendency-summary tbody th,.rca-ace-tendency-table tbody th { grid-column:1/-1; }
+ .rca-tendency-summary td[data-label="平均頭数"] { grid-column:1/-1; }
+ .rca-tendency-summary th,.rca-tendency-summary td,.rca-ace-tendency-table th,.rca-ace-tendency-table td { min-width:0; padding:.65rem .4rem; border:0; }
+ .rca-tendency-summary td::before,.rca-ace-tendency-table td::before { content:attr(data-label); display:block; color:#60768b; font-size:.75rem; margin-bottom:.25rem; }
+}
+.rca-tendency-summary strong,.rca-ace-tendency-table strong { font-size:.95rem; }
+.rca-tendency-summary small,.rca-ace-tendency-table small { font-size:.8rem; line-height:1.6; }
+@media(max-width:640px){
+ .rca-tendency-summary td[data-label="平均頭数"] { display:flex; flex-wrap:wrap; align-items:baseline; gap:.2rem .65rem; }
+ .rca-tendency-summary td[data-label="平均頭数"]::before { display:inline; margin-bottom:0; }
+ .rca-tendency-summary td[data-label="平均頭数"] small { display:inline; }
+}
