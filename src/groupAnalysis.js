@@ -155,7 +155,9 @@ export function groupReceiptVerified(plan,receipt,scope) {
 
 export function groupOutcome(plan,review,cloud) {
   const existing = review?.races?.find(r => r.raceId === plan.race.id && r.raceDate.replaceAll('-','') === plan.race.raceDate)
-  if (existing) return existing
+  // A model-review export may still be waiting when a newer official capture arrives.
+  // Explicit conflicts/abnormal standings remain held; only waiting states may fall back.
+  if (existing && !['awaiting-results','awaiting-payout'].includes(existing.state)) return existing
   const post = raceTimestamp(plan.race,plan.race.postTime)
   const events = (cloud?.observations ?? []).filter(e => e.kind === 'LIVE_RACE'
     && String(e.payload?.raceId) === plan.race.id && String(e.payload?.raceDate).replaceAll('-','') === plan.race.raceDate

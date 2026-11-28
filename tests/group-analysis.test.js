@@ -139,6 +139,8 @@ test('official live results reconcile groups without a model forecast; conflicts
   const payload = { raceId:race.id,raceDate:race.raceDate,priceStatus:'final-visible',releaseFieldSize:6,results:outcome.field.map(r => ({ horseNo:r.no,rank:r.rank })) }
   const cloud = { observations:[{ kind:'LIVE_RACE',retrievedAt:'2026-11-15T07:00:00Z',payload }] }
   assert.equal(reviewGroupPlan(p,groupOutcome(p,null,cloud)).groups,'B→C→A')
+  assert.equal(reviewGroupPlan(p,groupOutcome(p,{races:[{...race,raceId:race.id,state:'awaiting-results'}]},cloud)).groups,'B→C→A')
+  assert.equal(groupOutcome(p,{races:[{...race,raceId:race.id,state:'awaiting-results'}]},null),null)
   assert.equal(groupOutcome(p,{ races:[{ ...race,raceId:race.id,state:'result-conflict' }] },cloud).state,'result-conflict')
   assert.equal(groupOutcome(p,null,{ observations:[{ ...cloud.observations[0],retrievedAt:at }] }),null)
   const dead = clone(cloud); dead.observations[0].payload.results[1].rank=1

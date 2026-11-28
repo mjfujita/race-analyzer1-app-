@@ -4,8 +4,9 @@ import { validateForecastReview } from '../src/forecastReview.js'
 import { validateModel } from '../src/modelStore.js'
 import { validateLedger, emptyLedger, importLedger, parseRaceObservations, LEDGER_COLLECTIONS } from '../src/forecastLedger.js'
 import { importOddsSnapshots } from '../src/oddsHistory.js'
-import { decisionCutoff, japanRaceDay, raceDateISO, snapshotTiming, validTimestamp } from '../src/raceTime.js'
+import { decisionCutoff, japanRaceDay, raceDateISO, raceTimestamp, snapshotTiming, validTimestamp } from '../src/raceTime.js'
 import {summarizeRaceResult} from '../src/raceProgress.js'
+import {validatePrediction,validateJournalResult,mergeJournal,latestResult,legacyPrediction,officialJournalResult} from '../src/predictionJournal.js'
 
 export const MAX_BODY_BYTES = 3_000_000
 const MAX_RACE_FILES = 2000
@@ -516,7 +517,75 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       .map(row => validateRaceKey(row.name.slice(0, -5), raceDate))))
     return { schemaVersion: 1, races: races.flat() }
   }
-  return { ingestBundle, get, getDashboard, getCatalog, getRaceProgress, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand, getCaptureRequest }
+  async function getPredictionJournal({raceDate}) {
+    validateRaceKey('day',raceDate)
+    const journal={predictions:[],results:[],receipts:{},legacy:[],official:[]}
+    for(const kind of ['predictions','results']){
+      const rows=await list(`${prefix}/prediction-journal/${raceDate}/${kind}`,{limit:1000,complete:true})
+      await forEachBounded(rows,4,async row=>{
+        const stored=await store.get(row.path)
+        if(!stored||stored.ownerId!==ownerId||!validTimestamp(stored.receivedAt))conflict('予想・結果の保存内容を確認できません。')
+        try{(kind==='predictions'?validatePrediction:validateJournalResult)(stored.record)}catch{conflict('予想・結果の保存内容を確認できません。')}
+        if((stored.record.race?.raceDate??stored.record.raceDate)!==raceDate)conflict('開催日が一致しません。')
+        journal[kind].push(stored.record);journal.receipts[stored.record.id]=stored.receivedAt
+      })
+    }
+    const merged=mergeJournal({predictions:[],results:[]},journal)
+    const races=await availableRaces(raceDate)
+    await forEachBounded(races,4,async race=>{
+      const [latestRow]=await list(`${racePrefix(race.id,raceDate)}/observations`,{limit:1,column:'created_at',order:'desc'})
+      const payload=latestRow?await store.get(latestRow.path):null
+      if(payload&&(payload.ownerId!==ownerId||payload.race?.raceId!==race.id||payload.race?.raceDate!==raceDate))conflict('観測の保存範囲が一致しません。')
+      const official=officialJournalResult(payload?.race?.race??race,payload?.race?.observations,now())
+      if(official)journal.official.push(official)
+      const rows=await list(`${racePrefix(race.id,raceDate)}/ledger/groupPlans`,{limit:500,complete:true})
+      for(const row of rows){
+        const stored=await store.get(row.path)
+        if(stored?.ownerId!==ownerId||stored.scope?.raceId!==race.id||stored.scope?.raceDate!==raceDate)conflict('以前の予想記録を確認できません。')
+        if(stored.record.decision==='plan')journal.legacy.push(legacyPrediction(stored.record))
+      }
+    })
+    return {...journal,...merged}
+  }
+  async function saveJournalRecord(record){
+    boundedJson(record)
+    const raceId=record?.race?.id??record?.raceId,raceDate=record?.race?.raceDate??record?.raceDate
+    validateRaceKey(raceId,raceDate)
+    const kind=record?.kind==='selection'?'predictions':record?.kind==='result'?'results':null
+    if(!kind)invalid('予想または結果を指定してください。')
+    try{(kind==='predictions'?validatePrediction:validateJournalResult)(record)}catch(error){invalid(error.message)}
+    checkTime(record.createdAt,now(),'登録日時')
+    const base=`${prefix}/prediction-journal/${raceDate}`,path=`${base}/${kind}/${keyHash(record.id)}.json`
+    const before=await store.get(path)
+    if(before){if(contentHash(before.record)!==contentHash(record))conflict('同じIDの記録は変更できません。');return {ok:true,receivedAt:before.receivedAt}}
+    const metaRows=await list(`${racePrefix(raceId,raceDate)}/observations`,{limit:1,order:'desc',column:'created_at'})
+    const meta=metaRows.length?await store.get(metaRows[0].path):null
+    if(!meta?.race?.race?.horses?.length)invalid('先にこのレースのデータを同期してください。')
+    if(meta.ownerId!==ownerId||meta.race.raceId!==raceId||meta.race.raceDate!==raceDate)conflict('観測の保存範囲が一致しません。')
+    const field=meta.race.race.horses.map(h=>Number(h.no))
+    if(kind==='predictions'&&(record.field.length!==field.length||record.field.some(h=>!field.includes(h.no)))
+      ||kind==='results'&&record.numbers.some(no=>!field.includes(no)))invalid('出走馬の馬番が一致しません。')
+    if(kind==='predictions'){
+      const stored=await store.get(`${racePrefix(raceId,raceDate)}/snapshot-ids/${keyHash(record.snapshot.id)}.json`)
+      if(!stored||['id','kind','raceId','raceDate','observedAt','retrievedAt','odds'].some(key=>contentHash(stored[key])!==contentHash(record.snapshot[key]))
+        ||record.race.postTime!==meta.race.race.postTime)invalid('同期済みの観測・発走時刻と一致しません。最新のレース情報を確認してください。')
+    }
+    if(kind==='results'){
+      if(now()<Date.parse(raceTimestamp(meta.race.race,meta.race.race.postTime)))invalid('発走予定時刻前の結果は登録できません。')
+      const rows=await list(`${base}/results`,{limit:1000,complete:true}),results=[]
+      for(const row of rows){const value=await store.get(row.path);results.push(value.record)}
+      const current=latestResult(results,raceId)
+      if((current?.id??null)!==record.replacesId)conflict('結果が更新されています。同期してから訂正してください。')
+      try{mergeJournal({predictions:[],results},{predictions:[],results:[record]})}catch(error){invalid(error.message)}
+      // The unique parent reservation prevents competing corrections from overwriting one another.
+      await immutable(`${base}/result-links/${keyHash(`${raceId}:${record.replacesId??'first'}`)}.json`,{id:record.id,hash:contentHash(record)})
+    }
+    const receivedAt=new Date(now()).toISOString()
+    const created=await store.putImmutable(path,{ownerId,record,receivedAt})
+    if(!created.created){if(contentHash(created.existing.record)!==contentHash(record))conflict('同じIDに異なる内容があります。');return {ok:true,receivedAt:created.existing.receivedAt}}
+    return {ok:true,receivedAt}
+  }
+  return { getPredictionJournal, saveJournalRecord, ingestBundle, get, getDashboard, getCatalog, getRaceProgress, saveLedger, pullLedger, pullForecastRaces, requestCapture, pullCommands, acknowledgeCommand, getCaptureRequest }
 }
 
 export function safeTokenEqual(left, right) {
@@ -565,6 +634,7 @@ export function createCompanionHandler({ service, authenticateUser, ownerId, com
         const query = req.query ?? Object.fromEntries(new URL(req.url, 'https://local.invalid').searchParams)
         if (query.catalog === '1' && Object.keys(query).length === 1) return res.status(200).json(await service.getCatalog())
         if(query.progress==='1'&&Object.keys(query).length===2&&typeof query.raceDate==='string')return res.status(200).json(await service.getRaceProgress({raceDate:query.raceDate}))
+        if(query.journal==='1'&&Object.keys(query).length===2&&typeof query.raceDate==='string')return res.status(200).json(await service.getPredictionJournal({raceDate:query.raceDate}))
         if (query.dashboard === '1' && Object.keys(query).length === 1) return res.status(200).json(await service.getDashboard())
         if(query.capture==='1'&&Object.keys(query).length===3&&typeof query.raceId==='string'&&typeof query.raceDate==='string') return res.status(200).json(await service.getCaptureRequest({raceId:query.raceId,raceDate:query.raceDate}))
         if (Object.keys(query).some(key => !['raceId', 'raceDate'].includes(key)) || Object.values(query).some(value => typeof value !== 'string')) invalid('取得条件が不正です。')
@@ -590,6 +660,10 @@ export function createCompanionHandler({ service, authenticateUser, ownerId, com
           return res.status(200).json(await service.acknowledgeCommand(body))
         }
         return res.status(200).json(await service.ingestBundle(body))
+      }
+      if(body?.action==='save-journal'){
+        if(Object.keys(body).some(key=>!['action','record'].includes(key)))invalid('保存条件が不正です。')
+        return res.status(200).json(await service.saveJournalRecord(body.record))
       }
       if (body?.action === 'request-capture') {
         if (Object.keys(body).some(key => !['action', 'raceId', 'raceDate'].includes(key))) invalid('取得条件が不正です。')

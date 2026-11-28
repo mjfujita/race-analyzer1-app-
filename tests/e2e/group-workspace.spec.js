@@ -11,6 +11,8 @@ async function openGroups(page,state='groups-flow') {
     if (!localStorage.getItem(key)) localStorage.setItem(key,JSON.stringify(events.map(s => ({ ...s,odds }))))
   },{ race,state,events:demoSnapshots(),odds })
   await page.goto(`/market-preview.html?state=${state}`)
+  await page.getByText('以前の配分・購入記録機能',{exact:true}).click()
+  await page.getByText('以前の予想・購入記録を見る',{exact:true}).click()
 }
 async function stored(page) {
   return page.evaluate(() => JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('race-forecast-ledger:')))))
@@ -39,6 +41,8 @@ test('group formation freezes independently of edits, survives reload, and recon
   await expect(frozen).toContainText('保存した着順：B → A → C')
   expect((await stored(page)).groupPlans[0]).toEqual(first)
   await page.reload()
+  await page.getByText('以前の配分・購入記録機能',{exact:true}).click()
+  await page.getByText('以前の予想・購入記録を見る',{exact:true}).click()
   await expect(frozen).toContainText('8点・投入予定 800円')
   const results = [3,5,1,2,4,6,7,8].map((horseNo,i) => ({ horseNo,rank:i+1 }))
   await page.evaluate(async ({ race,horses,results }) => {
@@ -81,6 +85,8 @@ test('budget errors are recoverable; explicit purchases and official payouts are
 test('missing, corrupt and unavailable storage never overwrite records; post-cutoff save is research',async ({ page }) => {
   await page.goto('/market-preview.html?state=empty')
   await page.getByRole('button',{ name:'グループ・買い目',exact:true }).click()
+  await page.getByText('以前の配分・購入記録機能',{exact:true}).click()
+  await page.getByText('以前の予想・購入記録を見る',{exact:true}).click()
   await expect(page.getByText('実オッズの取得待ちです。')).toBeVisible()
   await expect(page.getByRole('button',{ name:'グループと比較案を固定保存' })).toBeDisabled()
   await openGroups(page,'groups-late')
@@ -94,6 +100,8 @@ test('missing, corrupt and unavailable storage never overwrite records; post-cut
     localStorage.setItem(key,'{broken')
   })
   await page.reload()
+  await page.getByText('以前の配分・購入記録機能',{exact:true}).click()
+  await page.getByText('以前の予想・購入記録を見る',{exact:true}).click()
   await expect(page.getByRole('alert')).toContainText('上書きせず保護')
   await expect(page.getByRole('button',{ name:'グループと比較案を固定保存' })).toBeDisabled()
   await expect(page.getByRole('button',{ name:'保存済み記録を再同期' })).toBeDisabled()
@@ -119,6 +127,8 @@ test('browser to authenticated API to immutable store: offline retry obtains rec
     await route.fulfill({ status:response.status,headers:response.headers,json:response.body })
   })
   await page.goto(`/market-preview.html?state=${state}`)
+  await page.getByText('以前の配分・購入記録機能',{exact:true}).click()
+  await page.getByText('以前の予想・購入記録を見る',{exact:true}).click()
   await expect(page.getByRole('table',{ name:'グループのカスタマイズ' }).getByRole('row')).toHaveCount(9)
   await thirdOnlyC(page)
   await page.getByRole('button',{ name:'グループと比較案を固定保存' }).click()
@@ -136,6 +146,8 @@ test('browser to authenticated API to immutable store: offline retry obtains rec
     for (const k of Object.keys(localStorage)) if (!k.startsWith('sb-')) localStorage.removeItem(k)
   })
   await page.reload()
+  await page.getByText('以前の配分・購入記録機能',{exact:true}).click()
+  await page.getByText('以前の予想・購入記録を見る',{exact:true}).click()
   await expect(frozen).toContainText('締切前の受領確認済み')
   expect((await stored(page)).groupPlans).toHaveLength(1)
   serverNow = '2026-11-15T07:00:00.000Z'
@@ -154,5 +166,6 @@ test('browser to authenticated API to immutable store: offline retry obtains rec
   await expect(groupReview).toContainText('購入・精算待ち')
   await groupReview.getByRole('button',{ name:'グループ判断と購入記録を開く' }).click()
   await expect(page.getByRole('heading',{ name:'グループ・買い目比較',exact:true })).toBeVisible()
+  await page.getByText('以前の予想・購入記録を見る',{exact:true}).click()
   await expect(page.getByRole('region',{ name:'保存したグループ判断' })).toContainText('結果 3→5→1（B→C→A）')
 })

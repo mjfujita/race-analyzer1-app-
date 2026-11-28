@@ -119,3 +119,10 @@ export function enrichCloudHorses(horses, cloudRace) {
       ...(next.cancelled != null ? { cancelled: next.cancelled } : {}) }
   })
 }
+
+export function fetchPredictionJournal(raceDate,signal){
+  return request(`/api/companion?journal=1&raceDate=${encodeURIComponent(raceDate)}`,{signal:signal??AbortSignal.timeout(20000)})
+}
+export function saveJournalRecord(record){
+  return request('/api/companion',{signal:AbortSignal.timeout(20000),body:{action:'save-journal',record}})
+}

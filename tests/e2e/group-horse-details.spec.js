@@ -7,6 +7,7 @@ test('every grouped horse opens its own detail and keyboard return preserves the
   await page.clock.setFixedTime(new Date('2026-11-15T06:31:00Z'))
   await page.goto('/market-preview.html?state=groups-horse-details')
   await page.getByLabel('観測時点').selectOption('demo-1')
+  await page.getByText('以前の配分・購入記録機能',{exact:true}).click()
   await page.getByLabel('１レースの予算上限').fill('9000')
   await page.getByLabel('判断の根拠・不確かな点').fill('編集中の根拠を残したまま能力を見る')
   const boundary=page.getByLabel('1番の前で区切る',{exact:true})
