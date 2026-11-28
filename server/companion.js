@@ -576,7 +576,7 @@ export function createCompanionService({ store, ownerId, runtimeValidator, now =
       const payload=latestRow?await store.get(latestRow.path):null
       if(payload&&(payload.ownerId!==ownerId||payload.race?.raceId!==race.id||payload.race?.raceDate!==raceDate))conflict('観測の保存範囲が一致しません。')
       const meta={...race,...payload?.race?.race}
-      journal.races.push(Object.fromEntries(['id','raceDate','place','placeCode','raceNo','name','postTime','fieldSize'].filter(key=>meta[key]!=null).map(key=>[key,meta[key]])))
+      journal.races.push(Object.fromEntries(['id','raceDate','place','placeCode','raceNo','name','postTime','fieldSize','surface','surfaceCode','distance'].filter(key=>meta[key]!=null).map(key=>[key,meta[key]])))
       const automatic=automaticResultGroups(meta,payload?.race?.snapshots??[],payload?.race?.observations??[],now())
       if(automatic)journal.automaticGroups.push(automatic)
       const official=officialJournalResult(payload?.race?.race??race,payload?.race?.observations,now())
