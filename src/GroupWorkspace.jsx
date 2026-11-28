@@ -12,6 +12,8 @@ import HorseAssessments from './HorseAssessments.jsx'
 import GroupPredictionCard from './GroupPredictionCard.jsx'
 import {useAceAssessment} from './useAceAssessment.js'
 import PersonalGroupComposer from './PersonalGroupComposer.jsx'
+import PredictionJournalPanel from './PredictionJournalPanel.jsx'
+import {usePredictionJournal} from './usePredictionJournal.js'
 import PersonalPredictionReview from './PersonalPredictionReview.jsx'
 import GroupSelectionNumbers from './GroupSelectionNumbers.jsx'
 import GroupProbabilitySummary from './GroupProbabilitySummary.jsx'
@@ -54,6 +56,7 @@ export default function GroupWorkspace(props) {
 }
 
 function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSyncLedger, onOpenAbility, review, syncedGroupReceipts, loading = false,groupDisplay,onGroupDisplayChange,personalOnly=false,onOpenPersonal,onOpenGroups }) {
+  const journal=usePredictionJournal({userId,race,connected:Boolean(onSyncLedger),revision:cloudRevision})
   const [data,setData] = useState(() => load(userId,race))
   const [initialGroup]=useState(()=>{
     const config=matchingGroupPreference(race,groupDisplay)
@@ -125,6 +128,7 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
     && field.every(h => Number.isFinite(s.odds?.[h.no]) && s.odds[h.no] >= 1))
     .sort((a,b) => Date.parse(a.observedAt)-Date.parse(b.observedAt))[0]
   const frozen = ledger.groupPlans?.find(p => p.id === selectedId) ?? ledger.groupPlans?.at(-1)
+  const personalSaved=Boolean(frozen)||journal.data.predictions.some(p=>p.race.id===String(race.id))
   const outcome = frozen ? groupOutcome(frozen,review,data.cloud) : null
   const purchase = frozen ? activePurchases(ledger).find(p => p.forecastId === frozen.id) : null
   const settlement = purchase ? latestSettlement(ledger,purchase.id) : null
@@ -160,14 +164,15 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
   function startPersonal(initial=null) {
     if (disabled || loading) return
     setComposerSource(JSON.parse(JSON.stringify({race,field,snapshot:current,referenceSnapshot:previous ?? null,
-      threshold:Number(threshold),boundaries,excluded,groupProbabilities,probabilityBoundary:ace.boundary,...(initial?.type?{initialType:initial.type,initialSlots:initial.slots}:{})})))
+      threshold:Number(threshold),boundaries,excluded,groupProbabilities,probabilityBoundary:ace.boundary,
+      probabilities:{groups:groupProbabilities,asOf:ace.boundary??null,horses:ace.rows.map(h=>({no:h.no,name:h.name,...Object.fromEntries(['win','second','third','top3'].map(k=>[k,h.probabilities?.[k]??null]))}))},...(initial?.type?{initialType:initial.type,initialSlots:initial.slots}:{})})))
     setError(''); setMessage('')
   }
   async function savePersonal(plan) {
-    if (await persist(appendGroupPlan(ledger,plan),'私の予想を登録しました。')) {
-      setSelectedId(plan.id); setComposerSource(null); setQuickChoice(null)
-      requestAnimationFrame(() => {recordsHeading.current?.focus();recordsHeading.current?.scrollIntoView({block:'start'})})
-    }
+    await journal.save(plan)
+    setComposerSource(null);setQuickChoice(null)
+    if(!personalOnly&&onOpenPersonal)onOpenPersonal()
+    requestAnimationFrame(()=>window.scrollTo({top:0,behavior:'instant'}))
   }
   function changeObservation(id) {
     setSnapshotId(id===data.history[0]?.id?'':id); setBoundaries(null); setSlotChoice(null); setOverrides({}); setQuoteText(''); setQuoteObservedAt(''); setQuoteRetrievedAt(null)
@@ -199,19 +204,19 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <HorseAssessments key={horseDetail.no} {...{race,horses,statistics,userId,cloudRevision,review}} initialHorseNo={horseDetail.no} detail asOf={horseDetail.asOf} />
     </div>}
     <div hidden={Boolean(horseDetail)} inert={Boolean(horseDetail)}><div className="rca-stack rca-groups">
-    <div className="rca-page-title"><div><h1>{personalOnly||composerSource?'私の予想':'グループ・買い目比較'}</h1><p>{personalOnly||composerSource?'選んだグループ・券種・買い方・予定金額を残し、結果と振り返ります。':'人気のまとまりと能力を確認し、着順を変えた案を比較します。'}</p></div>{onOpenAbility && <button className="rca-secondary" onClick={onOpenAbility}>能力・適性を詳しく見る</button>}</div>
+    <div className="rca-page-title"><div><h1>{personalOnly||composerSource?'私の予想':'グループ・買い目比較'}</h1><p>{personalOnly||composerSource?'選んだグループと買い目を残し、着順・確定払戻と照合します。':'人気のまとまりと能力を確認し、着順を変えた案を比較します。'}</p></div>{onOpenAbility && <button className="rca-secondary" onClick={onOpenAbility}>能力・適性を詳しく見る</button>}</div>
     {loading && <p role="status" className="rca-notice">保存済みデータを読み込み中です。</p>}
     {(error || data.error) && <p role="alert" className="rca-error">{error || data.error}</p>}{message && <p role="status" className="rca-notice">{message}</p>}
     {!personalOnly&&!composerSource&&onOpenPersonal&&<div><button className="rca-secondary" onClick={onOpenPersonal}>私の予想を開く</button></div>}
-    {personalOnly&&!composerSource&&records}
-    {personalOnly && !composerSource && <section className="rca-panel"><h2>{frozen?'新しい予想を追加':'自分で選んだ買い目を残す'}</h2><p className="rca-muted">まずグループを確認し、券種と買い方を選びます。選択は空欄から始まります。</p>
-      {!frozen&&<div className="rca-group-cards my-4">{grouping?.groups.map(g=><div className="rca-group-card" key={g.label}><strong>{g.label}</strong><p>{g.horses.filter(h=>!excluded.includes(h.no)).map(h=>`${h.no} ${h.name}`).join(' ／ ') || '候補なし'}</p><GroupProbabilitySummary summary={groupProbabilities.find(s=>s.label===g.label)} /></div>)}</div>}
+    {personalOnly&&!composerSource&&<PredictionJournalPanel journal={journal} race={race} field={field} legacy={ledger.groupPlans??[]} cloud={data.cloud} hasComposer={Boolean(composerSource)} />}
+    {personalOnly && !composerSource && <section className="rca-panel"><h2>{personalSaved?'新しい予想を追加':'自分で選んだ買い目を残す'}</h2><p className="rca-muted">まずグループを確認し、券種と買い方を選びます。選択は空欄から始まります。</p>
+      {!personalSaved&&<div className="rca-group-cards my-4">{grouping?.groups.map(g=><div className="rca-group-card" key={g.label}><strong>{g.label}</strong><p>{g.horses.filter(h=>!excluded.includes(h.no)).map(h=>`${h.no} ${h.name}`).join(' ／ ') || '候補なし'}</p><GroupProbabilitySummary summary={groupProbabilities.find(s=>s.label===g.label)} /></div>)}</div>}
       {!current || !grouping?.complete ? <p className="rca-notice">全頭の単勝オッズの取得待ちです。データの同期後に登録できます。</p> : <p className="rca-muted">観測 {formatRaceTime(current.observedAt)} ／ 取得 {formatRaceTime(current.retrievedAt)}。この観測とグループを基準に入力します。</p>}
       {analysis.error && <p role="alert" className="rca-error">{analysis.error}</p>}
       {field.some(h=>h.cancelled) && <p className="rca-error">取消を含むレースは新しい予想の登録を保留します。保存済み記録は確認できます。</p>}
       <div className="flex flex-wrap gap-3 mt-4"><button className="rca-primary" disabled={disabled || loading} onClick={()=>startPersonal()}>新しい予想を入力する</button>{onOpenGroups && <button className="rca-secondary" onClick={onOpenGroups}>グループを確認・調整する</button>}</div>
     </section>}
-    {composerSource&&<><div ref={composerHeading} tabIndex={-1}><PersonalGroupComposer source={composerSource} disabled={Boolean(data.error) || field.some(h=>h.cancelled)} busy={busy} onSave={savePersonal} /></div><div><button className="rca-secondary" disabled={busy} onClick={()=>setComposerSource(null)}>入力をやめて戻る</button></div></>}
+    {composerSource&&<><div ref={composerHeading} tabIndex={-1}><PersonalGroupComposer source={composerSource} disabled={Boolean(data.error) || field.some(h=>h.cancelled)} busy={journal.busy} onSave={savePersonal} /></div><div><button className="rca-secondary" disabled={busy} onClick={()=>setComposerSource(null)}>入力をやめて戻る</button></div></>}
     {!personalOnly && !composerSource && <><section className="rca-panel"><h2>１ · 単勝オッズでグループを作る</h2><div className="rca-group-controls">
       <label>観測時点<select className={control} value={current?.id ?? ''} onChange={e => changeObservation(e.target.value)}>{data.history.map(s => <option key={s.id} value={s.id}>{formatRaceTime(s.observedAt)} · 取得 {formatRaceTime(s.retrievedAt)}</option>)}</select></label>
       <label>自動で区切る倍率<input className={control} type="number" min="1.1" max="5" step="0.1" value={threshold} onChange={e => { setThreshold(e.target.value); setBoundaries(null); setSlotChoice(null); setOverrides({}) }} /></label>
@@ -233,7 +238,7 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
         <td><input type="checkbox" aria-label={`${h.no}番を候補に含める`} checked={!excluded.includes(h.no)} onChange={() => { setExcluded(toggle(excluded,h.no)); setOverrides({}) }} /></td>
       </tr>)}</tbody></table></div></>}
     </section>
-    {grouping && <section className="rca-panel"><h2>２ · 着順パターンと券種を比較する</h2><p className="rca-muted">初期選択は比較用です。システムが有利な着順を推奨したものではありません。</p>
+    {grouping && <details className="rca-panel"><summary>以前の配分・購入記録機能</summary><h2>２ · 着順パターンと券種を比較する</h2><p className="rca-muted">初期選択は比較用です。システムが有利な着順を推奨したものではありません。</p>
       <div className="rca-group-slots">{analysis.slots.map((slot,i) => <fieldset key={i}><legend>{i+1}着のグループ</legend>{grouping.groups.map(g => <label key={g.label}><input type="checkbox" checked={slot.includes(g.label)} onChange={() => { setSlotChoice(analysis.slots.map((s,index) => index === i ? toggle(s,g.label) : s)); setOverrides({}) }} />{g.label}</label>)}</fieldset>)}</div>
       <div className="rca-group-controls"><label>１レースの予算上限<input className={control} type="number" min="0" max="10000" step="100" value={budget} onChange={e => setBudget(e.target.value)} /></label><label>１点の基本金額<input className={control} type="number" min="100" max="10000" step="100" value={unit} onChange={e => { setUnit(e.target.value); setOverrides({}) }} /></label></div>
       <div className="rca-group-cards">{analysis.alternatives.map(a => <label key={a.id} className={`rca-group-card ${variant === a.id ? 'rca-group-selected' : ''}`}><span><input type="radio" name="group-variant" checked={variant === a.id} onChange={() => { setVariant(a.id); setOverrides({}) }} /> {a.label}</span><strong>{a.tickets.length}点</strong><p>{a.type} · {yen(a.tickets.length*Number(unit))}</p><small>{a.slots.slice(0,a.type === '馬単' ? 2 : 3).map(s => s.join('・') || '未選択').join(a.type === '3連複' ? ' − ' : ' → ')}</small></label>)}</div>
@@ -252,9 +257,9 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <label className="block my-4">判断の根拠・不確かな点<textarea className={`${control} block w-full mt-2`} maxLength={4000} rows={3} value={note} onChange={e => setNote(e.target.value)} /></label>
       <div className="flex flex-wrap gap-3"><button className="rca-primary" disabled={disabled || analysis.totals?.overBudget || !analysis.totals?.allocations.length} onClick={() => freeze('plan')}>{busy ? '保存中…' : 'グループと比較案を固定保存'}</button><button className="rca-secondary" disabled={disabled} onClick={() => freeze('skip')}>見送りを固定保存</button></div>
       <p className="rca-muted mt-3">保存時刻が発走10分前を過ぎた場合や、価格の時刻証跡が不足する場合は過去検証です。保存は購入になりません。</p>
-    </section>}
+    </details>}
     </>}
-    {!personalOnly&&records}
+    {!personalOnly&&<details><summary>以前の予想・購入記録を見る</summary>{records}</details>}
   </div></div></>
 }
 

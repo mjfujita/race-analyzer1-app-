@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test'
 
 const card=(page,label)=>page.getByRole('article',{name:`${label}グループ`,exact:true})
 async function open(page){
-  await page.clock.setFixedTime(new Date('2026-11-15T06:25:00Z'))
+  await page.clock.setFixedTime(new Date('2026-11-15T06:31:00Z'))
   await page.setViewportSize({width:390,height:844})
   await page.goto('/market-preview.html?state=groups-local-review')
 }
@@ -48,9 +48,9 @@ test('card selections open a frozen personal draft with horse numbers, then save
   await page.getByRole('button',{name:'同期データを再読込（開発確認）'}).click()
   await expect(composer.getByRole('group',{name:'1着の馬番',exact:true})).toContainText('馬番 2')
   await composer.getByRole('button',{name:'私の予想を登録する',exact:true}).click()
-  await expect(page.getByRole('region',{name:'保存したグループ判断',exact:true})).toContainText('7点・投入予定 700円')
-  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.startsWith('race-forecast-ledger:')))))
-  expect(saved.groupPlans[0].slots).toEqual([['A'],['B'],[]]);expect(saved.purchases).toEqual([])
+  await expect(page.getByRole('region',{name:'保存したグループ判断',exact:true})).toContainText('馬単 · 7点 · 対象 8頭')
+  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.startsWith('race-prediction-journal:')))))
+  expect(saved.predictions[0].slots).toEqual([['A'],['B'],[]]);expect(saved.predictions[0].budget).toBeUndefined()
   expect(errors).toEqual([])
 })
 

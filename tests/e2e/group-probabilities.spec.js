@@ -17,6 +17,7 @@ test('group horse probabilities match the full ACE detail at the selected observ
   const card=summary(page),values=await card.getByRole('definition').allTextContents()
   expect(values.slice(0,4).every(v=>/^\d+\.\d%$/.test(v))).toBe(true)
   expect(values[4]).toBe('5.5倍');expect(values[5]).toMatch(/^\d+\.\d%$/)
+  await page.getByText('以前の配分・購入記録機能',{exact:true}).click()
   await page.getByLabel('１レースの予算上限').fill('9000')
   await page.getByLabel('判断の根拠・不確かな点').fill('数値を比較してから軸を決める')
   const before=await page.evaluate(()=>JSON.stringify(localStorage))

@@ -216,3 +216,19 @@ button:disabled { cursor: not-allowed; }
   .rca-personal-position-list article { grid-template-columns:1fr 1fr; gap:8px; }
   .rca-personal-position-list article>h3 { grid-column:1/-1; }
 }
+
+.rca-journal-slots{display:grid;gap:12px;margin:16px 0;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.rca-journal-slots>div{border:1px solid #dce5ef;border-radius:12px;padding:14px;background:#f7fafc}
+.rca-journal-tickets{display:grid;grid-template-columns:repeat(auto-fit,minmax(95px,1fr));gap:8px;padding:12px 0;max-height:320px;overflow:auto;list-style:none}
+.rca-journal-table{min-width:750px}.rca-journal-table td,.rca-journal-table th{vertical-align:top}
+
+.rca-groups .rca-journal-tally{min-width:0;width:100%;table-layout:fixed}.rca-groups .rca-journal-tally th,.rca-groups .rca-journal-tally td{min-width:0;padding:12px 8px}
+
+@media(max-width:640px){
+ .rca-groups .rca-journal-table{min-width:0;width:100%;table-layout:fixed}
+ .rca-journal-table thead{display:none}
+ .rca-journal-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:12px 0;border-bottom:1px solid #dce5ef;gap:10px}
+ .rca-groups .rca-journal-table tbody th{grid-column:1/-1;min-width:0;padding:6px 0;border:0}
+ .rca-groups .rca-journal-table tbody td{min-width:0;padding:6px 0;border:0;overflow-wrap:anywhere}
+ .rca-journal-table td::before{display:block;content:attr(data-label);font-size:11px;color:#668098;margin-bottom:5px;font-weight:650}
+}
