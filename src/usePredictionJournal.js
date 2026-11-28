@@ -6,11 +6,12 @@ import {saveGroupRegistration} from './cloudStore.js'
 const empty={predictions:[],results:[]}
 export function usePredictionJournal({userId,race,connected,revision}){
   const date=journalDate(race)
-  const [registrations,setRegistrations]=useState([])
+  const [registrations,setRegistrations]=useState([]),[registrationReady,setRegistrationReady]=useState(false)
   const [data,setData]=useState(empty),[remote,setRemote]=useState({receipts:{},legacy:[],official:[]}),[error,setError]=useState(''),[message,setMessage]=useState(''),[loading,setLoading]=useState(false),[busy,setBusy]=useState(false)
-  const scope=useRef(''),active=`${userId}:${date}`,saving=useRef(false)
+  const scope=useRef(''),refreshId=useRef(0),active=`${userId}:${date}`,saving=useRef(false)
   const refresh=useCallback(async()=>{
-    scope.current=active;setError('');setLoading(true)
+    const requestId=++refreshId.current
+    setError('');setLoading(true)
     try{
       const local=readJournal(localStorage,userId,date)
       const localGroups=readGroupRegistrations(localStorage,userId,date)
@@ -19,12 +20,16 @@ export function usePredictionJournal({userId,race,connected,revision}){
         const response=await fetchPredictionJournal(date)
         const merged=await writeJournal(localStorage,userId,date,mergeJournal(local,response))
         const groups=await writeGroupRegistrations(localStorage,userId,date,response.registrations??[])
-        if(scope.current===active){setData(merged);setRegistrations(groups);setRemote(response)}
-      }
-    }catch(problem){if(scope.current===active)setError(problem.message)}
-    finally{if(scope.current===active)setLoading(false)}
+        if(scope.current===active&&refreshId.current===requestId){setData(merged);setRegistrations(groups);setRemote(old=>({...response,receipts:{...old.receipts,...response.receipts}}));setRegistrationReady(true)}
+      }else if(scope.current===active&&refreshId.current===requestId)setRegistrationReady(true)
+    }catch(problem){if(scope.current===active&&refreshId.current===requestId)setError(problem.message)}
+    finally{if(scope.current===active&&refreshId.current===requestId)setLoading(false)}
   },[userId,date,connected,active])
-  useEffect(()=>{setData(empty);setRegistrations([]);setRemote({receipts:{},legacy:[],official:[]});refresh();return()=>{scope.current=''}},[refresh,revision])
+  // A race-data revision is a background refresh, not a new journal scope.
+  // Keep the last confirmed registration while editing; the server still checks
+  // replacesId and rejects stale cross-device updates on every save.
+  useEffect(()=>{scope.current=active;setRegistrationReady(false);setData(empty);setRegistrations([]);setRemote({receipts:{},legacy:[],official:[]});return()=>{scope.current=''}},[active])
+  useEffect(()=>{void refresh()},[refresh,revision])
   const save=async record=>{
     if(saving.current)throw new Error('保存処理中です。')
     saving.current=true;setBusy(true);setError('');setMessage('')
@@ -68,5 +73,5 @@ export function usePredictionJournal({userId,race,connected,revision}){
     try{for(const record of registrations)await saveGroupRegistration(record);for(const record of [...data.predictions,...data.results])await saveJournalRecord(record);await refresh();setMessage('保存済み記録をクラウドへ同期しました。')}
     catch(problem){setError(problem.message)}finally{saving.current=false;setBusy(false)}
   }
-  return {data,registrations,registerGroups,remote,error,message,loading,busy,save,refresh,resend,connected}
+  return {data,registrations,registrationReady,registerGroups,remote,error,message,loading,busy,save,refresh,resend,connected}
 }

@@ -98,8 +98,59 @@ test('failed cloud update retains the prior result classification and draft unti
  await expect(page.getByRole('alert').filter({hasText:'グループの登録は未完了'})).toBeVisible()
  expect(await records(page)).toEqual([first]);expect((await service.getPredictionJournal({raceDate:race.raceDate})).registrations).toEqual([first])
  await expect(page.getByLabel('3番の前で区切る',{exact:true})).not.toBeChecked()
- await page.getByRole('button',{name:'登録状態を再読込',exact:true}).click()
+ await expect(panel.getByRole('button',{name:'グループ登録を更新',exact:true})).toBeEnabled()
  await expect(panel).toContainText('変更は未登録です。')
  await page.getByRole('button',{name:'グループ登録を更新',exact:true}).click();await expect(panel).toContainText('表示中のグループは登録済みです。')
  expect(attempts[2]).toEqual(attempts[1]);expect(await records(page)).toHaveLength(2)
+})
+test('background journal refresh does not lock registration or erase its saved state',async({page})=>{
+ const state='groups-connected-registration-background',ownerId=`synthetic-demo-${state}`,service=createCompanionService({store:memoryStore(),ownerId,now:()=>Date.parse('2026-11-15T07:15:00Z')})
+ await service.ingestBundle({schemaVersion:1,kind:'race-companion-bundle',generatedAt:'2026-11-15T06:20:00Z',status:{state:'ready',lastRunAt:'2026-11-15T06:20:00Z'},races:[{raceId:race.id,raceDate:race.raceDate,race:{...race,horses},snapshots:history(),observations:[]}]})
+ const handler=createCompanionHandler({service,ownerId,companionToken:'collector-secret-0123456789012345',authenticateDevice:async()=>({id:ownerId}),checkDeviceWrite:()=>{},authenticateUser:async()=>null})
+ let hold=false,release;const gate=new Promise(resolve=>{release=resolve})
+ await page.route('**/api/companion**',async route=>{
+  const req=route.request(),url=new URL(req.url())
+  if(hold&&url.searchParams.has('journal')){await gate;await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'架空の一覧更新エラー'})});return}
+  const response=await request(handler,{token:null,method:req.method(),body:req.method()==='POST'?req.postDataJSON():undefined,query:Object.fromEntries(url.searchParams)});await route.fulfill({status:response.status,contentType:'application/json',body:JSON.stringify(response.body)})
+ })
+ await open(page,state);const panel=page.getByRole('region',{name:'グループの独立登録'})
+ await page.getByRole('button',{name:'グループを登録',exact:true}).click();await expect(panel).toContainText('表示中のグループは登録済みです。')
+ await page.getByLabel('3番の前で区切る',{exact:true}).uncheck();hold=true
+ const pending=page.waitForRequest(req=>new URL(req.url()).searchParams.has('journal'))
+ await page.getByRole('button',{name:'同期データを再読込（開発確認）'}).click();await pending
+ try{
+  await expect(panel.getByRole('button',{name:'グループ登録を更新',exact:true})).toBeEnabled()
+  await expect(panel).toContainText('変更は未登録です。')
+ }finally{release()}
+ await expect(page.getByRole('alert').filter({hasText:'架空の一覧更新エラー'})).toBeVisible()
+ await expect(panel.getByRole('button',{name:'グループ登録を更新',exact:true})).toBeEnabled()
+ await panel.getByRole('button',{name:'グループ登録を更新',exact:true}).click()
+ await expect(panel).toContainText('表示中のグループは登録済みです。')
+ expect((await service.getPredictionJournal({raceDate:race.raceDate})).registrations).toHaveLength(2)
+ await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+})
+test('initial registration lookup failure remains blocked with a reason and recovers on retry',async({page})=>{
+ const state='groups-connected-initial-failure',ownerId=`synthetic-demo-${state}`,service=createCompanionService({store:memoryStore(),ownerId,now:()=>Date.parse('2026-11-15T07:15:00Z')})
+ await service.ingestBundle({schemaVersion:1,kind:'race-companion-bundle',generatedAt:'2026-11-15T06:20:00Z',status:{state:'ready',lastRunAt:'2026-11-15T06:20:00Z'},races:[{raceId:race.id,raceDate:race.raceDate,race:{...race,horses},snapshots:history(),observations:[]}]})
+ const handler=createCompanionHandler({service,ownerId,companionToken:'collector-secret-0123456789012345',authenticateDevice:async()=>({id:ownerId}),checkDeviceWrite:()=>{},authenticateUser:async()=>null})
+ let fail=true,lookups=0
+ await page.route('**/api/companion**',async route=>{
+  const req=route.request(),url=new URL(req.url())
+  if(url.searchParams.has('journal'))lookups++
+  if(fail&&url.searchParams.has('journal')){await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'架空の初回読込エラー'})});return}
+  const response=await request(handler,{token:null,method:req.method(),body:req.method()==='POST'?req.postDataJSON():undefined,query:Object.fromEntries(url.searchParams)});await route.fulfill({status:response.status,contentType:'application/json',body:JSON.stringify(response.body)})
+ })
+ await open(page,state);const panel=page.getByRole('region',{name:'グループの独立登録'})
+ await expect.poll(()=>lookups).toBeGreaterThanOrEqual(2)
+ await expect(panel.getByRole('button',{name:'登録状態を再読込',exact:true})).toBeVisible()
+ await expect(panel).toContainText('登録状態を確認できませんでした。')
+ await expect(panel.getByRole('button',{name:'グループを登録',exact:true})).toBeDisabled()
+ fail=false;await panel.getByRole('button',{name:'登録状態を再読込',exact:true}).click()
+ await expect(panel.getByRole('button',{name:'グループを登録',exact:true})).toBeEnabled()
+ await panel.getByRole('button',{name:'グループを登録',exact:true}).click()
+ await expect(panel.getByRole('button',{name:'グループ登録済み',exact:true})).toBeDisabled()
+ await expect(panel).toContainText('区切りや観測を変更すると更新できます。')
+ expect((await service.getPredictionJournal({raceDate:race.raceDate})).registrations).toHaveLength(1)
+ await page.setViewportSize({width:390,height:844});await panel.screenshot({path:'.qa/registration-recovery-mobile.png'})
+ await page.setViewportSize({width:1280,height:1000});await panel.screenshot({path:'.qa/registration-recovery-desktop.png'})
 })
