@@ -242,3 +242,15 @@ button:disabled { cursor: not-allowed; }
 .rca-registered-summary { margin: .75rem 0; font-weight: normal; overflow-wrap: anywhere; }
 .rca-registered-summary p { margin: .35rem 0; }
 .rca-registered-summary details { margin: .65rem 0; }
+
+.rca-all-result-table { width: 100%; table-layout: fixed; margin-top: 1rem; }
+.rca-all-result-table th, .rca-all-result-table td { overflow-wrap: anywhere; vertical-align: top; }
+.rca-result-group-letter { font-size: 1.25rem; color: #0b2545; }
+@media (max-width: 640px) {
+  .rca-all-result-table thead { display: none; }
+  .rca-all-result-table tbody tr { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-bottom: 1px solid #dbe5ef; margin-top: 1rem; }
+  .rca-all-result-table tbody th { grid-column: 1 / -1; }
+  .rca-all-result-table th, .rca-all-result-table td { min-width: 0; padding: .65rem .4rem; border: 0; }
+  .rca-all-result-table td::before { content: attr(data-label); display: block; color: #60768b; font-size: .75rem; margin-bottom: .3rem; }
+  .rca-all-result-table small { font-size: .7rem; line-height: 1.65; }
+}

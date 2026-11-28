@@ -9,7 +9,7 @@ export function journalPlans(journal,legacy=[]){
 }
 
 // Results use independently registered membership; saved predictions keep their own classification.
-export function racePredictionRows({raceDate,races=[],plans=[],results=[],official=[],registrations=[]}){
+export function racePredictionRows({raceDate,races=[],plans=[],results=[],official=[],registrations=[],automaticGroups=[]}){
   const map=new Map()
   for(const race of [...plans.map(p=>p.race),...registrations.map(r=>r.race),...races]){
     if(journalDate(race)!==raceDate)continue
@@ -22,11 +22,14 @@ export function racePredictionRows({raceDate,races=[],plans=[],results=[],offici
     const saved=plans.filter(p=>p.race.id===race.id&&p.race.raceDate===raceDate),plan=saved.at(-1)??null
     const result=resolvedResult(latestResult(results.filter(r=>r.raceDate===raceDate),race.id),official.find(r=>r.raceId===race.id&&r.raceDate===raceDate))??null
     const registration=latestGroupRegistration(registrations.filter(r=>r.race.raceDate===raceDate),race.id)
-    return {race,plans:saved,plan,result,registration,groupResult:reviewRegisteredGroups(registration,result),view:plan?reviewPrediction(plan,result):null}
+    const automatic=automaticGroups.find(g=>g.race.id===race.id&&g.race.raceDate===raceDate)??null
+    const groupBasis=registration??automatic
+    return {race,plans:saved,plan,result,registration,automatic,groupBasis,groupResult:reviewRegisteredGroups(groupBasis,result),view:plan?reviewPrediction(plan,result):null}
   }).sort((a,b)=>(Date.parse(raceTimestamp(a.race,a.race.postTime))||Infinity)-(Date.parse(raceTimestamp(b.race,b.race.postTime))||Infinity)||raceResultName(a.race).localeCompare(raceResultName(b.race),'ja',{numeric:true}))
 }
 export function raceGroupTally(rows){
-  const groups=new Map();let count=0
-  for(const row of rows){if(row.groupResult?.state!=='ready')continue;count++;row.groupResult.groups.forEach((g,i)=>{if(!groups.has(g))groups.set(g,[0,0,0]);groups.get(g)[i]++})}
-  return {count,groups:[...groups].sort(([a],[b])=>a.localeCompare(b))}
+  const groups=new Map();let count=0,registered=0,automatic=0,reference=0
+  for(const row of rows){if(row.groupResult?.state!=='ready')continue;count++;if(row.registration)registered++;else{automatic++;if(row.automatic?.timing!=='deadline')reference++}
+    for(const g of row.groupBasis?.grouping.groups??[])if(!groups.has(g.label))groups.set(g.label,[0,0,0]);row.groupResult.groups.forEach((g,i)=>{if(!groups.has(g))groups.set(g,[0,0,0]);groups.get(g)[i]++})}
+  return {count,registered,automatic,reference,groups:[...groups].sort(([a],[b])=>a.localeCompare(b))}
 }
