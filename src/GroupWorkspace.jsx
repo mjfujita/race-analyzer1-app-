@@ -210,6 +210,13 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
     returnTarget.current=event.currentTarget;returnPosition.current=window.scrollY
     setHorseDetail({no,asOf:current?.retrievedAt??null})
   }
+  const classificationSaved=registrationMatches(registered,current,grouping)
+  const registrationBlockReason=journal.busy?'登録中です。':
+    !journal.registrationReady?(journal.loading?'登録状態を確認しています。':journal.error?'登録状態を確認できませんでした。「登録状態を再読込」で再試行してください。':'登録状態を確認しています。'):
+    data.error?`保存データを確認できません。${data.error}`:
+    !grouping?.complete?'全頭のオッズが揃うまで登録できません。':
+    field.some(h=>h.cancelled)?'出走取消を含むため登録を保留しています。':
+    classificationSaved?'表示中のグループは登録済みです。区切りや観測を変更すると更新できます。':''
   const disabled = busy || Boolean(data.error) || Boolean(analysis.error) || !grouping?.complete || field.some(h => h.cancelled)
   const records = (
     <section className="rca-panel" aria-label="保存したグループ判断"><h2 tabIndex={-1} ref={recordsHeading}>{personalOnly?'私の予想・結果':'私の予想・購入記録'}</h2>{!frozen ? <p className="rca-muted">保存したグループ判断はまだありません。</p> : <>
@@ -262,8 +269,9 @@ function Groups({ userId, race, horses, statistics = [], cloudRevision = 0, onSy
       <section className="rca-card-prediction" aria-label="カードから選択した予想"><h3>予想に追加したグループ</h3><GroupSelectionNumbers grouping={grouping} slots={quickSlots} type={quickType} excluded={excluded} /><p aria-live="polite">{quickTickets.length}点</p><div className="flex flex-wrap gap-3"><button type="button" className="rca-primary" disabled={disabled||loading||!quickTickets.length} onClick={()=>startPersonal({type:quickType,slots:quickSlots})}>選択した内容で予想を入力</button><button type="button" className="rca-secondary" onClick={()=>setQuickChoice(null)}>選択を解除</button></div></section>
       {!grouping.complete && <p role="alert" className="rca-error">オッズ未取得：{grouping.missing.join('・')}番。全頭が揃うまで保存を保留します。</p>}
       <section className="rca-registration-panel" aria-label="グループの独立登録"><h3>結果に使うグループを登録</h3><p>全出走馬の所属を保存します。1〜3着の予想・買い目の登録とは別です。</p>
-        <p aria-live="polite">{journal.loading?'登録グループを読み込み中…':registrationMatches(registered,current,grouping)?'表示中のグループは登録済みです。':registered?'変更は未登録です。結果には前回の登録を使っています。':'グループはまだ登録されていません。'}</p>
-        <div className="flex flex-wrap gap-3"><button type="button" className="rca-primary" disabled={journal.loading||journal.busy||loading||Boolean(data.error)||Boolean(journal.error)||!grouping.complete||field.some(h=>h.cancelled)||registrationMatches(registered,current,grouping)} onClick={registerClassification}>{journal.busy?'登録中…':registered?'グループ登録を更新':'グループを登録'}</button>{onOpenResults&&<button type="button" className="rca-secondary" onClick={onOpenResults}>登録グループの結果を見る</button>}{journal.error&&<button type="button" className="rca-secondary" disabled={journal.loading||journal.busy} onClick={()=>{setError('');journal.refresh()}}>登録状態を再読込</button>}</div>
+        <p aria-live="polite">{!journal.registrationReady?(journal.loading?'登録グループを読み込み中…':'登録状態は未確認です。'):classificationSaved?'表示中のグループは登録済みです。':registered?'変更は未登録です。結果には前回の登録を使っています。':'グループはまだ登録されていません。'}</p>
+        <div className="flex flex-wrap gap-3"><button type="button" className="rca-primary" aria-describedby="group-registration-state" disabled={Boolean(registrationBlockReason)} onClick={registerClassification}>{journal.busy?'登録中…':classificationSaved?'グループ登録済み':registered?'グループ登録を更新':'グループを登録'}</button>{onOpenResults&&<button type="button" className="rca-secondary" onClick={onOpenResults}>登録グループの結果を見る</button>}{journal.error&&<button type="button" className="rca-secondary" disabled={journal.loading||journal.busy} onClick={()=>{setError('');journal.refresh()}}>登録状態を再読込</button>}</div>
+        <p id="group-registration-state" aria-live="polite">{registrationBlockReason||(journal.loading?'登録状態を同期中です。現在の設定で登録できます。':journal.error?'前回確認済みの登録を保持しています。このまま再試行できます。':'現在の設定で登録できます。')}</p>
         {registered&&<RegisteredGroupSummary registration={registered} history={journal.registrations.filter(r=>r.race.id===String(race.id))}/>}
       </section>
       <h3 className="mt-6">グループをカスタマイズ</h3><div className="overflow-x-auto"><table className="rca-list-table rca-group-customize" aria-label="グループのカスタマイズ"><colgroup><col className="rca-cut-column"/><col/><col className="rca-odds-column"/><col className="rca-include-column"/></colgroup><thead><tr>{['区切り','群・馬番・馬名','単勝','候補'].map(t => <th key={t}>{t}</th>)}</tr></thead><tbody>{grouping.groups.flatMap(g => g.horses).map((h,i,rows) => <tr key={h.no}>
