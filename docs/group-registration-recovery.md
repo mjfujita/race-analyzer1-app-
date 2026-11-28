@@ -25,4 +25,4 @@ API、DB schema、登録内容の形式、認証、ワーカー、確率計算�
 
 確認用URL：`http://localhost:5175/market-preview.html?state=groups-local-review`。ローカル起動中のみ利用可能。
 
-本番未反映。承認後は検証済みcommitをVercelへビルドし、mainとの同一差分確認・既存デプロイの退避・候補デプロイ検証を経てpromoteする。DB migrationなし。戻す場合は旧デプロイへpromoteし、登録履歴は巻き戻さず保持する。
+2026-11-28、藤田さんの「本番にお願いします」で反映承認を受領。検証済みcommitをVercelへビルドし、mainとの同一差分確認・既存デプロイの退避・候補デプロイ検証を経てpromoteする。反映結果と復旧先は当該PRのリリース記録に残す。DB migrationなし。戻す場合は旧デプロイへpromoteし、登録履歴は巻き戻さず保持する。
